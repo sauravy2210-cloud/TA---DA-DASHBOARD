@@ -1,0 +1,966 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Koenig TA/DA Dashboard — Design System Theme
+   ============================================================ */
+
+:root {
+  /* Brand Colors */
+  --brand-primary: #1f7cc9;
+  --brand-primary-hover: #1a6ab5;
+  --brand-primary-light: #dbeafe;
+  --brand-secondary: #0ea5e9;
+  --brand-secondary-hover: #0284c7;
+  --brand-accent: #38bdf8;
+  --brand-accent-hover: #0ea5e9;
+
+  /* Backgrounds */
+  --background: #ffffff;
+  --app-bg: #eef4fa;
+  --surface: #ffffff;
+  --surface-muted: #f8fafc;
+  --surface-hover: #f1f5f9;
+  --surface-active: #e2e8f0;
+
+  /* Borders */
+  --border: #e5e7eb;
+  --border-muted: #f3f4f6;
+  --border-strong: #d1d5db;
+  --border-focus: #1f7cc9;
+
+  /* Typography */
+  --text-primary: #111827;
+  --text-secondary: #6b7280;
+  --text-muted: #9ca3af;
+  --text-inverse: #ffffff;
+  --text-brand: #1f7cc9;
+  --text-link: #1f7cc9;
+  --text-link-hover: #1a6ab5;
+
+  /* Status / Semantic Colors */
+  --success: #16a34a;
+  --success-bg: #dcfce7;
+  --success-border: #86efac;
+  --success-text: #15803d;
+
+  --warning: #f59e0b;
+  --warning-bg: #fef3c7;
+  --warning-border: #fcd34d;
+  --warning-text: #b45309;
+
+  --danger: #dc2626;
+  --danger-bg: #fee2e2;
+  --danger-border: #fca5a5;
+  --danger-text: #b91c1c;
+
+  --info: #2563eb;
+  --info-bg: #dbeafe;
+  --info-border: #93c5fd;
+  --info-text: #1d4ed8;
+
+  /* Accent Palette */
+  --accent-blue: #2563eb;
+  --accent-blue-bg: #dbeafe;
+  --accent-blue-border: #3b82f6;
+
+  --accent-green: #16a34a;
+  --accent-green-bg: #dcfce7;
+  --accent-green-border: #22c55e;
+
+  --accent-yellow: #d97706;
+  --accent-yellow-bg: #fef3c7;
+  --accent-yellow-border: #f59e0b;
+
+  --accent-red: #dc2626;
+  --accent-red-bg: #fee2e2;
+  --accent-red-border: #ef4444;
+
+  --accent-purple: #7c3aed;
+  --accent-purple-bg: #ede9fe;
+  --accent-purple-border: #8b5cf6;
+
+  --accent-teal: #0d9488;
+  --accent-teal-bg: #ccfbf1;
+  --accent-teal-border: #14b8a6;
+
+  --accent-orange: #ea580c;
+  --accent-orange-bg: #ffedd5;
+  --accent-orange-border: #f97316;
+
+  --accent-indigo: #4338ca;
+  --accent-indigo-bg: #e0e7ff;
+  --accent-indigo-border: #6366f1;
+
+  --accent-amber: #b45309;
+  --accent-amber-bg: #fef3c7;
+  --accent-amber-border: #f59e0b;
+
+  --accent-emerald: #059669;
+  --accent-emerald-bg: #d1fae5;
+  --accent-emerald-border: #10b981;
+
+  /* Shadows */
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-brand: 0 4px 14px 0 rgb(31 124 201 / 0.3);
+
+  /* Spacing */
+  --sidebar-width: 256px;
+  --sidebar-width-collapsed: 64px;
+  --header-height: 64px;
+  --content-max-width: 1440px;
+
+  /* Border Radius */
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 150ms ease;
+  --transition-base: 200ms ease;
+  --transition-slow: 300ms ease;
+
+  /* Z-Index Scale */
+  --z-sidebar: 40;
+  --z-header: 30;
+  --z-dropdown: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+  --z-tooltip: 80;
+}
+
+/* ============================================================
+   Base / Reset Overrides
+   ============================================================ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--app-bg);
+  color: var(--text-primary);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   Sidebar
+   ============================================================ */
+
+.koenig-sidebar {
+  background-color: var(--brand-primary);
+  color: var(--text-inverse);
+  height: 100vh;
+  width: var(--sidebar-width);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  position: fixed;
+  left: 0;
+  top: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: var(--z-sidebar);
+  transition: width var(--transition-slow);
+  box-shadow: var(--shadow-lg);
+}
+
+.koenig-sidebar-collapsed {
+  width: var(--sidebar-width-collapsed);
+}
+
+.koenig-sidebar-header {
+  padding: 1.5rem 1.25rem;
+  border-bottom: 1px solid rgb(255 255 255 / 0.15);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.koenig-sidebar-logo {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--text-inverse);
+  letter-spacing: -0.025em;
+  white-space: nowrap;
+}
+
+.koenig-sidebar-nav {
+  flex: 1;
+  padding: 1rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.koenig-sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.625rem 0.875rem;
+  border-radius: var(--radius-lg);
+  color: rgb(255 255 255 / 0.8);
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.koenig-sidebar-item:hover {
+  background-color: rgb(255 255 255 / 0.12);
+  color: var(--text-inverse);
+}
+
+.koenig-sidebar-item.active {
+  background-color: rgb(255 255 255 / 0.2);
+  color: var(--text-inverse);
+  font-weight: 600;
+}
+
+.koenig-sidebar-section-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: rgb(255 255 255 / 0.5);
+  padding: 0.75rem 0.875rem 0.375rem;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.koenig-sidebar-footer {
+  padding: 1rem 0.75rem;
+  border-top: 1px solid rgb(255 255 255 / 0.15);
+}
+
+/* ============================================================
+   Cards
+   ============================================================ */
+
+.koenig-card {
+  background-color: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.koenig-card-hover {
+  background-color: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  transition: box-shadow var(--transition-base), transform var(--transition-base);
+  cursor: pointer;
+}
+
+.koenig-card-hover:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.koenig-card-header {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid var(--border-muted);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.koenig-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.koenig-card-body {
+  padding: 1.5rem;
+}
+
+.koenig-card-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border-muted);
+  background-color: var(--surface-muted);
+}
+
+/* ============================================================
+   KPI Cards
+   ============================================================ */
+
+.koenig-kpi {
+  background-color: var(--surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: box-shadow var(--transition-base);
+}
+
+.koenig-kpi:hover {
+  box-shadow: var(--shadow-md);
+}
+
+.koenig-kpi-label {
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.koenig-kpi-value {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.koenig-kpi-sub {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.koenig-kpi-trend-up {
+  color: var(--success);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.koenig-kpi-trend-down {
+  color: var(--danger);
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+/* ============================================================
+   Accent Variants (for KPI border-left, icons, etc.)
+   ============================================================ */
+
+.accent-blue {
+  border-left-color: var(--accent-blue) !important;
+  --accent-color: var(--accent-blue);
+  --accent-bg: var(--accent-blue-bg);
+}
+
+.accent-green {
+  border-left-color: var(--accent-green) !important;
+  --accent-color: var(--accent-green);
+  --accent-bg: var(--accent-green-bg);
+}
+
+.accent-yellow {
+  border-left-color: var(--accent-yellow) !important;
+  --accent-color: var(--accent-yellow);
+  --accent-bg: var(--accent-yellow-bg);
+}
+
+.accent-red {
+  border-left-color: var(--accent-red) !important;
+  --accent-color: var(--accent-red);
+  --accent-bg: var(--accent-red-bg);
+}
+
+.accent-purple {
+  border-left-color: var(--accent-purple) !important;
+  --accent-color: var(--accent-purple);
+  --accent-bg: var(--accent-purple-bg);
+}
+
+.accent-teal {
+  border-left-color: var(--accent-teal) !important;
+  --accent-color: var(--accent-teal);
+  --accent-bg: var(--accent-teal-bg);
+}
+
+.accent-orange {
+  border-left-color: var(--accent-orange) !important;
+  --accent-color: var(--accent-orange);
+  --accent-bg: var(--accent-orange-bg);
+}
+
+.accent-indigo {
+  border-left-color: var(--accent-indigo) !important;
+  --accent-color: var(--accent-indigo);
+  --accent-bg: var(--accent-indigo-bg);
+}
+
+.accent-amber {
+  border-left-color: var(--accent-amber) !important;
+  --accent-color: var(--accent-amber);
+  --accent-bg: var(--accent-amber-bg);
+}
+
+.accent-emerald {
+  border-left-color: var(--accent-emerald) !important;
+  --accent-color: var(--accent-emerald);
+  --accent-bg: var(--accent-emerald-bg);
+}
+
+/* ============================================================
+   Status Badges — .koenig-badge-{status}
+   ============================================================ */
+
+.koenig-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+/* draft */
+.koenig-badge-draft {
+  background-color: #f3f4f6;
+  color: #374151;
+  border-color: #d1d5db;
+}
+
+/* submitted */
+.koenig-badge-submitted {
+  background-color: var(--accent-blue-bg);
+  color: var(--accent-blue);
+  border-color: var(--accent-blue-border);
+}
+
+/* under-review */
+.koenig-badge-under-review {
+  background-color: var(--accent-indigo-bg);
+  color: var(--accent-indigo);
+  border-color: var(--accent-indigo-border);
+}
+
+/* clarification */
+.koenig-badge-clarification {
+  background-color: var(--accent-orange-bg);
+  color: var(--accent-orange);
+  border-color: var(--accent-orange-border);
+}
+
+/* approved */
+.koenig-badge-approved {
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border-color: var(--success-border);
+}
+
+/* partial */
+.koenig-badge-partial {
+  background-color: var(--accent-teal-bg);
+  color: var(--accent-teal);
+  border-color: var(--accent-teal-border);
+}
+
+/* rejected */
+.koenig-badge-rejected {
+  background-color: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: var(--danger-border);
+}
+
+/* paid */
+.koenig-badge-paid {
+  background-color: var(--accent-emerald-bg);
+  color: var(--accent-emerald);
+  border-color: var(--accent-emerald-border);
+}
+
+/* cancelled */
+.koenig-badge-cancelled {
+  background-color: #f3f4f6;
+  color: #6b7280;
+  border-color: #d1d5db;
+}
+
+/* payment-pending */
+.koenig-badge-payment-pending {
+  background-color: var(--accent-amber-bg);
+  color: var(--accent-amber);
+  border-color: var(--accent-amber-border);
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+
+.koenig-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  transition: background-color var(--transition-fast), box-shadow var(--transition-fast), opacity var(--transition-fast);
+  cursor: pointer;
+  border: 1px solid transparent;
+  text-decoration: none;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.koenig-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.koenig-btn-primary {
+  background-color: var(--brand-primary);
+  color: var(--text-inverse);
+  border-color: var(--brand-primary);
+}
+
+.koenig-btn-primary:hover {
+  background-color: var(--brand-primary-hover);
+  border-color: var(--brand-primary-hover);
+  box-shadow: var(--shadow-brand);
+}
+
+.koenig-btn-secondary {
+  background-color: var(--surface);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.koenig-btn-secondary:hover {
+  background-color: var(--surface-hover);
+}
+
+.koenig-btn-ghost {
+  background-color: transparent;
+  color: var(--text-secondary);
+  border-color: transparent;
+}
+
+.koenig-btn-ghost:hover {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.koenig-btn-danger {
+  background-color: var(--danger);
+  color: var(--text-inverse);
+  border-color: var(--danger);
+}
+
+.koenig-btn-danger:hover {
+  background-color: var(--danger-text);
+  border-color: var(--danger-text);
+}
+
+.koenig-btn-sm {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+}
+
+.koenig-btn-lg {
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+}
+
+.koenig-btn-icon {
+  padding: 0.5rem;
+  border-radius: var(--radius-md);
+}
+
+/* ============================================================
+   Form Elements
+   ============================================================ */
+
+.koenig-input {
+  width: 100%;
+  padding: 0.5rem 0.875rem;
+  background-color: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  outline: none;
+}
+
+.koenig-input::placeholder {
+  color: var(--text-muted);
+}
+
+.koenig-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px rgb(31 124 201 / 0.12);
+}
+
+.koenig-input:disabled {
+  background-color: var(--surface-muted);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.koenig-input-error {
+  border-color: var(--danger);
+}
+
+.koenig-input-error:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 3px rgb(220 38 38 / 0.12);
+}
+
+.koenig-label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 0.375rem;
+}
+
+.koenig-label-required::after {
+  content: " *";
+  color: var(--danger);
+}
+
+.koenig-field-error {
+  font-size: 0.75rem;
+  color: var(--danger-text);
+  margin-top: 0.25rem;
+}
+
+.koenig-field-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+/* ============================================================
+   Tables
+   ============================================================ */
+
+.koenig-table-wrapper {
+  overflow-x: auto;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border);
+}
+
+.koenig-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+  background-color: var(--surface);
+}
+
+.koenig-table thead {
+  background-color: var(--surface-muted);
+  border-bottom: 1px solid var(--border);
+}
+
+.koenig-table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.koenig-table td {
+  padding: 0.875rem 1rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-muted);
+  vertical-align: middle;
+}
+
+.koenig-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.koenig-table tbody tr:hover {
+  background-color: var(--surface-hover);
+}
+
+.koenig-table-striped tbody tr:nth-child(even) {
+  background-color: var(--surface-muted);
+}
+
+/* ============================================================
+   Page Layout
+   ============================================================ */
+
+.koenig-layout {
+  display: flex;
+  min-height: 100vh;
+  background-color: var(--app-bg);
+}
+
+.koenig-main {
+  flex: 1;
+  margin-left: var(--sidebar-width);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  transition: margin-left var(--transition-slow);
+}
+
+.koenig-main-collapsed {
+  margin-left: var(--sidebar-width-collapsed);
+}
+
+.koenig-header {
+  height: var(--header-height);
+  background-color: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 1.5rem;
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  box-shadow: var(--shadow-xs);
+}
+
+.koenig-content {
+  flex: 1;
+  padding: 1.5rem;
+  max-width: var(--content-max-width);
+  width: 100%;
+}
+
+.koenig-page-title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: -0.025em;
+}
+
+.koenig-page-subtitle {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-top: 0.25rem;
+}
+
+/* ============================================================
+   Alert / Toast Banners
+   ============================================================ */
+
+.koenig-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.875rem 1rem;
+  border-radius: var(--radius-lg);
+  font-size: 0.875rem;
+  border: 1px solid;
+}
+
+.koenig-alert-success {
+  background-color: var(--success-bg);
+  color: var(--success-text);
+  border-color: var(--success-border);
+}
+
+.koenig-alert-warning {
+  background-color: var(--warning-bg);
+  color: var(--warning-text);
+  border-color: var(--warning-border);
+}
+
+.koenig-alert-danger {
+  background-color: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: var(--danger-border);
+}
+
+.koenig-alert-info {
+  background-color: var(--info-bg);
+  color: var(--info-text);
+  border-color: var(--info-border);
+}
+
+/* ============================================================
+   Modal / Dialog
+   ============================================================ */
+
+.koenig-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background-color: rgb(0 0 0 / 0.4);
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  backdrop-filter: blur(2px);
+}
+
+.koenig-modal {
+  background-color: var(--surface);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-xl);
+  width: 100%;
+  max-width: 36rem;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.koenig-modal-header {
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.koenig-modal-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.koenig-modal-body {
+  padding: 1.5rem;
+  flex: 1;
+}
+
+.koenig-modal-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  background-color: var(--surface-muted);
+}
+
+/* ============================================================
+   Dividers
+   ============================================================ */
+
+.koenig-divider {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 0;
+}
+
+.koenig-divider-muted {
+  border-top-color: var(--border-muted);
+}
+
+/* ============================================================
+   Skeleton Loaders
+   ============================================================ */
+
+@keyframes koenig-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.koenig-skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-muted) 25%,
+    var(--surface-active) 50%,
+    var(--surface-muted) 75%
+  );
+  background-size: 200% 100%;
+  animation: koenig-shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--radius-md);
+}
+
+/* ============================================================
+   Scrollbar Customization
+   ============================================================ */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--text-muted);
+}
+
+/* ============================================================
+   Utility Helpers
+   ============================================================ */
+
+.koenig-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.koenig-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+.koenig-focus-ring:focus-visible {
+  outline: 2px solid var(--brand-primary);
+  outline-offset: 2px;
+}
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+
+@media (max-width: 768px) {
+  .koenig-sidebar {
+    transform: translateX(-100%);
+    transition: transform var(--transition-slow), width var(--transition-slow);
+  }
+
+  .koenig-sidebar-open {
+    transform: translateX(0);
+  }
+
+  .koenig-main {
+    margin-left: 0;
+  }
+
+  .koenig-content {
+    padding: 1rem;
+  }
+}
