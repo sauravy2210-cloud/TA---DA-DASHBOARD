@@ -335,7 +335,7 @@ async function fetchViaApi208(fromDate: string, toDate: string): Promise<RawTrai
   return raw;
 }
 
-async function fetchViaApi258(fromDate: string, toDate: string, empCode: string): Promise<RawTrainerAssignment[]> {
+async function fetchViaApi258(_fromDate: string, _toDate: string, empCode: string): Promise<RawTrainerAssignment[]> {
   const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -696,7 +696,7 @@ interface AccommodationRecord {
   CheckOutDate: string | null;
   Nights: number | null;
   StayDates: string | null;      // e.g. "04-Jul-2026 to 06-Jul-2026"
-  Is_caneclled: string | null;   // "0" = active, "1" = cancelled (note: API spelling)
+  Is_caneclled: string | number | null;   // "0"/0 = active, "1"/1 = cancelled (note: API spelling)
   AccommodationPDF: string | null;
   [key: string]: unknown;
 }
@@ -1829,11 +1829,13 @@ interface AssignmentModalProps {
   initial?: Partial<Assignment>;
   fromDate: string;
   toDate: string;
+  koenigCountries: KoenigCountry[];
+  countriesLoading: boolean;
   onSave: (a: Assignment) => void;
   onClose: () => void;
 }
 
-function AssignmentModal({ open, initial, fromDate, toDate, onSave, onClose }: AssignmentModalProps) {
+function AssignmentModal({ open, initial, fromDate, toDate, koenigCountries, countriesLoading, onSave, onClose }: AssignmentModalProps) {
   const [form, setForm] = useState<Partial<Assignment>>({
     courseName: '', clientName: '', city: '', country: 'India',
     hotelName: '', venueName: '', trainingVenue: '', distanceKm: '',
@@ -2144,7 +2146,6 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const handleFetch = useCallback(async () => {
     if (!fromDate || !toDate || toDate < fromDate) return;
 
-    const email = (currentUser?.email ?? '').trim();
     const empCode = (currentUser?.trainerId ?? '').replace(/^EMP-/i, '').trim();
 
     // Reset everything before fetching
@@ -2711,7 +2712,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       baseCity: 'India',
       destinationCities: [...new Set(assignments.map(a => a.country).filter(Boolean))],
       status: 'Submitted',
-      pendingWith: 'HR',
+      pendingWith: 'HR/Admin',
       submittedAt: now,
       lastActionAt: now,
       totalClaimedAmount: grandTotal,
@@ -2881,11 +2882,13 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     const bill: TravelBill = {
       id: uid(),
       date: parseDT(f.departure_date),
+      journeyType: '',
       travelType: 'Flight',
       from: f.from_city ?? '',
       to: f.to_city ?? '',
       distance: '',
       amount: 0,
+      currency: 'INR',
       receipt: f.ticket_path ?? '',
     };
     setTravelBills(prev => [...prev, bill]);
@@ -2975,6 +2978,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         initial={editingAssignment}
         fromDate={fromDate}
         toDate={toDate}
+        koenigCountries={koenigCountries}
+        countriesLoading={countriesLoading}
         onSave={saveAssignment}
         onClose={() => setModalOpen(false)}
       />

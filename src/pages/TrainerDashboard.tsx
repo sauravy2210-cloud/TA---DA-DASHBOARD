@@ -1,4 +1,4 @@
-﻿import { useMemo, useState, useEffect, useCallback } from 'react';
+﻿import { useMemo, useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Clock,
@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   BadgeCheck,
   XCircle,
-  Plus,
   BookOpen,
   ArrowRight,
   Bell,
@@ -122,32 +121,6 @@ function daysUntil(iso: string): number {
 // Map mockClaims status strings to ClaimHeader status type
 // mockClaims uses uppercase strings like 'SUBMITTED', 'DRAFT', etc.
 // ClaimTable expects proper ClaimStatus type — we need to normalise
-type NormalisedStatus =
-  | 'Draft'
-  | 'Submitted'
-  | 'Under Review'
-  | 'Clarification Required'
-  | 'Approved'
-  | 'Partially Approved'
-  | 'Rejected'
-  | 'Payment Pending'
-  | 'Paid';
-
-function normaliseStatus(raw: string): NormalisedStatus {
-  const map: Record<string, NormalisedStatus> = {
-    DRAFT: 'Draft',
-    SUBMITTED: 'Submitted',
-    'UNDER REVIEW': 'Under Review',
-    'CLARIFICATION REQUIRED': 'Clarification Required',
-    APPROVED: 'Approved',
-    'PARTIALLY APPROVED': 'Partially Approved',
-    REJECTED: 'Rejected',
-    'PAYMENT PENDING': 'Payment Pending',
-    PAID: 'Paid',
-  };
-  return map[raw.toUpperCase()] ?? ('Draft' as NormalisedStatus);
-}
-
 // ── Props ──────────────────────────────────────────────────────────────────────
 
 interface TrainerDashboardProps {

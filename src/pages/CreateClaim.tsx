@@ -659,13 +659,6 @@ async function fetchTrainerAssignments(empCode: string): Promise<Assignment[]> {
   return raw.filter(r => r.trainer_emp_code != null && String(r.trainer_emp_code) === String(empCode));
 }
 
-function assignmentLabel(a: Assignment): string {
-  const id     = a.AssignmentId != null ? `#${a.AssignmentId}` : '';
-  const course = a.CourseName ?? '';
-  const date   = a.StarDate ? `${a.StarDate} → ${a.EndDate ?? ''}` : '';
-  const pax    = a.TotalPax != null ? `${a.TotalPax} pax` : '';
-  return [id, course, date, pax].filter(Boolean).join(' · ');
-}
 
 // ─── Tab 1: Trainer & Assignment ──────────────────────────────────────────────
 

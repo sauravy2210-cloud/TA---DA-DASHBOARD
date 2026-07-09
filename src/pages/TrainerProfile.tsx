@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User, Mail, Building2, BadgeCheck, Save, MapPin, Phone, Loader2, RefreshCw, AlertCircle, CreditCard, Calendar, Info } from 'lucide-react';
+import { User, Mail, BadgeCheck, Save, MapPin, Loader2, RefreshCw, AlertCircle, CreditCard, Calendar, Info } from 'lucide-react';
 import type { User as UserType, PmsEmployeeDetails } from '../types';
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white';

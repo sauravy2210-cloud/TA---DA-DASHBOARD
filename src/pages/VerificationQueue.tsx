@@ -1,6 +1,6 @@
 ﻿import React, { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { User, ClaimHeader, ClaimStatus, PendingWith, PaymentStatus } from '../types';
+import type { User, ClaimHeader } from '../types';
 import { ClaimTable } from '../components/ClaimTable';
 import { getClaims, STORAGE_KEYS, saveToStorage } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
@@ -248,37 +248,6 @@ function filterClaims(claims: ClaimHeader[], filters: Filters, search: string): 
 
 // No-op adapter — getClaims() already returns ClaimHeader[]
 function adaptToClaimHeader(c: ClaimHeader): ClaimHeader { return c; }
-
-const STATUS_MAP: Record<string, ClaimStatus> = {
-  DRAFT: 'Draft',
-  SUBMITTED: 'Submitted',
-  'UNDER REVIEW': 'Under Review',
-  'CLARIFICATION REQUIRED': 'Clarification Required',
-  RESUBMITTED: 'Resubmitted',
-  APPROVED: 'Approved',
-  'PARTIALLY APPROVED': 'Partially Approved',
-  REJECTED: 'Rejected',
-  'ON HOLD': 'On Hold',
-  'PAYMENT PENDING': 'Payment Pending',
-  PAID: 'Paid',
-  CANCELLED: 'Cancelled',
-};
-
-function toClaimStatus(s: string): ClaimStatus {
-  return STATUS_MAP[s?.toUpperCase()] ?? 'Draft';
-}
-
-function toPendingWith(s: string | null | undefined): PendingWith {
-  const map: Record<string, PendingWith> = {
-    Trainer: 'Trainer',
-    'HR/Admin': 'HR/Admin',
-    Finance: 'Finance',
-    Approver: 'Approver',
-    Reviewer: 'HR/Admin',
-  };
-  if (!s) return 'None';
-  return map[s] ?? 'None';
-}
 
 // ─── Small UI helpers ────────────────────────────────────────────────────────
 

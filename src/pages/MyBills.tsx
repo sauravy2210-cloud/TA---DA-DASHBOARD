@@ -7,7 +7,7 @@ import { SearchInput } from '../components/SearchInput';
 import { ClaimTable } from '../components/ClaimTable';
 import { getClaims } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
-import type { ClaimStatus, PendingWith, PaymentStatus, ClaimHeader } from '../types';
+import type { ClaimHeader } from '../types';
 
 // ─── Props ─────────────────────────────────────────────────────────────────
 
