@@ -1,7 +1,7 @@
 /**
  * Server-side flight fetch — credentials never reach the browser bundle.
  * GET /api/flights?email=...&empCode=...
- * Tries API 108 (email) first, falls back to API 256 (empCode).
+ * Tries API 108 (email-based) first, falls back to API 256 (empCode-based).
  */
 export const config = { maxDuration: 30 };
 
@@ -13,6 +13,7 @@ async function getTokens(userName, userPassword, userRole) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ userName, userPassword, userRole }),
   });
+  if (!r.ok) throw new Error(`Token endpoint HTTP ${r.status}`);
   const d = await r.json();
   if (d.statuscode !== 200) throw new Error(d.message || 'Token failed');
   return d.content;
@@ -29,6 +30,7 @@ async function apiCall(apikey, userName, userPassword, userRole, body) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
+  if (!r.ok) throw new Error(`API ${apikey} HTTP ${r.status}`);
   const d = await r.json();
   if (d.statuscode !== 200) throw new Error(d.message || `API ${apikey} failed`);
   const raw = typeof d.content === 'string' ? JSON.parse(d.content) : d.content;
@@ -39,14 +41,18 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
-  const { email, empCode } = req.query;
+  const email   = String(req.query.email   || '').trim();
+  // Strip EMP- prefix, ensure clean numeric or string code
+  const rawCode = String(req.query.empCode || '').trim();
+  const empCode = rawCode.replace(/^EMP-/i, '').trim();
+
   if (!email && !empCode) {
     return res.status(400).json({ flights: [], error: 'email or empCode required' });
   }
 
   let flights = [];
 
-  // 1. Try email-based (API 108)
+  // 1. Try email-based API 108
   if (email) {
     try {
       flights = await apiCall(
@@ -59,7 +65,7 @@ export default async function handler(req, res) {
     } catch { flights = []; }
   }
 
-  // 2. Fallback: emp-code-based (API 256)
+  // 2. Fallback: emp-code-based API 256
   if (flights.length === 0 && empCode) {
     const code = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode;
     try {

@@ -27,40 +27,14 @@ function Section({ icon, title, children }: { icon: React.ReactNode; title: stri
   );
 }
 
-// Re-fetch employee details from PMS (apikey=236)
+// Re-fetch employee details via server-side endpoint (credentials never in browser)
 async function refetchPmsDetails(empCode: string): Promise<PmsEmployeeDetails> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetEmployeeDeta',
-      userPassword: 'dYHVNmg5#eJ#',
-      userRole: 'Get Employee Details (PMS)',
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url = `/koenig-api/api/Kites/Operator/common?apikey=236&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ emp_code: empCode }),
-  });
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Fetch failed');
-  const content = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
-  const list: PmsEmployeeDetails[] = Array.isArray(content) ? content : [];
-  if (list.length === 0) throw new Error('No employee record found');
-
-  // Log all fields for debugging
-  console.group('[API 236] Employee Details');
-  console.log('All fields:', Object.keys(list[0]));
-  Object.entries(list[0]).forEach(([k, v]) => console.log(`  ${k}:`, v));
-  console.groupEnd();
-
-  return list[0];
+  const code = empCode.replace(/^EMP-/i, '').trim();
+  const res = await fetch(`/api/employee?empCode=${encodeURIComponent(code)}`);
+  const d = await res.json();
+  if (!res.ok || d.error) throw new Error(d.error || 'Could not load profile');
+  if (!d.employee) throw new Error('No employee record found');
+  return d.employee as PmsEmployeeDetails;
 }
 
 // Safely pick first non-empty value from multiple field names

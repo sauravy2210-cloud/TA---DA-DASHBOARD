@@ -3,37 +3,16 @@ import { UserCheck, ShieldCheck, Banknote, Crown, Loader2, AlertCircle, ArrowLef
 import type { User, UserRole, PmsEmployeeDetails } from '../types';
 import { mockUsers } from '../data/mockUsers';
 
-// ── PMS API ────────────────────────────────────────────────────────────────────
+// ── PMS API — via server-side endpoint (credentials never in browser) ──────────
 
 type PmsEmployee = PmsEmployeeDetails;
 
 async function fetchEmployeeFromPMS(empCode: string): Promise<PmsEmployee | null> {
-  // Step 1: Get token
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetEmployeeDeta',
-      userPassword: 'dYHVNmg5#eJ#',
-      userRole: 'Get Employee Details (PMS)',
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token fetch failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  // Step 2: Fetch employee details
-  const url = `/koenig-api/api/Kites/Operator/common?apikey=236&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ emp_code: empCode }),
-  });
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Employee fetch failed');
-  const content = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
-  const list: PmsEmployee[] = Array.isArray(content) ? content : [];
-  return list.length > 0 ? list[0] : null;
+  const code = empCode.replace(/^EMP-/i, '').trim();
+  const res = await fetch(`/api/employee?empCode=${encodeURIComponent(code)}`);
+  const d = await res.json();
+  if (!res.ok || d.error) throw new Error(d.error || 'Employee fetch failed');
+  return d.employee ?? null;
 }
 
 function getInitials(first: string | null, last: string | null): string {
