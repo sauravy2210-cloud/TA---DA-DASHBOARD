@@ -1,11 +1,11 @@
-﻿import { useState, useMemo } from 'react';
+﻿import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { User } from '../types';
 import { FilterBar } from '../components/FilterBar';
 import type { FilterConfig } from '../components/FilterBar';
 import { SearchInput } from '../components/SearchInput';
 import { ClaimTable } from '../components/ClaimTable';
-import { mockClaims } from '../data/mockClaims';
+import { getClaims } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
 import type { ClaimStatus, PendingWith, PaymentStatus, ClaimHeader } from '../types';
 
@@ -76,7 +76,7 @@ function normalizeStatus(status: string): string {
   return status;
 }
 
-function matchesSearch(claim: (typeof mockClaims)[number], q: string): boolean {
+function matchesSearch(claim: ClaimHeader, q: string): boolean {
   if (!q.trim()) return true;
   const lower = q.toLowerCase();
   return (
@@ -94,16 +94,23 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
   const [filters, setFilters] = useState<Record<string, string | string[]>>(EMPTY_FILTERS);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [allClaims, setAllClaims] = useState<ClaimHeader[]>([]);
+
+  // Reload from storage whenever this page mounts
+  useEffect(() => {
+    setAllClaims(getClaims());
+  }, []);
 
   // Filter claims to current trainer (for Trainer role) or all for others
   const ownClaims = useMemo(() => {
     if (currentUser.role === 'Trainer') {
-      return mockClaims.filter(
-        (c) => c.trainerName === currentUser.name
+      return allClaims.filter(
+        (c) => c.trainerId === (currentUser.trainerId || currentUser.id) ||
+               c.trainerName === currentUser.name
       );
     }
-    return mockClaims;
-  }, [currentUser]);
+    return allClaims;
+  }, [currentUser, allClaims]);
 
   const filtered = useMemo(() => {
     return ownClaims.filter((claim) => {
@@ -173,46 +180,7 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const adaptedClaims = useMemo(
-    () =>
-      paginated.map((c) => ({
-        claimId: c.claimId,
-        billNo: c.billNo,
-        trainerName: c.trainerName,
-        trainerId: '',
-        batchIds: c.assignmentIds ?? [],
-        clientName: c.clientName,
-        courseName: '',
-        trainingLocation: `${c.baseCity ?? ''}${(c.destinationCities[0] ?? "") && (c.destinationCities[0] ?? "") !== 'India' ? `, ${(c.destinationCities[0] ?? "")}` : ''}`,
-        claimStartDate: c.submittedAt ?? '',
-        claimEndDate: c.lastActionAt ?? '',
-        totalClaimedAmount: c.totalClaimedAmount ?? 0,
-        approvedAmount: c.approvedAmount ?? 0,
-        deductionAmount: c.deductionAmount ?? 0,
-        status: c.status as ClaimStatus,
-        pendingWith: (c.pendingWith ?? 'None') as PendingWith,
-        agingDays: c.agingDays ?? 0,
-        slaBreached: c.slaBreached ?? false,
-        exceptionFlag: c.exceptionFlag ?? false,
-        missingDocumentFlag: c.missingDocumentFlag ?? false,
-        duplicateFlag: false,
-        ledgerMismatchFlag: c.ledgerMismatchFlag ?? false,
-        lastActionAt: c.lastActionAt ?? '',
-        assignmentIds: c.assignmentIds ?? [],
-        baseCity: '',
-        destinationCities: [],
-        submittedAt: c.submittedAt,
-        adminOwnerId: undefined,
-        eligibleAmount: 0,
-        advanceAdjusted: 0,
-        miscAdjustments: 0,
-        recoverableAmount: c.recoverableAmount ?? 0,
-        netPayable: c.netPayable ?? 0,
-        currency: c.currency ?? 'INR',
-        paymentStatus: 'Unpaid' as PaymentStatus,
-      })),
-    [paginated]
-  );
+  const adaptedClaims = useMemo(() => paginated, [paginated]);
 
   const handleFilterChange = (key: string, value: string | string[]) => {
     setFilters((prev) => ({ ...prev, [key]: value }));
@@ -226,43 +194,7 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
   };
 
   const handleExportCSV = () => {
-    const exportData = filtered.map((c) => ({
-      claimId: c.claimId,
-      billNo: c.billNo,
-      trainerName: c.trainerName,
-      trainerId: '',
-      batchIds: c.assignmentIds ?? [],
-      clientName: c.clientName,
-      courseName: '',
-      trainingLocation: `${c.baseCity ?? ''}${(c.destinationCities[0] ?? "") && (c.destinationCities[0] ?? "") !== 'India' ? `, ${(c.destinationCities[0] ?? "")}` : ''}`,
-      claimStartDate: c.submittedAt ?? '',
-      claimEndDate: c.lastActionAt ?? '',
-      totalClaimedAmount: c.totalClaimedAmount ?? 0,
-      approvedAmount: c.approvedAmount ?? 0,
-      deductionAmount: c.deductionAmount ?? 0,
-      status: c.status as ClaimStatus,
-      pendingWith: (c.pendingWith ?? 'None') as PendingWith,
-      agingDays: c.agingDays ?? 0,
-      slaBreached: c.slaBreached ?? false,
-      exceptionFlag: c.exceptionFlag ?? false,
-      missingDocumentFlag: c.missingDocumentFlag ?? false,
-      duplicateFlag: false,
-      ledgerMismatchFlag: c.ledgerMismatchFlag ?? false,
-      lastActionAt: c.lastActionAt ?? '',
-      assignmentIds: c.assignmentIds ?? [],
-      baseCity: '',
-      destinationCities: [] as string[],
-      submittedAt: c.submittedAt,
-      adminOwnerId: undefined as string | undefined,
-      eligibleAmount: 0,
-      advanceAdjusted: 0,
-      miscAdjustments: 0,
-      recoverableAmount: c.recoverableAmount ?? 0,
-      netPayable: c.netPayable ?? 0,
-      currency: c.currency ?? 'INR',
-      paymentStatus: 'Unpaid' as PaymentStatus,
-    }));
-    exportClaimsQueue(exportData as ClaimHeader[]);
+    exportClaimsQueue(filtered as ClaimHeader[]);
   };
 
   return (

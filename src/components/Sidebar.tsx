@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   ClipboardList,
   FileText,
+  FilePlus,
   AlertTriangle,
   MessageSquare,
   CreditCard,
@@ -13,9 +14,6 @@ import {
   ScrollText,
   Bell,
   CheckSquare,
-  PlusSquare,
-  FileMinus,
-  FileCheck,
   HelpCircle,
   User,
   ChevronDown,
@@ -77,13 +75,9 @@ const ADMIN_GROUPS: NavGroup[] = [
 const TRAINER_GROUPS: NavGroup[] = [
   {
     items: [
-      { label: 'Trainer Dashboard', path: '/trainer/dashboard', icon: <LayoutDashboard size={16} /> },
-      { label: 'Eligible Assignments', path: '/trainer/assignments', icon: <CheckSquare size={16} /> },
-      { label: 'Create TA/DA Bill', path: '/trainer/create-bill', icon: <PlusSquare size={16} /> },
-      { label: 'Draft Bills', path: '/trainer/drafts', icon: <FileMinus size={16} /> },
-      { label: 'My Bills / Claim History', path: '/trainer/claims', icon: <FileCheck size={16} /> },
-      { label: 'Clarification Required', path: '/trainer/clarification', icon: <MessageSquare size={16} /> },
-      { label: 'Payment Status', path: '/trainer/payment-status', icon: <CreditCard size={16} /> },
+      { label: 'Trainer Dashboard', path: '/dashboard', icon: <LayoutDashboard size={16} /> },
+      { label: 'Select Date Range', path: '/create-bill', icon: <FilePlus size={16} /> },
+      { label: 'View My Bills', path: '/claims', icon: <ClipboardList size={16} /> },
     ],
   },
   {
@@ -225,12 +219,45 @@ export default function Sidebar({ currentUser, currentPath }: SidebarProps) {
       {/* User foot */}
       <div className="flex-shrink-0 border-t border-blue-400/30 px-4 py-3">
         <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-white text-xs font-bold">
+          <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
             {currentUser.avatarInitials}
           </div>
           <div className="min-w-0 flex-1">
             <p className="text-white text-xs font-semibold truncate">{currentUser.name}</p>
-            <p className="text-blue-200 text-xs truncate">{currentUser.role}</p>
+            {/* Show designation + department from PMS if available, else role */}
+            {currentUser.pmsDetails ? (() => {
+              const pms = currentUser.pmsDetails!;
+              const desig = [
+                pms.designation_name, pms.designation,
+              ].find(v => v && String(v).trim() && String(v).trim().toLowerCase() !== 'null');
+              const dept = [
+                pms.deparment_name, pms.department_name, pms.department,
+              ].find(v => v && String(v).trim() && String(v).trim().toLowerCase() !== 'null');
+              const city = pms.city_name;
+              const line2 = desig ? String(desig).trim() : currentUser.role;
+              const line3 = [dept ? String(dept).trim() : null, city ? String(city).trim() : null]
+                .filter(Boolean).join(', ');
+              return (
+                <>
+                  <p className="text-blue-100 text-[11px] truncate leading-tight">{line2}</p>
+                  {line3 && <p className="text-blue-300 text-[10px] truncate leading-tight">{line3}</p>}
+                  {currentUser.trainerId && (
+                    <p className="text-blue-300 text-[10px] font-mono leading-tight">
+                      EMP-{currentUser.trainerId.replace(/^EMP-/i, '')}
+                    </p>
+                  )}
+                </>
+              );
+            })() : (
+              <>
+                <p className="text-blue-200 text-xs truncate">{currentUser.role}</p>
+                {currentUser.trainerId && (
+                  <p className="text-blue-300 text-[10px] font-mono leading-tight">
+                    EMP-{currentUser.trainerId.replace(/^EMP-/i, '')}
+                  </p>
+                )}
+              </>
+            )}
           </div>
         </div>
       </div>

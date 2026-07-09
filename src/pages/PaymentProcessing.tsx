@@ -1,10 +1,9 @@
 ﻿import { useState, useMemo } from 'react';
-import type { User } from '../types';
-import { mockClaims, mockPayments } from '../data/mockClaims';
+import type { User, ClaimHeader } from '../types';
 import { exportPaymentSheet } from '../services/exportEngine';
 import { logAction, ACTION_TYPES } from '../services/auditEngine';
 import { notifyPaymentProcessed } from '../services/notificationEngine';
-import { saveToStorage, getFromStorage } from '../services/storageService';
+import { saveToStorage, getFromStorage, getClaims, saveClaim } from '../services/storageService';
 
 interface PaymentProcessingProps {
   currentUser: User;
@@ -68,7 +67,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
   const [clientFilter, setClientFilter] = useState('');
   const [batchFilter, setBatchFilter] = useState('');
 
-  const [selectedClaim, setSelectedClaim] = useState<(typeof mockClaims)[0] | null>(null);
+  const [selectedClaim, setSelectedClaim] = useState<ClaimHeader | null>(null);
   const [form, setForm] = useState<MarkPaidForm>(EMPTY_FORM);
   const [formErrors, setFormErrors] = useState<Partial<MarkPaidForm>>({});
   const [saving, setSaving] = useState(false);
@@ -79,7 +78,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
 
   const paymentClaims = useMemo(
     () =>
-      mockClaims.filter(
+      getClaims().filter(
         (c) =>
           c.status === 'Payment Pending' ||
           c.status === 'Paid' ||
@@ -101,7 +100,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
     });
   }, [paymentClaims, statusFilter, trainerFilter, clientFilter, batchFilter, dateFrom, dateTo]);
 
-  function openModal(claim: (typeof mockClaims)[0]) {
+  function openModal(claim: ClaimHeader) {
     setSelectedClaim(claim);
     setForm({ ...EMPTY_FORM, paidAmount: String(claim.netPayable ?? claim.approvedAmount ?? '') });
     setFormErrors({});
@@ -144,6 +143,15 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
       setLocalPayments(updated);
       saveToStorage('tada_local_payments', updated);
 
+      // Persist Paid status back to claims store so other panels reflect it
+      saveClaim({
+        ...selectedClaim,
+        status: 'Paid',
+        paymentStatus: 'Paid',
+        pendingWith: 'None',
+        lastActionAt: new Date().toISOString(),
+      });
+
       logAction({
         claimId: selectedClaim.claimId,
         entityType: 'Payment',
@@ -155,7 +163,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
         performedByRole: currentUser.role,
       });
 
-      notifyPaymentProcessed(selectedClaim as any, selectedClaim.claimId, form.utr);
+      notifyPaymentProcessed(selectedClaim as unknown as Parameters<typeof notifyPaymentProcessed>[0], selectedClaim.claimId, form.utr);
 
       setSaving(false);
       closeModal();
@@ -167,14 +175,11 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
   }
 
   function getPaymentRecord(claimId: string) {
-    return (
-      localPayments.find((p) => p.claimId === claimId) ||
-      mockPayments.find((p) => p.claimId === claimId && p.referenceUTR)
-    );
+    return localPayments.find((p) => p.claimId === claimId);
   }
 
   function handleExport() {
-    exportPaymentSheet(mockClaims as any, mockPayments as any);
+    exportPaymentSheet(getClaims() as any, localPayments as any);
   }
 
   return (

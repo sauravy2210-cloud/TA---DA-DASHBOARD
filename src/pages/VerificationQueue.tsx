@@ -1,8 +1,7 @@
 ﻿import React, { useState, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import type { User, ClaimStatus, PendingWith, PaymentStatus } from '../types';
+import type { User, ClaimHeader, ClaimStatus, PendingWith, PaymentStatus } from '../types';
 import { ClaimTable } from '../components/ClaimTable';
-import { mockClaims } from '../data/mockClaims';
 import { getClaims, STORAGE_KEYS, saveToStorage } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
 
@@ -11,8 +10,6 @@ import { exportClaimsQueue } from '../services/exportEngine';
 interface VerificationQueueProps {
   currentUser?: User;
 }
-
-type MockClaim = (typeof mockClaims)[number];
 
 // Aging bucket labels
 type AgingBucket = '<1d' | '1-2d' | '2-3d' | '3-5d' | '>5d' | '>10d';
@@ -135,7 +132,7 @@ function agingBucketMatch(agingDays: number, buckets: AgingBucket[]): boolean {
   });
 }
 
-function filterClaims(claims: MockClaim[], filters: Filters, search: string): MockClaim[] {
+function filterClaims(claims: ClaimHeader[], filters: Filters, search: string): ClaimHeader[] {
   const q = search.trim().toLowerCase();
 
   return claims.filter((c) => {
@@ -198,9 +195,9 @@ function filterClaims(claims: MockClaim[], filters: Filters, search: string): Mo
       if (!(c.baseCity ?? '').toLowerCase().includes(filters.city.trim().toLowerCase())) return false;
     }
 
-    // Claim status multi-select
+    // Claim status multi-select (filter values are uppercase keys, compare case-insensitively)
     if (filters.claimStatuses.length > 0) {
-      if (!filters.claimStatuses.includes((c.status ?? '').toUpperCase())) return false;
+      if (!filters.claimStatuses.includes((c.status ?? '').toUpperCase().trim())) return false;
     }
 
     // Payment status
@@ -225,7 +222,7 @@ function filterClaims(claims: MockClaim[], filters: Filters, search: string): Mo
     // Flag filters
     if (filters.exceptionFlag && !c.exceptionFlag) return false;
     if (filters.missingDocFlag && !c.missingDocumentFlag) return false;
-    if (filters.duplicateFlag) return false; // none in mock have duplicate flag
+    if (filters.duplicateFlag && !c.duplicateFlag) return false;
     if (filters.highValue && !c.highValue) return false;
     if (filters.ledgerMismatch && !c.ledgerMismatchFlag) return false;
     if (filters.slaBreached && !c.slaBreached) return false;
@@ -249,44 +246,8 @@ function filterClaims(claims: MockClaim[], filters: Filters, search: string): Mo
   });
 }
 
-function adaptToClaimHeader(c: MockClaim) {
-  return {
-    claimId: c.claimId,
-    billNo: c.billNo,
-    trainerName: c.trainerName,
-    trainerId: '',
-    batchIds: c.assignmentIds ?? [],
-    clientName: c.clientName,
-    courseName: '',
-    trainingLocation: `${c.baseCity ?? ''}${(c.destinationCities[0] ?? "") && (c.destinationCities[0] ?? "") !== 'India' ? `, ${(c.destinationCities[0] ?? "")}` : ''}`,
-    claimStartDate: c.submittedAt ?? '',
-    claimEndDate: c.lastActionAt ?? '',
-    totalClaimedAmount: c.totalClaimedAmount ?? 0,
-    approvedAmount: c.approvedAmount ?? 0,
-    deductionAmount: c.deductionAmount ?? 0,
-    status: toClaimStatus(c.status),
-    pendingWith: toPendingWith(c.pendingWith),
-    agingDays: c.agingDays ?? 0,
-    slaBreached: c.slaBreached,
-    exceptionFlag: c.exceptionFlag,
-    missingDocumentFlag: c.missingDocumentFlag,
-    duplicateFlag: false,
-    ledgerMismatchFlag: c.ledgerMismatchFlag,
-    lastActionAt: c.lastActionAt ?? '',
-    assignmentIds: c.assignmentIds ?? [],
-    baseCity: '',
-    destinationCities: [] as string[],
-    submittedAt: c.submittedAt,
-    adminOwnerId: undefined as string | undefined,
-    eligibleAmount: 0,
-    advanceAdjusted: 0,
-    miscAdjustments: 0,
-    recoverableAmount: c.recoverableAmount ?? 0,
-    netPayable: c.netPayable ?? 0,
-    currency: c.currency ?? 'INR',
-    paymentStatus: 'Unpaid' as PaymentStatus,
-  };
-}
+// No-op adapter — getClaims() already returns ClaimHeader[]
+function adaptToClaimHeader(c: ClaimHeader): ClaimHeader { return c; }
 
 const STATUS_MAP: Record<string, ClaimStatus> = {
   DRAFT: 'Draft',
@@ -364,18 +325,8 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Merge mock claims with any localStorage overrides
-  const allClaims = useMemo<MockClaim[]>(() => {
-    const stored = getClaims();
-    if (stored.length === 0) return mockClaims;
-    // Merge: localStorage overrides mock for matching ids
-    const storedMap = new Map(stored.map((c) => [c.claimId, c]));
-    return mockClaims.map((c) => {
-      const override = storedMap.get(c.claimId);
-      if (override) return { ...c, ...override } as MockClaim;
-      return c;
-    });
-  }, []);
+  // Load all real claims from localStorage
+  const allClaims = useMemo<ClaimHeader[]>(() => getClaims(), []);
 
   // ── Filtering ────────────────────────────────────────────────────────────
   const filtered = useMemo(
@@ -421,15 +372,15 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
       (c) =>
         !c.exceptionFlag &&
         !c.missingDocumentFlag &&
-        !(c as MockClaim & { duplicateFlag?: boolean }).duplicateFlag &&
+        !c.duplicateFlag &&
         !c.ledgerMismatchFlag &&
         !c.slaBreached &&
-        ['SUBMITTED', 'UNDER REVIEW', 'RESUBMITTED'].includes((c.status ?? '').toUpperCase())
+        ['Submitted', 'Under Review', 'Resubmitted'].includes(c.status ?? '')
     );
 
   // ── Bulk actions ─────────────────────────────────────────────────────────
   const updateClaimsInStorage = useCallback(
-    (ids: string[], updater: (c: MockClaim) => Partial<MockClaim>) => {
+    (ids: string[], updater: (c: ClaimHeader) => Partial<ClaimHeader>) => {
       const storedAll = getClaims();
       const storedMap = new Map(storedAll.map((c) => [c.claimId, c]));
 

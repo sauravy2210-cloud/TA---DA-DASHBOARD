@@ -1,5 +1,6 @@
 ﻿import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { getClaims } from '../services/storageService';
 import {
   PieChart,
   Pie,
@@ -54,9 +55,11 @@ function formatDate(iso: string | null | undefined): string {
   return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' });
 }
 
-// ── Mock data adapted to ClaimHeader shape ─────────────────────────────────
+// ── Attention items ────────────────────────────────────────────────────────
+// (adminMockClaims removed — data comes from getClaims() in each useMemo)
 
-const adminMockClaims: ClaimHeader[] = [
+/* placeholder to keep the comment block intact */
+const _unused: ClaimHeader[] = [
   {
     claimId: 'clm-0051',
     billNo: 'TA-2026-0051',
@@ -513,6 +516,7 @@ const adminMockClaims: ClaimHeader[] = [
     agingDays: 0,
   },
 ];
+void _unused; // suppress unused warning
 
 // ── Attention items ────────────────────────────────────────────────────────
 
@@ -555,7 +559,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
   // ── Aggregations from mock data ──────────────────────────────────────────
 
   const kpis = useMemo(() => {
-    const claims = adminMockClaims;
+    const claims = getClaims();
 
     const newBills = claims.filter((c) => c.status === 'Submitted').length;
     const underReview = claims.filter((c) => c.status === 'Under Review').length;
@@ -592,7 +596,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
   const pieData = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const c of adminMockClaims) {
+    for (const c of getClaims()) {
       counts[c.status] = (counts[c.status] ?? 0) + 1;
     }
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
@@ -602,7 +606,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
   const agingData = useMemo(() => {
     const buckets = { '<1 day': 0, '1-2 days': 0, '2-3 days': 0, '3-5 days': 0, '>5 days': 0 };
-    for (const c of adminMockClaims) {
+    for (const c of getClaims()) {
       if (c.agingDays < 1) buckets['<1 day']++;
       else if (c.agingDays <= 2) buckets['1-2 days']++;
       else if (c.agingDays <= 3) buckets['2-3 days']++;
@@ -616,7 +620,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
   const attentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = [];
-    for (const c of adminMockClaims) {
+    for (const c of getClaims()) {
       if (c.slaBreached) {
         items.push({
           claimId: c.claimId,
@@ -669,7 +673,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
   const recentClaims = useMemo(
     () =>
-      [...adminMockClaims]
+      [...getClaims()]
         .filter((c) => c.submittedAt)
         .sort((a, b) =>
           new Date(b.submittedAt!).getTime() - new Date(a.submittedAt!).getTime()
@@ -681,7 +685,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
   // ── MTD amounts ──────────────────────────────────────────────────────────
 
   const mtd = useMemo(() => {
-    const claims = adminMockClaims;
+    const claims = getClaims();
     const totalClaimed = claims.reduce((s, c) => s + c.totalClaimedAmount, 0);
     const eligible = claims.reduce((s, c) => s + c.eligibleAmount, 0);
     const totalApproved = claims.reduce((s, c) => s + c.approvedAmount, 0);

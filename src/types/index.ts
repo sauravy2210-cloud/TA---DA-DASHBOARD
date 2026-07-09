@@ -9,6 +9,45 @@ export interface BankDetails {
   accountHolderName: string;
 }
 
+// Fields returned by apikey=236 (Get Employee Details PMS)
+export interface PmsEmployeeDetails {
+  // Core name fields
+  first_name:         string | null;
+  middle_name:        string | null;
+  last_name:          string | null;
+  // Contact
+  email_address:      string | null;
+  mobile_number?:     string | null;
+  phone_number?:      string | null;
+  contact_number?:    string | null;
+  // Designation — API returns "designation_name" (not "designation")
+  designation_name?:  string | null;
+  designation?:       string | null;
+  // Department — API returns "deparment_name" (typo in API, no 't')
+  deparment_name?:    string | null;
+  department_name?:   string | null;
+  department?:        string | null;
+  // Location
+  city_name:          string | null;
+  state_name:         string | null;
+  country_name:       string | null;
+  address_details:    string | null;
+  address_pin_code:   string | null;
+  // Reporting
+  manager_name:       string | null;
+  reporting_manager?: string | null;
+  // HR fields (may or may not be present depending on API version)
+  joining_date?:      string | null;
+  date_of_birth?:     string | null;
+  gender?:            string | null;
+  pan_number?:        string | null;
+  // Bank fields
+  bank_name?:         string | null;
+  bank_account_no?:   string | null;
+  bank_ifsc_code?:    string | null;
+  [key: string]: unknown;
+}
+
 export interface User {
   id: string;
   name: string;
@@ -17,6 +56,7 @@ export interface User {
   avatarInitials: string;
   trainerId?: string;
   bankDetails?: BankDetails;
+  pmsDetails?: PmsEmployeeDetails;  // full PMS record stored at login
 }
 
 export interface TrainerProfile {

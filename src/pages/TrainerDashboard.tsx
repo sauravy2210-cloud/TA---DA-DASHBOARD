@@ -1,34 +1,24 @@
-﻿import { useMemo } from 'react';
+﻿import { useMemo, useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  FileText,
   Clock,
   Send,
-  AlertTriangle,
   CheckCircle2,
-  Wallet,
   BadgeCheck,
   XCircle,
-  TrendingUp,
-  TrendingDown,
   Plus,
-  Eye,
-  CalendarDays,
-  MapPin,
-  Building2,
   BookOpen,
   ArrowRight,
   Bell,
-  CreditCard,
+  CalendarDays,
+  Plane, Calendar,
+  ChevronRight, Search, Eye,
+  Loader2, AlertCircle, ExternalLink,
 } from 'lucide-react';
 
 import KpiCard from '../components/KpiCard';
-import { ClaimTable } from '../components/ClaimTable';
-import EmptyState from '../components/EmptyState';
-import { mockClaims } from '../data/mockClaims';
-import { mockAssignments } from '../data/mockAssignments';
-import { mockVenues } from '../data/mockMasters';
-import type { User, ClaimStatus, PendingWith, PaymentStatus } from '../types';
+import { getClaims } from '../services/storageService';
+import type { User, ClaimHeader } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -60,9 +50,73 @@ function todayFormatted(): string {
   });
 }
 
-function daysUntilDeadline(deadline: string): number {
-  const diff = new Date(deadline).getTime() - new Date().getTime();
-  return Math.ceil(diff / (1000 * 60 * 60 * 24));
+// ── Trainer Flight Details API (api_key=108) ──────────────────────────────────
+
+interface FlightRecord {
+  trip_ID: number | null;
+  flight_number: string | null;
+  from_city: string | null;
+  to_city: string | null;
+  departure_date: string | null;   // "2026-07-04T00:00:00"
+  departure_time: string | null;   // "16:00:00"
+  arrival_date: string | null;
+  arrival_time: string | null;
+  connecting_flight_id: number | null;
+  Is_cancelled: string | null;     // "Yes" | "No"
+  ticket_path: string | null;
+  insurance_path: string | null;
+  airlines_name: string | null;
+}
+
+async function fetchTrainerFlights(email: string): Promise<FlightRecord[]> {
+  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userName: 'Saurav_TrainerFlightDe',
+      userPassword: 'HD#GFMKWkk4n',
+      userRole: 'Trainer Flight Details',
+    }),
+  });
+  const tokenData = await tokenRes.json();
+  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token failed');
+  const { accessToken, deviceToken } = tokenData.content;
+
+  const url =
+    `/koenig-api/api/Kites/Operator/common` +
+    `?apikey=108` +
+    `&accessToken=${encodeURIComponent(accessToken)}` +
+    `&deviceToken=${encodeURIComponent(deviceToken)}`;
+
+  const dataRes = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email_Address: email }),
+  });
+  const data = await dataRes.json();
+  if (data.statuscode !== 200) throw new Error(data.message || 'Flights fetch failed');
+
+  const raw: FlightRecord[] =
+    typeof data.content === 'string' ? JSON.parse(data.content) : (data.content ?? []);
+  return Array.isArray(raw) ? raw : [];
+}
+
+// "2026-07-04T00:00:00" → "2026-07-04"
+function parseDT(dt: string | null): string {
+  return dt ? dt.slice(0, 10) : '';
+}
+// "16:00:00" → "16:00"
+function parseTM(t: string | null): string {
+  return t ? t.slice(0, 5) : '';
+}
+// "2026-07-04" → formatted display
+function fmtDate(iso: string): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function daysUntil(iso: string): number {
+  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
 }
 
 // Map mockClaims status strings to ClaimHeader status type
@@ -105,139 +159,93 @@ interface TrainerDashboardProps {
 export default function TrainerDashboard({ currentUser }: TrainerDashboardProps) {
   const navigate = useNavigate();
 
-  // Resolve demo trainer name: for SuperAdmin show first trainer's data as demo
-  const trainerName = useMemo(() => {
-    if (!currentUser) return 'Rahul Verma';
-    if (currentUser.role === 'SuperAdmin') return 'Rahul Verma';
-    return currentUser.name;
-  }, [currentUser]);
+  const trainerName = currentUser?.name || '';
 
-  // Filter claims for this trainer (by trainerName in mock data)
-  const myClaims = useMemo(
-    () => mockClaims.filter((c) => c.trainerName === trainerName),
-    [trainerName]
-  );
+  const [myClaims, setMyClaims] = useState<ClaimHeader[]>([]);
 
-  // Filter eligible assignments for this trainer
-  const myAssignments = useMemo(
-    () =>
-      mockAssignments.filter(
-        (a) =>
-          a.trainerIds.includes(currentUser?.trainerId ?? trainerName) &&
-          a.status === 'Completed'
-      ),
-    [trainerName]
-  );
+  useEffect(() => {
+    const all = getClaims();
+    const mine = all.filter(
+      c => c.trainerId === (currentUser?.trainerId || currentUser?.id) ||
+           c.trainerName === trainerName
+    );
+    setMyClaims(mine);
+  }, [currentUser, trainerName]);
 
-  // KPI counts
+  // Upcoming travel state (live API)
+  const [flights, setFlights] = useState<FlightRecord[]>([]);
+  const [flightsLoading, setFlightsLoading] = useState(false);
+  const [flightsError, setFlightsError] = useState('');
+  const [travelSearch, setTravelSearch] = useState('');
+  const [travelExpanded, setTravelExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    const email = currentUser?.email ?? '';
+    // Only fetch for real Trainer logins with a valid email
+    if (!email || currentUser?.role !== 'Trainer') return;
+    setFlightsLoading(true);
+    setFlightsError('');
+    fetchTrainerFlights(email)
+      .then(data => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const upcoming = data.filter(f => {
+          if (f.Is_cancelled === 'Yes') return false;
+          const dep = parseDT(f.departure_date);
+          if (!dep) return false;
+          return new Date(dep) >= today;
+        });
+        upcoming.sort((a, b) => parseDT(a.departure_date).localeCompare(parseDT(b.departure_date)));
+        setFlights(upcoming);
+      })
+      .catch(err => {
+        const msg: string = err instanceof Error ? err.message : String(err);
+        // Treat permission/no-data responses as empty rather than hard error
+        if (msg.toLowerCase().includes('forbidden') || msg.toLowerCase().includes('permission')) {
+          setFlights([]);
+        } else {
+          setFlightsError(msg || 'Failed to load flights');
+        }
+      })
+      .finally(() => setFlightsLoading(false));
+  }, [currentUser?.email, currentUser?.role]);
+
+  const filteredFlights = flights.filter(f => {
+    const q = travelSearch.toLowerCase();
+    return (
+      (f.airlines_name ?? '').toLowerCase().includes(q) ||
+      (f.from_city ?? '').toLowerCase().includes(q) ||
+      (f.to_city ?? '').toLowerCase().includes(q) ||
+      (f.flight_number ?? '').toLowerCase().includes(q)
+    );
+  });
+
+  const nearestDays = filteredFlights.length > 0
+    ? daysUntil(parseDT(filteredFlights[0].departure_date))
+    : null;
+
+  // KPI counts — myClaims already uses proper ClaimStatus strings
   const kpi = useMemo(() => {
-    const pending = myClaims.filter((c) =>
-      ['Submitted', 'Under Review'].includes(normaliseStatus(c.status))
-    ).length;
-    const draft = myClaims.filter((c) => normaliseStatus(c.status) === 'Draft').length;
-    const submitted = myClaims.filter((c) => normaliseStatus(c.status) === 'Submitted').length;
-    const clarification = myClaims.filter(
-      (c) => normaliseStatus(c.status) === 'Clarification Required'
-    ).length;
-    const approved = myClaims.filter((c) =>
-      ['Approved', 'Partially Approved'].includes(normaliseStatus(c.status))
-    ).length;
+    const st = (c: ClaimHeader) => c.status;
+    const pending = myClaims.filter(c => ['Submitted', 'Under Review'].includes(st(c))).length;
+    const draft = myClaims.filter(c => st(c) === 'Draft').length;
+    const submitted = myClaims.filter(c => st(c) === 'Submitted').length;
+    const clarification = myClaims.filter(c => st(c) === 'Clarification Required').length;
+    const approved = myClaims.filter(c => ['Approved', 'Partially Approved'].includes(st(c))).length;
     const paymentPendingAmt = myClaims
-      .filter((c) => normaliseStatus(c.status) === 'Payment Pending')
+      .filter(c => st(c) === 'Payment Pending')
       .reduce((s, c) => s + (c.netPayable ?? c.approvedAmount ?? 0), 0);
-    const paid = myClaims.filter((c) => normaliseStatus(c.status) === 'Paid').length;
-    const rejected = myClaims.filter((c) => normaliseStatus(c.status) === 'Rejected').length;
+    const paid = myClaims.filter(c => st(c) === 'Paid').length;
+    const rejected = myClaims.filter(c => st(c) === 'Rejected').length;
     const totalClaimed = myClaims.reduce((s, c) => s + (c.totalClaimedAmount ?? 0), 0);
-    const totalApproved = myClaims.reduce(
-      (s, c) => s + (c.approvedAmount ?? 0),
-      0
-    );
-    const totalDeducted = myClaims.reduce(
-      (s, c) => s + (c.deductionAmount ?? 0),
-      0
-    );
-    return {
-      pending,
-      draft,
-      submitted,
-      clarification,
-      approved,
-      paymentPendingAmt,
-      paid,
-      rejected,
-      totalClaimed,
-      totalApproved,
-      totalDeducted,
-    };
+    const totalApproved = myClaims.reduce((s, c) => s + (c.approvedAmount ?? 0), 0);
+    const totalDeducted = myClaims.reduce((s, c) => s + (c.deductionAmount ?? 0), 0);
+    return { pending, draft, submitted, clarification, approved, paymentPendingAmt, paid, rejected, totalClaimed, totalApproved, totalDeducted };
   }, [myClaims]);
 
-  // Last 5 claims for the table
-  const recentClaims = useMemo(
-    () => [...myClaims].slice(0, 5),
-    [myClaims]
-  );
-
-  // Clarification required claims
   const clarificationClaims = useMemo(
-    () => myClaims.filter((c) => normaliseStatus(c.status) === 'Clarification Required'),
+    () => myClaims.filter(c => c.status === 'Clarification Required'),
     [myClaims]
-  );
-
-  // Payment Pending claims
-  const paymentPendingClaims = useMemo(
-    () =>
-      myClaims.filter((c) =>
-        ['Payment Pending', 'Approved', 'Partially Approved'].includes(normaliseStatus(c.status))
-      ),
-    [myClaims]
-  );
-
-  // Adapt mockClaims shape to what ClaimTable expects (ClaimHeader)
-  const adaptedClaims = useMemo(
-    () =>
-      recentClaims.map((c) => ({
-        claimId: c.claimId,
-        billNo: c.billNo,
-        trainerId: '',
-        trainerName: c.trainerName,
-        assignmentIds: c.assignmentIds ?? [],
-        batchIds: [] as string[],
-        clientName: c.clientName,
-        courseName: c.clientName, // mock doesn't have courseName on claim
-        trainingLocation: c.trainingLocation ?? c.baseCity ?? '',
-        claimStartDate: c.submittedAt ?? c.lastActionAt,
-        claimEndDate: c.lastActionAt,
-        baseCity: '',
-        destinationCities: [c.baseCity ?? ''],
-        status: normaliseStatus(c.status) as ClaimStatus,
-        pendingWith: (c.pendingWith === 'Trainer'
-          ? 'Trainer'
-          : c.pendingWith === 'Finance'
-          ? 'Finance'
-          : c.pendingWith === 'HR/Admin'
-          ? 'HR/Admin'
-          : 'None') as PendingWith,
-        submittedAt: c.submittedAt ?? '',
-        lastActionAt: c.lastActionAt,
-        adminOwnerId: '',
-        totalClaimedAmount: c.totalClaimedAmount ?? 0,
-        eligibleAmount: c.approvedAmount ?? c.totalClaimedAmount ?? 0,
-        approvedAmount: c.approvedAmount ?? 0,
-        deductionAmount: c.deductionAmount ?? 0,
-        advanceAdjusted: 0,
-        miscAdjustments: 0,
-        recoverableAmount: c.recoverableAmount ?? 0,
-        netPayable: c.netPayable ?? 0,
-        currency: c.currency ?? 'INR',
-        exceptionFlag: c.exceptionFlag ?? false,
-        missingDocumentFlag: c.missingDocumentFlag ?? false,
-        duplicateFlag: false,
-        ledgerMismatchFlag: c.ledgerMismatchFlag ?? false,
-        slaBreached: c.slaBreached ?? false,
-        paymentStatus: 'Unpaid' as PaymentStatus,
-        agingDays: c.agingDays ?? 0,
-      })),
-    [recentClaims]
   );
 
   return (
@@ -274,14 +282,6 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
             <div className="flex items-center gap-3 flex-shrink-0">
               <button
                 type="button"
-                onClick={() => navigate('/claims/new')}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-white text-blue-700 font-semibold text-sm shadow hover:bg-blue-50 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-                Create TA/DA Bill
-              </button>
-              <button
-                type="button"
                 onClick={() => navigate('/claims')}
                 className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg border-2 border-white text-white font-semibold text-sm hover:bg-white/10 transition-colors"
               >
@@ -298,7 +298,7 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
         {/* ── KPI Cards ─────────────────────────────────────────────────────── */}
         <section>
           <h2 className="text-base font-semibold text-gray-700 mb-4">Overview</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
 
             <KpiCard
               title="Pending TA/DA Bills"
@@ -307,15 +307,6 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
               icon={Clock}
               accentColor="yellow"
               onClick={() => navigate('/claims?status=pending')}
-            />
-
-            <KpiCard
-              title="Draft Bills"
-              value={kpi.draft}
-              subtitle="Incomplete — action needed"
-              icon={FileText}
-              accentColor="blue"
-              onClick={() => navigate('/claims?status=draft')}
             />
 
             <KpiCard
@@ -328,31 +319,12 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
             />
 
             <KpiCard
-              title="Clarification Required"
-              value={kpi.clarification}
-              subtitle="Respond to reviewer queries"
-              icon={AlertTriangle}
-              accentColor="red"
-              onClick={() => navigate('/claims?status=clarification')}
-            />
-
-            <KpiCard
               title="Approved Bills"
               value={kpi.approved}
               subtitle="Approved by HR/Finance"
               icon={CheckCircle2}
               accentColor="green"
               onClick={() => navigate('/claims?status=approved')}
-            />
-
-            <KpiCard
-              title="Payment Pending Amount"
-              value={kpi.paymentPendingAmt}
-              subtitle="Approved, awaiting disbursement"
-              icon={Wallet}
-              accentColor="yellow"
-              isAmount
-              onClick={() => navigate('/claims?status=payment_pending')}
             />
 
             <KpiCard
@@ -373,41 +345,6 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
               onClick={() => navigate('/claims?status=rejected')}
             />
 
-            <KpiCard
-              title="Total Claimed"
-              value={kpi.totalClaimed}
-              subtitle="Cumulative claimed amount"
-              icon={TrendingUp}
-              accentColor="indigo"
-              isAmount
-            />
-
-            <KpiCard
-              title="Total Approved"
-              value={kpi.totalApproved}
-              subtitle="Cumulative approved amount"
-              icon={TrendingUp}
-              accentColor="teal"
-              isAmount
-            />
-
-            <KpiCard
-              title="Total Deducted"
-              value={kpi.totalDeducted}
-              subtitle="Policy deductions applied"
-              icon={TrendingDown}
-              accentColor="red"
-              isAmount
-            />
-
-            <KpiCard
-              title="Quick Create"
-              value="New Bill"
-              subtitle="Start a TA/DA claim now"
-              icon={Plus}
-              accentColor="blue"
-              onClick={() => navigate('/claims/new')}
-            />
           </div>
         </section>
 
@@ -475,235 +412,175 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
           </section>
         )}
 
-        {/* ── Eligible Assignments ─────────────────────────────────────────── */}
+        {/* ── Upcoming Travel ──────────────────────────────────────────────── */}
         <section>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-700">
-              Eligible Assignments
-            </h2>
-            {myAssignments.length > 0 && (
-              <span className="text-xs text-gray-400">
-                {myAssignments.length} assignment{myAssignments.length !== 1 ? 's' : ''} eligible for claim
-              </span>
+            <div>
+              <h2 className="text-base font-semibold text-gray-700">Upcoming Travel</h2>
+              <p className="text-xs text-gray-400 mt-0.5">Booked flights fetched live from PMS</p>
+            </div>
+            {flightsLoading && (
+              <Loader2 size={18} className="animate-spin text-blue-500" />
             )}
           </div>
 
-          {myAssignments.length === 0 ? (
-            <EmptyState
-              icon={CalendarDays}
-              title="No eligible assignments"
-              subtitle="You have no completed assignments pending a TA/DA claim right now."
-              action={{ label: 'View All Bills', onClick: () => navigate('/claims') }}
-            />
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {myAssignments.map((asgn) => {
-                const daysLeft = asgn.claimDeadline
-                  ? daysUntilDeadline(asgn.claimDeadline)
-                  : null;
-                const deadlineUrgent = daysLeft !== null && daysLeft <= 7;
+          {/* Error */}
+          {flightsError && (
+            <div className="flex items-center gap-2 mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-sm text-red-700">
+              <AlertCircle size={16} className="flex-shrink-0" />
+              <span>{flightsError}</span>
+            </div>
+          )}
 
-                return (
-                  <div
-                    key={asgn.assignmentId}
-                    className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm flex flex-col gap-3 hover:shadow-md transition-shadow"
+          {/* Summary mini-cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            {[
+              { label: 'Total upcoming', value: flights.length, color: 'bg-blue-50 text-blue-700' },
+              { label: 'Domestic', value: flights.filter(f => (f.from_city ?? '').length > 0 && (f.to_city ?? '') === (f.to_city ?? '')).length, color: 'bg-green-50 text-green-700' },
+              { label: 'With ticket', value: flights.filter(f => !!f.ticket_path).length, color: 'bg-amber-50 text-amber-700' },
+              { label: 'Next flight in', value: nearestDays !== null ? (nearestDays === 0 ? 'Today' : nearestDays === 1 ? 'Tomorrow' : `${nearestDays}d`) : '—', color: 'bg-purple-50 text-purple-700' },
+            ].map(c => (
+              <div key={c.label} className={`rounded-xl p-3 ${c.color}`}>
+                <p className="text-xs font-medium opacity-70">{c.label}</p>
+                <p className="text-2xl font-bold mt-0.5">{c.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Search */}
+          <div className="mb-4">
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={travelSearch}
+                onChange={e => setTravelSearch(e.target.value)}
+                placeholder="Search by airline, city, or flight number…"
+                className="w-full pl-8 pr-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white"
+              />
+            </div>
+          </div>
+
+          {/* Flight cards */}
+          <div className="space-y-3">
+            {!flightsLoading && !flightsError && filteredFlights.length === 0 && (
+              <div className="text-center py-12 text-gray-400">
+                <Plane size={32} className="mx-auto mb-3 opacity-40" />
+                <p className="text-sm">
+                  {flights.length === 0
+                    ? 'No upcoming flights found for your account.'
+                    : 'No flights match your search.'}
+                </p>
+              </div>
+            )}
+            {filteredFlights.map((f, idx) => {
+              const depDate = parseDT(f.departure_date);
+              const arrDate = parseDT(f.arrival_date);
+              const depTime = parseTM(f.departure_time);
+              const arrTime = parseTM(f.arrival_time);
+              const days = depDate ? daysUntil(depDate) : null;
+              const cardId = String(f.trip_ID ?? idx);
+              const isExpanded = travelExpanded === cardId;
+              return (
+                <div key={cardId} className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => setTravelExpanded(isExpanded ? null : cardId)}
+                    className="w-full text-left px-5 py-4"
                   >
-                    {/* Header row */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-semibold text-gray-800 leading-snug">
-                          {asgn.courseName}
-                        </p>
-                        <p className="text-xs text-gray-400 mt-0.5">{asgn.batchId ?? asgn.assignmentId}</p>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 flex-shrink-0 mt-0.5">
+                          <Plane size={15} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-gray-800 text-sm">
+                              {f.from_city ?? '—'} → {f.to_city ?? '—'}
+                            </span>
+                            {f.airlines_name && (
+                              <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700 border border-blue-100">
+                                {f.airlines_name}
+                              </span>
+                            )}
+                            {f.flight_number && (
+                              <span className="text-xs text-gray-400">{f.flight_number}</span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 mt-1.5 text-xs text-gray-500">
+                            {depDate && (
+                              <span className="flex items-center gap-1">
+                                <Calendar size={11} />
+                                {fmtDate(depDate)}{depTime ? ` · ${depTime}` : ''}
+                              </span>
+                            )}
+                            {days !== null && (
+                              <span className="flex items-center gap-1 text-blue-600 font-medium">
+                                <Clock size={11} />
+                                {days === 0 ? 'Today' : days === 1 ? 'Tomorrow' : `in ${days} days`}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      {asgn.country !== 'India' && (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 text-xs font-medium flex-shrink-0">
-                          International
-                        </span>
-                      )}
+                      <ChevronRight size={16} className={`flex-shrink-0 text-gray-400 mt-1 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                     </div>
+                  </button>
 
-                    {/* Details */}
-                    <div className="space-y-1.5 text-xs text-gray-600">
-                      <div className="flex items-center gap-1.5">
-                        <Building2 className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                        <span>{asgn.clientName}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <MapPin className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                        <span className="truncate">{mockVenues.find(v => v.venueId === asgn.venueId)?.venueName ?? asgn.city}</span>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        <CalendarDays className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />
-                        <span>
-                          {formatDate(asgn.startDate)} – {formatDate(asgn.endDate)}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Deadline */}
-                    {asgn.claimDeadline && (
-                      <div
-                        className={`flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg ${
-                          deadlineUrgent
-                            ? 'bg-red-50 text-red-700 border border-red-200'
-                            : 'bg-gray-50 text-gray-600'
-                        }`}
-                      >
-                        <Clock className="w-3.5 h-3.5" />
-                        Deadline: {formatDate(asgn.claimDeadline)}
-                        {daysLeft !== null && (
-                          <span className={deadlineUrgent ? 'text-red-500 font-bold' : 'text-gray-400'}>
-                            ({daysLeft}d left)
-                          </span>
+                  {isExpanded && (
+                    <div className="border-t border-gray-100 px-5 py-4 bg-gray-50">
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mb-4">
+                        <div>
+                          <p className="text-xs text-gray-400 mb-0.5">Departure</p>
+                          <p className="text-sm font-medium text-gray-700">
+                            {fmtDate(depDate)}{depTime ? ` at ${depTime}` : ''}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-400 mb-0.5">Arrival</p>
+                          <p className="text-sm font-medium text-gray-700">
+                            {fmtDate(arrDate)}{arrTime ? ` at ${arrTime}` : ''}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-400 mb-0.5">Trip ID</p>
+                          <p className="text-sm font-medium text-gray-700">{f.trip_ID ?? '—'}</p>
+                        </div>
+                        {f.connecting_flight_id != null && (
+                          <div>
+                            <p className="text-xs text-gray-400 mb-0.5">Connecting flight ID</p>
+                            <p className="text-sm font-medium text-gray-700">{f.connecting_flight_id}</p>
+                          </div>
                         )}
                       </div>
-                    )}
 
-                    {/* Action */}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        navigate(`/claims/new?assignmentId=${asgn.assignmentId}`)
-                      }
-                      className="mt-auto w-full inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      Create Bill
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-
-        {/* ── Recent Bills Table ───────────────────────────────────────────── */}
-        <section>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-gray-700">My Recent Bills</h2>
-            <button
-              type="button"
-              onClick={() => navigate('/claims')}
-              className="text-sm text-blue-600 hover:text-blue-800 font-medium inline-flex items-center gap-1"
-            >
-              View all
-              <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-
-          {recentClaims.length === 0 ? (
-            <EmptyState
-              icon={FileText}
-              title="No bills yet"
-              subtitle="You haven't created any TA/DA bills. Start by creating your first bill."
-              action={{ label: 'Create TA/DA Bill', onClick: () => navigate('/claims/new') }}
-            />
-          ) : (
-            <ClaimTable
-              claims={adaptedClaims}
-              onClaimClick={(id) => navigate(`/claims/${id}`)}
-              userRole="Trainer"
-            />
-          )}
-        </section>
-
-        {/* ── Payment Status Panel ─────────────────────────────────────────── */}
-        <section>
-          <div className="flex items-center gap-2 mb-4">
-            <CreditCard className="w-5 h-5 text-gray-500" />
-            <h2 className="text-base font-semibold text-gray-700">Payment Status</h2>
-          </div>
-
-          {paymentPendingClaims.length === 0 ? (
-            <EmptyState
-              icon={Wallet}
-              title="No pending payments"
-              subtitle="All your approved claims have been disbursed."
-            />
-          ) : (
-            <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-100 text-sm">
-                <thead className="bg-gray-50">
-                  <tr>
-                    {['Bill No', 'Client', 'Location', 'Approved Amount', 'Net Payable', 'Status', 'Action'].map(
-                      (h) => (
-                        <th
-                          key={h}
-                          className="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
-                        >
-                          {h}
-                        </th>
-                      )
-                    )}
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-gray-100">
-                  {paymentPendingClaims.map((claim) => {
-                    const normStatus = normaliseStatus(claim.status);
-                    const isPaid = normStatus === 'Paid';
-                    const isPaymentPending = normStatus === 'Payment Pending';
-                    return (
-                      <tr
-                        key={claim.claimId}
-                        className="hover:bg-blue-50 cursor-pointer transition-colors"
-                        onClick={() => navigate(`/claims/${claim.claimId}`)}
-                      >
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <span className="text-blue-600 font-medium text-xs hover:underline">
-                            {claim.billNo}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-700 max-w-[140px] truncate">
-                          {claim.clientName}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-xs text-gray-500">
-                          {claim.baseCity ?? claim.trainingLocation ?? '—'}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-xs font-semibold text-green-700">
-                          {formatINR(claim.approvedAmount ?? 0)}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap text-xs font-bold text-gray-900">
-                          {claim.netPayable != null
-                            ? formatINR(claim.netPayable)
-                            : '—'}
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap">
-                          <span
-                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                              isPaid
-                                ? 'bg-emerald-100 text-emerald-700'
-                                : isPaymentPending
-                                ? 'bg-amber-100 text-amber-700'
-                                : 'bg-green-100 text-green-700'
-                            }`}
+                      <div className="flex flex-wrap gap-2">
+                        {f.ticket_path && (
+                          <a
+                            href={f.ticket_path}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-300 text-gray-600 text-xs font-medium hover:bg-gray-100 transition-colors"
                           >
-                            {isPaid ? (
-                              <><CheckCircle2 className="w-3 h-3" /> Paid</>
-                            ) : isPaymentPending ? (
-                              <><Clock className="w-3 h-3" /> Payment Pending</>
-                            ) : (
-                              <><CheckCircle2 className="w-3 h-3" /> Approved</>
-                            )}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            type="button"
-                            onClick={() => navigate(`/claims/${claim.claimId}`)}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded hover:bg-blue-100 transition-colors"
+                            <ExternalLink size={12} /> View Ticket
+                          </a>
+                        )}
+                        {f.insurance_path && (
+                          <a
+                            href={f.insurance_path}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-300 text-gray-600 text-xs font-medium hover:bg-gray-100 transition-colors"
                           >
-                            <Eye className="w-3 h-3" />
-                            View
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                            <ExternalLink size={12} /> Insurance
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </section>
 
       </div>

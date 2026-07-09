@@ -26,6 +26,10 @@ import Reports from './pages/Reports'
 import AuditLogs from './pages/AuditLogs'
 import PolicyMaster from './pages/PolicyMaster'
 import NotificationsSLA from './pages/NotificationsSLA'
+import UpcomingTravel from './pages/UpcomingTravel'
+import CreateTADABill from './pages/CreateTADABill'
+import HelpPolicy from './pages/HelpPolicy'
+import TrainerProfile from './pages/TrainerProfile'
 
 // ── Local-storage helpers ────────────────────────────────────────────────────
 const LS_KEY = 'tada_current_user'
@@ -367,6 +371,21 @@ export default function App() {
         />
 
         <Route
+          path="/upcoming-travel"
+          element={
+            <AuthGuard currentUser={currentUser}>
+              <ShellWrap
+                currentUser={currentUser!}
+                onRoleSwitch={handleRoleSwitch}
+                onLogout={handleLogout}
+              >
+                <UpcomingTravel currentUser={currentUser!} />
+              </ShellWrap>
+            </AuthGuard>
+          }
+        />
+
+        <Route
           path="/notifications"
           element={
             <AuthGuard currentUser={currentUser}>
@@ -381,7 +400,43 @@ export default function App() {
           }
         />
 
+        <Route
+          path="/trainer/help"
+          element={
+            <AuthGuard currentUser={currentUser}>
+              <ShellWrap currentUser={currentUser!} onRoleSwitch={handleRoleSwitch} onLogout={handleLogout}>
+                <HelpPolicy />
+              </ShellWrap>
+            </AuthGuard>
+          }
+        />
+
+        <Route
+          path="/trainer/profile"
+          element={
+            <AuthGuard currentUser={currentUser}>
+              <ShellWrap currentUser={currentUser!} onRoleSwitch={handleRoleSwitch} onLogout={handleLogout}>
+                <TrainerProfile currentUser={currentUser!} />
+              </ShellWrap>
+            </AuthGuard>
+          }
+        />
+
         {/* Catch-all */}
+        <Route
+          path="/create-bill"
+          element={
+            <RoleGuard
+              currentUser={currentUser}
+              allowedRoles={['Trainer', 'HRAdmin', 'SuperAdmin']}
+            >
+              <ShellWrap currentUser={currentUser!} onRoleSwitch={handleRoleSwitch} onLogout={handleLogout}>
+                <CreateTADABill currentUser={currentUser!} />
+              </ShellWrap>
+            </RoleGuard>
+          }
+        />
+
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

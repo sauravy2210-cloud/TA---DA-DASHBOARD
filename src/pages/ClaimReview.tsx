@@ -67,7 +67,7 @@ import { mockAssignments } from '../data/mockAssignments';
 
 // Services
 import { logAction, ACTION_TYPES } from '../services/auditEngine';
-import { saveToStorage, STORAGE_KEYS } from '../services/storageService';
+import { saveToStorage, STORAGE_KEYS, getClaims, saveClaim } from '../services/storageService';
 import { formatINR } from '../services/calculationEngine';
 
 // Components
@@ -380,9 +380,9 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
   const { claimId } = useParams<{ claimId: string }>();
   const navigate = useNavigate();
 
-  // ── Resolve claim ──────────────────────────────────────────────────────────
+  // ── Resolve claim — real storage first, mock as fallback ──────────────────
   const claim = useMemo(
-    () => mockClaims.find((c) => c.claimId === claimId),
+    () => getClaims().find((c) => c.claimId === claimId) ?? mockClaims.find((c) => c.claimId === claimId),
     [claimId],
   );
 
@@ -629,6 +629,16 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       });
       return next;
     });
+    if (claim) {
+      saveClaim({
+        ...(claim as import('../types').ClaimHeader),
+        status: 'Approved',
+        approvedAmount: (claim as import('../types').ClaimHeader).totalClaimedAmount ?? 0,
+        netPayable: (claim as import('../types').ClaimHeader).totalClaimedAmount ?? 0,
+        pendingWith: 'Finance',
+        lastActionAt: new Date().toISOString(),
+      });
+    }
     logAction({
       claimId: claimId,
       entityType: 'Claim',
@@ -658,6 +668,14 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       ...updatedItems,
     ];
     saveToStorage(STORAGE_KEYS.LINE_ITEMS, merged);
+    if (claim) {
+      saveClaim({
+        ...(claim as import('../types').ClaimHeader),
+        status: 'Partially Approved',
+        pendingWith: 'Finance',
+        lastActionAt: new Date().toISOString(),
+      });
+    }
     logAction({
       claimId,
       entityType: 'Claim',
@@ -673,6 +691,14 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
   const handleSendClarification = useCallback(() => {
     if (!modalReason) return;
     addRemark(modalReason, 'HR');
+    if (claim) {
+      saveClaim({
+        ...(claim as import('../types').ClaimHeader),
+        status: 'Clarification Required',
+        pendingWith: 'Trainer',
+        lastActionAt: new Date().toISOString(),
+      });
+    }
     logAction({
       claimId,
       entityType: 'Claim',
@@ -688,6 +714,14 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
 
   const handleReject = useCallback(() => {
     if (!modalReasonCode || !modalRemark) return;
+    if (claim) {
+      saveClaim({
+        ...(claim as import('../types').ClaimHeader),
+        status: 'Rejected',
+        pendingWith: 'None',
+        lastActionAt: new Date().toISOString(),
+      });
+    }
     logAction({
       claimId,
       entityType: 'Claim',
