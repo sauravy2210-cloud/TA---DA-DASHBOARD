@@ -1,0 +1,8 @@
+{
+  "rewrites": [
+    {
+      "source": "/koenig-api/:path*",
+      "destination": "https://api.koenig-solutions.com/:path*"
+    }
+  ]
+}
