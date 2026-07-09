@@ -3,6 +3,10 @@
     {
       "source": "/koenig-api/:path*",
       "destination": "https://api.koenig-solutions.com/:path*"
+    },
+    {
+      "source": "/((?!koenig-api).*)",
+      "destination": "/index.html"
     }
   ]
 }
