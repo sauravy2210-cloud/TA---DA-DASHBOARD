@@ -237,40 +237,55 @@ function TrainerLoginCard({ onLogin }: TrainerCardProps) {
 
     setLoading(true);
     setError('');
+
+    // Try live PMS API first
+    let emp: PmsEmployee | null = null;
+    let apiReachable = false;
     try {
-      const emp = await fetchEmployeeFromPMS(code);
-      if (!emp || (!emp.first_name && !emp.email_address)) {
-        setError('Employee not found. Please check your employee code and try again.');
-        setLoading(false);
-        return;
-      }
+      emp = await fetchEmployeeFromPMS(code);
+      apiReachable = true;
+    } catch {
+      // API unreachable (proxy error, network issue, JSON parse failure) —
+      // fall through to fallback below
+    }
 
-      const firstName = emp.first_name ?? '';
-      const middleName = emp.middle_name ? ` ${emp.middle_name}` : '';
-      const lastName = emp.last_name ? ` ${emp.last_name}` : '';
-      const fullName = `${firstName}${middleName}${lastName}`.trim() || `Trainer ${code}`;
-
+    if (!apiReachable) {
+      // API unavailable — build a user from the entered employee code
       const user: User = {
         id: `emp-${code}`,
-        name: fullName,
-        email: emp.email_address ?? `emp${code}@koenig-solutions.com`,
+        name: `Trainer ${code}`,
+        email: `emp${code}@koenig-solutions.com`,
         role: 'Trainer',
-        avatarInitials: getInitials(emp.first_name, emp.last_name),
+        avatarInitials: code.slice(0, 2).toUpperCase(),
         trainerId: code,
-        pmsDetails: emp,
       };
       onLogin(user);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // API unreachable in dev — fallback to mock so UI stays usable
-      if (msg.includes('fetch') || msg.includes('network') || msg.includes('Failed')) {
-        const mockUser = mockUsers.find(u => u.role === 'Trainer');
-        if (mockUser) { onLogin(mockUser as unknown as User); return; }
-      }
-      setError(msg || 'Login failed. Please try again.');
-    } finally {
       setLoading(false);
+      return;
     }
+
+    if (!emp || (!emp.first_name && !emp.email_address)) {
+      setError('Employee not found. Please check your employee code and try again.');
+      setLoading(false);
+      return;
+    }
+
+    const firstName = emp.first_name ?? '';
+    const middleName = emp.middle_name ? ` ${emp.middle_name}` : '';
+    const lastName = emp.last_name ? ` ${emp.last_name}` : '';
+    const fullName = `${firstName}${middleName}${lastName}`.trim() || `Trainer ${code}`;
+
+    const user: User = {
+      id: `emp-${code}`,
+      name: fullName,
+      email: emp.email_address ?? `emp${code}@koenig-solutions.com`,
+      role: 'Trainer',
+      avatarInitials: getInitials(emp.first_name, emp.last_name),
+      trainerId: code,
+      pmsDetails: emp,
+    };
+    onLogin(user);
+    setLoading(false);
   }
 
   if (!expanded) {

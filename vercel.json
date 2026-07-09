@@ -2,10 +2,10 @@
   "rewrites": [
     {
       "source": "/koenig-api/:path*",
-      "destination": "https://api.koenig-solutions.com/:path*"
+      "destination": "/api/proxy/:path*"
     },
     {
-      "source": "/((?!koenig-api).*)",
+      "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
   ]
