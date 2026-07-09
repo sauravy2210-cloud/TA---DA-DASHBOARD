@@ -67,36 +67,15 @@ interface FlightRecord {
   airlines_name: string | null;
 }
 
-async function fetchTrainerFlights(email: string): Promise<FlightRecord[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_TrainerFlightDe',
-      userPassword: 'HD#GFMKWkk4n',
-      userRole: 'Trainer Flight Details',
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=108` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email_Address: email }),
-  });
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Flights fetch failed');
-
-  const raw: FlightRecord[] =
-    typeof data.content === 'string' ? JSON.parse(data.content) : (data.content ?? []);
+// Fetch flights via server-side proxy (credentials stay out of the browser bundle)
+async function fetchFlights(email: string, empCode: string): Promise<FlightRecord[]> {
+  const params = new URLSearchParams();
+  if (email)   params.set('email',   email);
+  if (empCode) params.set('empCode', empCode);
+  const res = await fetch(`/api/flights?${params.toString()}`);
+  const d = await res.json();
+  if (!res.ok) return [];
+  const raw = d.flights ?? d;
   return Array.isArray(raw) ? raw : [];
 }
 
@@ -153,35 +132,31 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
   const [travelExpanded, setTravelExpanded] = useState<string | null>(null);
 
   useEffect(() => {
-    const email = currentUser?.email ?? '';
-    // Only fetch for real Trainer logins with a valid email
-    if (!email || currentUser?.role !== 'Trainer') return;
+    if (currentUser?.role !== 'Trainer') return;
+    const email     = currentUser?.email ?? '';
+    const trainerId = currentUser?.trainerId ?? '';
+    if (!email && !trainerId) return;
+
     setFlightsLoading(true);
     setFlightsError('');
-    fetchTrainerFlights(email)
+
+    fetchFlights(email, trainerId)
       .then(data => {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
+        const isCancelled = (f: FlightRecord) =>
+          (f.Is_cancelled ?? '').toLowerCase() === 'yes' || String(f.Is_cancelled) === '1';
         const upcoming = data.filter(f => {
-          if (f.Is_cancelled === 'Yes') return false;
+          if (isCancelled(f)) return false;
           const dep = parseDT(f.departure_date);
-          if (!dep) return false;
-          return new Date(dep) >= today;
+          return dep !== '' && new Date(dep) >= today;
         });
         upcoming.sort((a, b) => parseDT(a.departure_date).localeCompare(parseDT(b.departure_date)));
         setFlights(upcoming);
       })
-      .catch(err => {
-        const msg: string = err instanceof Error ? err.message : String(err);
-        // Treat permission/no-data responses as empty rather than hard error
-        if (msg.toLowerCase().includes('forbidden') || msg.toLowerCase().includes('permission')) {
-          setFlights([]);
-        } else {
-          setFlightsError(msg || 'Failed to load flights');
-        }
-      })
+      .catch(err => setFlightsError(err instanceof Error ? err.message : String(err)))
       .finally(() => setFlightsLoading(false));
-  }, [currentUser?.email, currentUser?.role]);
+  }, [currentUser?.email, currentUser?.role, currentUser?.trainerId]);
 
   const filteredFlights = flights.filter(f => {
     const q = travelSearch.toLowerCase();

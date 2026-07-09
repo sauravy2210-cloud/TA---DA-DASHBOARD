@@ -1,22 +1,30 @@
+export const config = { maxDuration: 30 };
+
 export default async function handler(req, res) {
-  // Allow CORS
+  // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  if (req.method === 'OPTIONS') { res.status(200).end(); return; }
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
+  // Build path from catch-all segments (more reliable than req.url on Vercel)
+  const segments = req.query.path;
+  const pathStr = Array.isArray(segments)
+    ? segments.join('/')
+    : (typeof segments === 'string' ? segments : '');
+
+  // Rebuild query string — exclude the catch-all 'path' key
+  const qp = new URLSearchParams();
+  for (const [key, val] of Object.entries(req.query)) {
+    if (key === 'path') continue;
+    if (Array.isArray(val)) val.forEach(v => qp.append(key, v));
+    else qp.set(key, val);
   }
-
-  // req.url = /api/proxy/api/Kites/Operator/GetToken?accessToken=...
-  // Strip the /api/proxy prefix to get the real path
-  const rawUrl = req.url || '';
-  const stripped = rawUrl.replace(/^\/api\/proxy/, '') || '/';
-  const targetUrl = `https://api.koenig-solutions.com${stripped}`;
+  const qs = qp.toString();
+  const targetUrl = `https://api.koenig-solutions.com/${pathStr}${qs ? '?' + qs : ''}`;
 
   try {
-    const fetchOpts = {
+    const opts = {
       method: req.method || 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -26,26 +34,28 @@ export default async function handler(req, res) {
     };
 
     if (req.body && req.method !== 'GET' && req.method !== 'HEAD') {
-      fetchOpts.body =
-        typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+      opts.body = typeof req.body === 'string'
+        ? req.body
+        : JSON.stringify(req.body);
     }
 
-    const upstream = await fetch(targetUrl, fetchOpts);
+    const upstream = await fetch(targetUrl, opts);
     const text = await upstream.text();
 
+    // Always respond as JSON
     res.setHeader('Content-Type', 'application/json');
     try {
-      const json = JSON.parse(text);
-      res.status(upstream.status).json(json);
+      return res.status(upstream.status).json(JSON.parse(text));
     } catch {
-      // Upstream returned non-JSON (e.g. HTML error page)
-      res.status(502).json({
+      // Upstream sent HTML / non-JSON — wrap it so callers get a parseable response
+      return res.status(502).json({
         statuscode: 0,
-        message: `Upstream returned non-JSON response (HTTP ${upstream.status})`,
+        message: `API returned non-JSON (HTTP ${upstream.status})`,
+        raw: text.slice(0, 300),
       });
     }
   } catch (err) {
-    res.status(502).json({
+    return res.status(502).json({
       statuscode: 0,
       message: `Proxy error: ${err instanceof Error ? err.message : String(err)}`,
     });
