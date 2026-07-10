@@ -538,50 +538,30 @@ async function fetchEmployeeLeaves(
   fromDate: string,
   toDate: string,
 ): Promise<LeaveRecord[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetEmployeeLeav',
-      userPassword: '3!bHe$VMn@mH',
-      userRole: 'Get Employee Leave Details',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`Token request failed: HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=237` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  // Send emp_code + date range so server can filter server-side
-  const body: Record<string, unknown> = {
-    emp_code: empCode,
-    from_date: fromDate,
-    to_date:   toDate,
-  };
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  if (!dataRes.ok) throw new Error(`Leave API request failed: HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Leave fetch failed');
-
-  let content = data.content;
-  if (typeof content === 'string') {
-    try { content = JSON.parse(content); } catch { content = []; }
+  // Use the local Vite middleware (or Vercel serverless on prod) — credentials never in browser
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const res = await fetch(`/api/leaves?empCode=${encodeURIComponent(clean)}`);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error((err as { error?: string }).error || `Leave API HTTP ${res.status}`);
   }
-  if (!Array.isArray(content)) content = [];
+  const data = await res.json() as { leaves?: LeaveRecord[]; error?: string };
+  if (data.error) throw new Error(data.error);
 
-  // Normalise all records so field names are consistent
-  return (content as LeaveRecord[]).map(normalizeLeaveRecord);
+  let leaves = data.leaves ?? [];
+
+  // Client-side date filter — API returns all leaves, we filter to the selected range
+  if ((fromDate || toDate) && leaves.length > 0) {
+    leaves = leaves.filter((l) => {
+      const lFrom = (l.from_date || '').slice(0, 10);
+      const lTo   = (l.to_date   || '').slice(0, 10);
+      if (fromDate && lTo   && lTo   < fromDate) return false;
+      if (toDate   && lFrom && lFrom > toDate)   return false;
+      return true;
+    });
+  }
+
+  return leaves.map(normalizeLeaveRecord);
 }
 
 // ── Get Trainer Flight & Travel Details API (apikey=256) ─────────────────────
@@ -1243,6 +1223,7 @@ const DA_POLICY: Record<string, DaPolicy> = {
   'Cuba': { rate: 30, currency: 'USD' },
   'New Zealand': { rate: 40, currency: 'USD' },
   'Dominica': { rate: 30, currency: 'USD' },
+  'Dominican Republic': { rate: 30, currency: 'USD' },
   'Guatemala': { rate: 30, currency: 'USD' },
   'Uzbekistan': { rate: 30, currency: 'USD' },
   'El Salvador': { rate: 30, currency: 'USD' },
@@ -1375,15 +1356,54 @@ const DA_POLICY: Record<string, DaPolicy> = {
 
 // Common country name variants returned by Koenig APIs that differ from DA_POLICY keys
 const COUNTRY_ALIASES: Record<string, string> = {
+  // UK variants
   'united kingdom': 'UK', 'great britain': 'UK', 'england': 'UK', 'britain': 'UK', 'gb': 'UK',
-  'us': 'USA', 'america': 'USA', 'united states of america': 'USA',
+  'northern ireland': 'UK', 'wales': 'UK', 'scotland': 'UK',
+  // USA variants
+  'us': 'USA', 'america': 'USA', 'united states of america': 'USA', 'united states': 'USA',
+  // UAE variants
   'uae': 'United Arab Emirates', 'emirates': 'United Arab Emirates', 'arab emirates': 'United Arab Emirates',
-  'viet nam': 'Vietnam',
-  'republic of korea': 'South Korea',
+  // Asia
+  'viet nam': 'Vietnam', 'vn': 'Vietnam',
+  'republic of korea': 'South Korea', 'korea, south': 'South Korea', 'rok': 'South Korea',
+  'dprk': 'North Korea', 'korea, north': 'North Korea',
   'holland': 'Netherlands',
   'czech republic': 'Czechia',
-  'ivory coast': "Côte d'Ivoire",
+  'ivory coast': "Côte d'Ivoire", "cote d'ivoire": "Côte d'Ivoire", 'cote divoire': "Côte d'Ivoire",
+  // Africa
+  'dr congo': 'Democratic Republic of the Congo', 'drc': 'Democratic Republic of the Congo',
+  'congo, democratic republic': 'Democratic Republic of the Congo',
+  'congo, republic': 'Republic of Congo',
+  'eswatini': 'Eswatini', 'swaziland': 'Eswatini',
+  'cabo verde': 'Cabo Verde', 'cape verde': 'Cabo Verde',
+  // Europe
+  'north macedonia': 'North Macedonia', 'fyrom': 'North Macedonia',
+  'bosnia': 'Bosnia and Herzegovina',
+  'slovak republic': 'Slovakia',
+  // Americas
+  'dominican rep': 'Dominican Republic',
+  'st kitts': 'Saint Kitts and Nevis',
+  'st lucia': 'Saint Lucia',
+  'st vincent': 'Saint Vincent and the Grenadines',
+  'trinidad': 'Trinidad and Tobago',
+  // Oceania
+  'timor leste': 'East Timor', 'east timor': 'East Timor',
+  // General
+  'kingdom of saudi arabia': 'Saudi Arabia', 'ksa': 'Saudi Arabia',
+  'kingdom of bahrain': 'Bahrain',
+  'sultanate of oman': 'Oman',
+  'state of qatar': 'Qatar',
+  'state of kuwait': 'Kuwait',
+  'new guinea': 'Papua New Guinea',
 };
+
+// Cities in Delhi-NCR where No DA is applicable per travel policy
+const DELHI_NCR_CITIES = new Set([
+  'delhi', 'new delhi', 'noida', 'greater noida', 'gurgaon', 'gurugram',
+  'faridabad', 'ghaziabad', 'manesar', 'bahadurgarh', 'sonipat', 'rohtak',
+  'dwarka', 'south delhi', 'north delhi', 'east delhi', 'west delhi',
+  'central delhi', 'delhi ncr', 'ncr', 'ncr delhi',
+]);
 
 function getDaInfo(country: string, city?: string): DaPolicy & { allowed: boolean } {
   const norm = country.trim();
@@ -2568,6 +2588,11 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       const isOnlineBatch = asgn &&
         (asgn.batchType === 'ILO' || asgn.deliveryMode === 'Online');
 
+      // Delhi-NCR rule: "No DA, No taxi for travel within Delhi-NCR" (Travel Policy)
+      // Applies when the assignment city is within Delhi-NCR and it's a domestic (India) day
+      const isDelhiNcr = country === 'India' && !isInternationalTravelDay && asgn != null &&
+        DELHI_NCR_CITIES.has((asgn.city || '').toLowerCase().trim());
+
       // Long-term stay and OB flags (new policy rules)
       const isLongTermStay = asgn?.assignmentId ? longTermAsgnIds.has(asgn.assignmentId) : false;
       const isOBAssignment = asgn?.assignmentId ? obAsgnIds.has(asgn.assignmentId) : false;
@@ -2589,6 +2614,11 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         statusClass = 'bg-red-100 text-red-600 border border-red-200';
         amount      = 0;
         remarks     = `${asgnTag} — ILO/Online batch, DA not eligible per policy`;
+      } else if (isDelhiNcr) {
+        status      = 'Not Applicable — Within Delhi-NCR';
+        statusClass = 'bg-gray-100 text-gray-500 border border-gray-300';
+        amount      = 0;
+        remarks     = `${asgnTag} — No DA for travel within Delhi-NCR (per travel policy)`;
       } else if (isLongTermStay) {
         status      = 'Not Applicable — Long Term Stay (≥30 days)';
         statusClass = 'bg-gray-100 text-gray-500 border border-gray-300';
