@@ -172,6 +172,8 @@ function fmtDate(iso: string) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
+const DELETABLE_STATUSES = new Set(['Draft', 'Submitted', 'Pending']);
+
 interface ClaimTableProps {
   claims: ClaimHeader[];
   onClaimClick: (claimId: string) => void;
@@ -180,6 +182,7 @@ interface ClaimTableProps {
   selectedIds?: string[];
   onToggleSelect?: (id: string) => void;
   onSelectAll?: () => void;
+  onDeleteClaim?: (claimId: string) => void;
   loading?: boolean;
   emptyMessage?: string;
 }
@@ -192,6 +195,7 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
   selectedIds = [],
   onToggleSelect,
   onSelectAll,
+  onDeleteClaim,
   loading = false,
   emptyMessage = 'No claims found.',
 }) => {
@@ -397,18 +401,37 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
 
                   {/* Action button */}
                   <td className="px-3 py-3 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      onClick={() => onClaimClick(claim.claimId)}
-                      className="
-                        inline-flex items-center px-2.5 py-1 text-xs font-medium
-                        text-blue-700 bg-blue-50 border border-blue-200
-                        rounded hover:bg-blue-100 transition-colors duration-100
-                        focus:outline-none focus:ring-2 focus:ring-blue-400
-                      "
-                    >
-                      View
-                    </button>
+                    <div className="flex items-center gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => onClaimClick(claim.claimId)}
+                        className="
+                          inline-flex items-center px-2.5 py-1 text-xs font-medium
+                          text-blue-700 bg-blue-50 border border-blue-200
+                          rounded hover:bg-blue-100 transition-colors duration-100
+                          focus:outline-none focus:ring-2 focus:ring-blue-400
+                        "
+                      >
+                        View
+                      </button>
+                      {onDeleteClaim && DELETABLE_STATUSES.has(claim.status) && (
+                        <button
+                          type="button"
+                          title="Delete bill"
+                          onClick={() => onDeleteClaim(claim.claimId)}
+                          className="
+                            inline-flex items-center justify-center w-7 h-7 text-xs font-medium
+                            text-red-600 bg-red-50 border border-red-200
+                            rounded hover:bg-red-100 hover:border-red-400 transition-colors duration-100
+                            focus:outline-none focus:ring-2 focus:ring-red-400
+                          "
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               );

@@ -5,7 +5,7 @@ import { FilterBar } from '../components/FilterBar';
 import type { FilterConfig } from '../components/FilterBar';
 import { SearchInput } from '../components/SearchInput';
 import { ClaimTable } from '../components/ClaimTable';
-import { getClaims } from '../services/storageService';
+import { getClaims, deleteClaim } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
 import type { ClaimHeader } from '../types';
 
@@ -95,6 +95,7 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [allClaims, setAllClaims] = useState<ClaimHeader[]>([]);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
 
   // Reload from storage whenever this page mounts
   useEffect(() => {
@@ -155,14 +156,15 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
         if (psFilter === 'Unpaid' && !isUnpaid) return false;
       }
 
-      // Date range (by submittedAt)
+      // Date range — match against claim period (start/end date) or submittedAt
       const dateRange = filters.dateRange as string[];
       const [dateFrom, dateTo] = dateRange;
-      if (dateFrom && claim.submittedAt) {
-        if (new Date(claim.submittedAt) < new Date(dateFrom)) return false;
-      }
-      if (dateTo && claim.submittedAt) {
-        if (new Date(claim.submittedAt) > new Date(`${dateTo}T23:59:59`)) return false;
+      if (dateFrom || dateTo) {
+        // Use claim period if available, fall back to submittedAt
+        const claimFrom = claim.claimStartDate || claim.submittedAt || '';
+        const claimTo   = claim.claimEndDate   || claim.submittedAt || '';
+        if (dateFrom && claimTo && claimTo < dateFrom) return false;
+        if (dateTo   && claimFrom && claimFrom > `${dateTo}T23:59:59`) return false;
       }
 
       // Amount range
@@ -195,6 +197,13 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
 
   const handleExportCSV = () => {
     exportClaimsQueue(filtered as ClaimHeader[]);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (!deleteConfirmId) return;
+    deleteClaim(deleteConfirmId);
+    setAllClaims(getClaims());
+    setDeleteConfirmId(null);
   };
 
   return (
@@ -263,9 +272,52 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
           claims={adaptedClaims as ClaimHeader[]}
           onClaimClick={(claimId) => navigate(`/claims/${claimId}`)}
           userRole={currentUser.role}
+          onDeleteClaim={currentUser.role === 'Trainer' ? setDeleteConfirmId : undefined}
           emptyMessage="No claims match your filters."
         />
       </div>
+
+      {/* ── Delete confirmation modal ── */}
+      {deleteConfirmId && (() => {
+        const bill = allClaims.find(c => c.claimId === deleteConfirmId);
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-full max-w-sm mx-4 p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-gray-900">Delete Bill</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone.</p>
+                </div>
+              </div>
+              <p className="text-sm text-gray-700 mb-5">
+                Are you sure you want to delete bill{' '}
+                <span className="font-semibold text-gray-900">{bill?.billNo ?? deleteConfirmId}</span>?
+              </p>
+              <div className="flex gap-3 justify-end">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmId(null)}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDeleteConfirm}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Pagination ── */}
       {totalPages > 1 && (

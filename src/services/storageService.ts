@@ -65,6 +65,11 @@ export function getClaims(): ClaimHeader[] {
   return getFromStorage<ClaimHeader[]>(STORAGE_KEYS.CLAIMS, []);
 }
 
+export function deleteClaim(claimId: string): void {
+  const claims = getClaims().filter((c) => c.claimId !== claimId);
+  saveToStorage<ClaimHeader[]>(STORAGE_KEYS.CLAIMS, claims);
+}
+
 // ── Line Items ────────────────────────────────────────────────────────────────
 
 export function saveLineItems(lineItems: ClaimLineItem[]): void {
