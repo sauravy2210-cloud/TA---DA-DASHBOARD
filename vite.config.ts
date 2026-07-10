@@ -111,6 +111,48 @@ export default defineConfig(({ mode }) => {
               return
             }
 
+            // ── /api/assignments?empCode=...&from=...&to=... ─────────────
+            if (url.pathname === '/api/assignments') {
+              const empCode  = (url.searchParams.get('empCode') || '').replace(/^EMP-/i, '').trim()
+              const fromDate = (url.searchParams.get('from') || '').trim()
+              const toDate   = (url.searchParams.get('to')   || '').trim()
+              if (!empCode) {
+                res.writeHead(400, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: 'empCode required' }))
+                return
+              }
+              const asgnUser    = env.KOENIG_ASGN_USER    || ''
+              const asgn258Pass = env.KOENIG_ASGN258_PASS || ''
+              const asgn208Pass = env.KOENIG_ASGN208_PASS || ''
+              const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
+              let err258 = ''
+              try {
+                const tok = await koenigToken(asgnUser, asgn258Pass, 'Get Trainer Assignment Details')
+                const data = await koenigCommon(258, tok, { koenig_trainer_emp_code: empCodeValue })
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ assignments: data, source: '258' }))
+                return
+              } catch (e) {
+                err258 = e instanceof Error ? e.message : String(e)
+              }
+              if (!fromDate || !toDate) {
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ assignments: [], source: 'none', error: `API 258: ${err258}` }))
+                return
+              }
+              try {
+                const tok = await koenigToken(asgnUser, asgn208Pass, 'Get Trainer Assignment')
+                const data = await koenigCommon(208, tok, { Startdate: fromDate, Enddate: toDate })
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ assignments: data, source: '208' }))
+              } catch (e) {
+                const err208 = e instanceof Error ? e.message : String(e)
+                res.writeHead(502, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: `API 258: ${err258} | API 208: ${err208}` }))
+              }
+              return
+            }
+
             // ── /api/leaves?empCode=... ───────────────────────────────────
             if (url.pathname === '/api/leaves') {
               const empCode = (url.searchParams.get('empCode') || '').replace(/^EMP-/i, '').trim()

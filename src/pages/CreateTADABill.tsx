@@ -299,124 +299,21 @@ function logApiRecords(apiLabel: string, raw: RawTrainerAssignment[], fromDate: 
   }
 }
 
-async function fetchViaApi208(fromDate: string, toDate: string): Promise<RawTrainerAssignment[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetTrainerAssig',
-      userPassword: 'dvh!DsT3n$P6',
-      userRole: 'Get Trainer Assignment',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`208 token HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200)
-    throw new Error(tokenData.message || '208 token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common?apikey=208` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Startdate: fromDate, Enddate: toDate }),
-  });
-  if (!dataRes.ok) throw new Error(`208 data HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || '208 data failed');
-
-  let raw = data.content;
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-  if (!Array.isArray(raw)) throw new Error('208 returned non-array content');
-  return raw;
-}
-
-async function fetchViaApi258(_fromDate: string, _toDate: string, empCode: string): Promise<RawTrainerAssignment[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetTrainerAssig',
-      userPassword: 'L!$cmAVrL4cL',
-      userRole: 'Get Trainer Assignment Details',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`258 token HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200)
-    throw new Error(tokenData.message || '258 token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common?apikey=258` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode;
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ koenig_trainer_emp_code: empCodeValue }),
-  });
-  if (!dataRes.ok) throw new Error(`258 data HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || '258 data failed');
-
-  let raw = data.content;
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-  if (!Array.isArray(raw)) throw new Error('258 returned non-array content');
-  return raw;
-}
-
 async function fetchTrainerAssignments(
   fromDate: string,
   toDate: string,
   empCode: string,
 ): Promise<RawTrainerAssignment[]> {
-  let raw208: RawTrainerAssignment[] = [];
-  let raw258: RawTrainerAssignment[] = [];
-  let err208 = '';
-  let err258 = '';
-
-  // Primary: API 258 (emp-code based, returns all assignments for the trainer)
-  try {
-    raw258 = await fetchViaApi258(fromDate, toDate, empCode);
-    logApiRecords('API 258', raw258, fromDate, toDate);
-    raw258 = filterByEmpCode(raw258, empCode);
-    console.log(`[API 258] After emp-code filter (${empCode}): ${raw258.length} record(s)`);
-  } catch (e) {
-    err258 = e instanceof Error ? e.message : String(e);
-    console.warn('[API 258] Failed:', err258);
-  }
-
-  if (raw258.length > 0) return raw258;
-
-  // Fallback: API 208 (date-range based, returns all trainers — filter by emp code after)
-  console.log('[API 208] Trying fallback…');
-  try {
-    raw208 = await fetchViaApi208(fromDate, toDate);
-    logApiRecords('API 208', raw208, fromDate, toDate);
-    raw208 = filterByEmpCode(raw208, empCode);
-    console.log(`[API 208] After emp-code filter: ${raw208.length} record(s)`);
-  } catch (e) {
-    err208 = e instanceof Error ? e.message : String(e);
-    console.warn('[API 208] Failed:', err208);
-  }
-
-  if (raw208.length > 0) return raw208;
-
-  // Both APIs failed or returned empty — throw a combined error message
-  if (err258 && err208) {
-    throw new Error(`API 258: ${err258} | API 208: ${err208}`);
-  }
-  if (err258 && !err208) {
-    console.warn('[fetchTrainerAssignments] API 258 failed, API 208 returned 0 records for this trainer/range');
-  }
-  return [];
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const params = new URLSearchParams({ empCode: clean, from: fromDate, to: toDate });
+  const res = await fetch(`/api/assignments?${params}`);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || `Assignments HTTP ${res.status}`);
+  let raw: RawTrainerAssignment[] = Array.isArray(data.assignments) ? data.assignments : [];
+  logApiRecords(`API ${data.source}`, raw, fromDate, toDate);
+  raw = filterByEmpCode(raw, empCode);
+  console.log(`[API ${data.source}] After emp-code filter (${clean}): ${raw.length} record(s)`);
+  return raw;
 }
 
 // ── Employee Leave Details API (api_key=237) ─────────────────────────────────
@@ -3103,7 +3000,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             )}
             {fetchStatus === 'error' && (
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs font-medium">
-                <AlertCircle size={13} className="flex-shrink-0" /> {fetchError}. Add assignments manually below.
+                <AlertCircle size={13} className="flex-shrink-0" />
+                <span>{fetchError}.</span>
+                <button
+                  type="button"
+                  onClick={openAddModal}
+                  disabled={!fromDate || !toDate}
+                  className="ml-1 underline font-semibold hover:text-red-900 disabled:opacity-50 cursor-pointer"
+                >
+                  Add assignment manually →
+                </button>
               </div>
             )}
           </div>
