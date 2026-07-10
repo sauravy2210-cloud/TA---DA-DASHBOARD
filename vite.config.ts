@@ -111,6 +111,36 @@ export default defineConfig(({ mode }) => {
               return
             }
 
+            // ── /api/leaves?empCode=... ───────────────────────────────────
+            if (url.pathname === '/api/leaves') {
+              const empCode = (url.searchParams.get('empCode') || '').replace(/^EMP-/i, '').trim()
+              if (!empCode) {
+                res.writeHead(400, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: 'empCode required' }))
+                return
+              }
+              try {
+                const tok = await koenigToken(
+                  env.KOENIG_LEAVE_USER || 'Saurav_GetEmployeeLeav',
+                  env.KOENIG_LEAVE_PASS || '3!bHe$VMn@mH',
+                  'Get Employee Leave Details'
+                )
+                const codeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
+                let leaves: unknown[] = []
+                try {
+                  leaves = await koenigCommon(237, tok, { emp_code: codeValue })
+                } catch {
+                  leaves = []
+                }
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ leaves }))
+              } catch (err) {
+                res.writeHead(502, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }))
+              }
+              return
+            }
+
             next()
           })
         },
