@@ -1944,7 +1944,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     // Launch five API calls simultaneously
     const [assignResult, flightResult, accomResult, leavesResult, advancesResult] = await Promise.allSettled([
       fetchTrainerAssignments(fromDate, toDate, empCode),
-      empCode ? fetchTrainerFlights(empCode) : Promise.resolve<FlightRecord[]>([]),
+      empCode ? fetchTrainerFlights(empCode, currentUser?.email) : Promise.resolve<FlightRecord[]>([]),
       empCode ? fetchTrainerAccommodation(empCode) : Promise.resolve<AccommodationRecord[]>([]),
       empCode ? fetchEmployeeLeaves(empCode, fromDate, toDate) : Promise.resolve<LeaveRecord[]>([]),
       empCode ? fetchEmployeeAdvances(empCode) : Promise.resolve<RawAdvanceRecord[]>([]),
