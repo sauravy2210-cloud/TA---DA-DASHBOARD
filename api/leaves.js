@@ -27,8 +27,8 @@ export default async function handler(req, res) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userName:     process.env.KOENIG_LEAVE_USER || 'Saurav_GetEmployeeLeav',
-        userPassword: process.env.KOENIG_LEAVE_PASS || '3!bHe$VMn@mH',
+        userName:     process.env.KOENIG_LEAVE_USER || '',
+        userPassword: process.env.KOENIG_LEAVE_PASS || '',
         userRole:     'Get Employee Leave Details',
       }),
     });

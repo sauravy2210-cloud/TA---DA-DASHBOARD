@@ -121,8 +121,8 @@ export default defineConfig(({ mode }) => {
               }
               try {
                 const tok = await koenigToken(
-                  env.KOENIG_LEAVE_USER || 'Saurav_GetEmployeeLeav',
-                  env.KOENIG_LEAVE_PASS || '3!bHe$VMn@mH',
+                  env.KOENIG_LEAVE_USER || '',
+                  env.KOENIG_LEAVE_PASS || '',
                   'Get Employee Leave Details'
                 )
                 const codeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
