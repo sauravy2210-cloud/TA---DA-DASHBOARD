@@ -107,41 +107,12 @@ function transportColor(type: string | null): string {
 // ── API fetch ─────────────────────────────────────────────────────────────────
 
 async function fetchUpcomingTravel(empCode: string): Promise<FlightRecord[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetTrainerFligh',
-      userPassword: 'g$z2pVJR2Tde',
-      userRole: 'Get Trainer Flight & Travel Details',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`Token request failed: HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token fetch failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode;
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=256` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ koenig_trainer_emp_code: empCodeValue }),
-  });
-  if (!dataRes.ok) throw new Error(`Travel request failed: HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Travel fetch failed');
-
-  let raw = data.content;
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-  if (!Array.isArray(raw)) return [];
-
-  console.log('[API 256 / UpcomingTravel] total records:', raw.length);
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const res = await fetch(`/api/flights?empCode=${encodeURIComponent(clean)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Travel HTTP ${res.status}`);
+  const raw: FlightRecord[] = Array.isArray(data.flights) ? data.flights : [];
+  console.log('[API flights / UpcomingTravel] records:', raw.length);
   return raw;
 }
 

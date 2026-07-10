@@ -111,22 +111,25 @@ export default defineConfig(({ mode }) => {
               return
             }
 
-            // ── /api/accommodation?empCode=... ───────────────────────────
+            // ── /api/accommodation?empCode=... or ?email=... ─────────────
             if (url.pathname === '/api/accommodation') {
               const empCode = (url.searchParams.get('empCode') || '').replace(/^EMP-/i, '').trim()
-              if (!empCode) {
+              const email   = (url.searchParams.get('email')   || '').trim()
+              if (!empCode && !email) {
                 res.writeHead(400, { 'Content-Type': 'application/json' })
-                res.end(JSON.stringify({ error: 'empCode required' }))
+                res.end(JSON.stringify({ error: 'empCode or email required' }))
                 return
               }
-              const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
               try {
-                const tok = await koenigToken(
-                  env.KOENIG_ACCOM_USER || '',
-                  env.KOENIG_ACCOM_PASS || '',
-                  'Get Trainer Accommodation Details'
-                )
-                const data = await koenigCommon(257, tok, { koenig_trainer_emp_code: empCodeValue })
+                let data: unknown[]
+                if (email) {
+                  const tok = await koenigToken(env.KOENIG_ACCOM120_USER || '', env.KOENIG_ACCOM120_PASS || '', 'Trainer Accomodation Details')
+                  data = await koenigCommon(120, tok, { Email: email })
+                } else {
+                  const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
+                  const tok = await koenigToken(env.KOENIG_ACCOM_USER || '', env.KOENIG_ACCOM_PASS || '', 'Get Trainer Accommodation Details')
+                  data = await koenigCommon(257, tok, { koenig_trainer_emp_code: empCodeValue })
+                }
                 res.writeHead(200, { 'Content-Type': 'application/json' })
                 res.end(JSON.stringify({ accommodation: data }))
               } catch (err) {

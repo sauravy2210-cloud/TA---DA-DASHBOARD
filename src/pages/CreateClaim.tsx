@@ -616,47 +616,19 @@ function parseDDMonYYYY(raw: string | null): string {
 }
 
 async function fetchTrainerAssignments(empCode: string): Promise<Assignment[]> {
-  // Step 1 — token
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetTrainerAssig',
-      userPassword: 'dvh!DsT3n$P6',
-      userRole: 'Get Trainer Assignment',
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  // Step 2 — fetch all assignments for current + next year, filter by emp code
   const now = new Date();
   const startYear = now.getFullYear();
-  const Startdate = `${startYear}-01-01`;
-  const Enddate   = `${startYear + 1}-12-31`;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=208` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Startdate, Enddate }),
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const params = new URLSearchParams({
+    empCode: clean,
+    from: `${startYear}-01-01`,
+    to: `${startYear + 1}-12-31`,
   });
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Assignments fetch failed');
-
-  const raw: Assignment[] =
-    typeof data.content === 'string' ? JSON.parse(data.content) : (data.content ?? []);
-
-  if (!Array.isArray(raw)) return [];
-
-  // Filter to only this trainer's assignments
-  return raw.filter(r => r.trainer_emp_code != null && String(r.trainer_emp_code) === String(empCode));
+  const res = await fetch(`/api/assignments?${params}`);
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || `Assignments HTTP ${res.status}`);
+  const raw: Assignment[] = Array.isArray(data.assignments) ? data.assignments : [];
+  return raw.filter(r => r.trainer_emp_code != null && String(r.trainer_emp_code) === String(clean));
 }
 
 
@@ -935,41 +907,11 @@ interface FlightRecord {
 }
 
 async function fetchTrainerFlights(email: string): Promise<FlightRecord[]> {
-  // Step 1 — token
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_TrainerFlightDe',
-      userPassword: 'HD#GFMKWkk4n',
-      userRole: 'Trainer Flight Details',
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200)
-    throw new Error(tokenData.message || 'Token fetch failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  // Step 2 — fetch flights by trainer email
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=108` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email_Address: email }),
-  });
-  const data = await dataRes.json();
-  if (data.statuscode !== 200)
-    throw new Error(data.message || 'Flight details fetch failed');
-
-  const raw: FlightRecord[] =
-    typeof data.content === 'string' ? JSON.parse(data.content) : (data.content ?? []);
-
-  return Array.isArray(raw) ? raw : [];
+  const res = await fetch(`/api/flights?email=${encodeURIComponent(email.trim())}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Flights HTTP ${res.status}`);
+  const raw: FlightRecord[] = Array.isArray(data.flights) ? data.flights : [];
+  return raw;
 }
 
 // "2018-02-04T00:00:00" → "2018-02-04"
@@ -1323,29 +1265,12 @@ interface LeaveRecord {
 }
 
 async function fetchEmployeeLeaves(empCode: string): Promise<LeaveRecord[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Samridhi_GetEmployeeLeav',
-      userPassword: '9u2z!N!HrSAw',
-      userRole: 'Get Employee Leave Details',
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message);
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url = `/koenig-api/api/Kites/Operator/common?apikey=237&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ emp_code: empCode }),
-  });
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message);
-  const content = typeof data.content === 'string' ? JSON.parse(data.content) : data.content;
-  return Array.isArray(content) ? content.filter((r: LeaveRecord) => r.from_date) : [];
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const res = await fetch(`/api/leaves?empCode=${encodeURIComponent(clean)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Leaves HTTP ${res.status}`);
+  const leaves: LeaveRecord[] = Array.isArray(data.leaves) ? data.leaves : [];
+  return leaves.filter(r => r.from_date);
 }
 
 // ─── Trainer Accommodation API (api_key=120) ──────────────────────────────────
@@ -1364,34 +1289,10 @@ interface AccommodationRecord {
 }
 
 async function fetchTrainerAccommodation(email: string): Promise<AccommodationRecord[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_TrainerAccomoda',
-      userPassword: '$4r7$REe$Gnk',
-      userRole: 'Trainer Accomodation Details',
-    }),
-  });
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=120` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Email: email }),
-  });
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Accommodation fetch failed');
-  const content = typeof data.content === 'string' ? JSON.parse(data.content) : (data.content ?? []);
-  return Array.isArray(content) ? content : [];
+  const res = await fetch(`/api/accommodation?email=${encodeURIComponent(email.trim())}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Accommodation HTTP ${res.status}`);
+  return Array.isArray(data.accommodation) ? data.accommodation : [];
 }
 
 function accomDT(dt: string | null): string {
