@@ -135,6 +135,40 @@ export default function App() {
     saveUser(currentUser)
   }, [currentUser])
 
+  // Re-fetch PMS details on startup for Trainer sessions loaded from localStorage
+  // that have a fallback name (e.g. "Trainer 2225") or missing pmsDetails.
+  useEffect(() => {
+    if (!currentUser || currentUser.role !== 'Trainer') return
+    const isFallback = !currentUser.pmsDetails ||
+      /^Trainer\s+\S+$/i.test(currentUser.name.trim())
+    if (!isFallback) return
+    const code = (currentUser.trainerId || currentUser.id || '')
+      .replace(/^EMP-/i, '').replace(/^emp-/i, '').trim()
+    if (!code) return
+
+    fetch(`/api/employee?empCode=${encodeURIComponent(code)}`)
+      .then(r => r.json())
+      .then(d => {
+        if (!d.employee) return
+        const emp = d.employee
+        const firstName  = emp.first_name  ?? ''
+        const middleName = emp.middle_name ? ` ${emp.middle_name}` : ''
+        const lastName   = emp.last_name   ? ` ${emp.last_name}`   : ''
+        const fullName   = `${firstName}${middleName}${lastName}`.trim() || currentUser.name
+        const f = (firstName[0] ?? '').toUpperCase()
+        const l = (emp.last_name?.[0] ?? '').toUpperCase()
+        setCurrentUser(prev => prev ? {
+          ...prev,
+          name:           fullName,
+          email:          emp.email_address ?? prev.email,
+          avatarInitials: (f + l) || prev.avatarInitials,
+          pmsDetails:     emp,
+        } : prev)
+      })
+      .catch(() => { /* silent — keep existing user */ })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleLogin = (user: User) => setCurrentUser(user)
 
   const handleRoleSwitch = (role: UserRole) => {
