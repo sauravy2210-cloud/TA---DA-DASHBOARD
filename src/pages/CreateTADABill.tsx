@@ -482,54 +482,17 @@ interface FlightRecord {
   [key: string]: unknown;
 }
 
-async function fetchTrainerFlights(empCode: string): Promise<FlightRecord[]> {
-  // Step 1 — Get token
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetTrainerFligh',
-      userPassword: 'g$z2pVJR2Tde',
-      userRole: 'Get Trainer Flight & Travel Details',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`Flight token request failed: HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Flight token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  // Step 2 — Fetch flights by emp_code
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=256` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ koenig_trainer_emp_code: empCodeValue }),
-  });
-  if (!dataRes.ok) throw new Error(`Flights request failed: HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Flights fetch failed');
-
-  let raw = data.content;
-  if (typeof raw === 'string') {
-    try { raw = JSON.parse(raw); } catch { raw = []; }
-  }
-  if (!Array.isArray(raw)) return [];
-
+async function fetchTrainerFlights(empCode: string, email?: string): Promise<FlightRecord[]> {
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const params = new URLSearchParams({ empCode: clean });
+  if (email) params.set('email', email);
+  const res = await fetch(`/api/flights?${params}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Flights fetch HTTP ${res.status}`);
+  const raw = Array.isArray(data.flights) ? data.flights : [];
   if (raw.length > 0) {
-    console.log('[API 256] total records:', raw.length);
-    console.log('[API 256] all field names:', Object.keys(raw[0]));
-    console.log('[API 256] sample record:', JSON.stringify(raw[0], null, 2));
-  } else {
-    console.warn('[API 256] EMPTY response — emp_code sent:', empCodeValue, '(type:', typeof empCodeValue, ')');
+    console.log('[API flights] records:', raw.length, '| sample:', JSON.stringify(raw[0], null, 2));
   }
-
   return raw;
 }
 
@@ -579,53 +542,14 @@ interface AccommodationRecord {
 }
 
 async function fetchTrainerAccommodation(empCode: string): Promise<AccommodationRecord[]> {
-  // Step 1 — Get token
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetTrainerAccom',
-      userPassword: 'M8eKMg4e5@kG',
-      userRole: 'Get Trainer Accommodation Details',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`Accommodation token request failed: HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Accommodation token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  // Step 2 — Fetch accommodation records by emp_code
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=257` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ koenig_trainer_emp_code: empCodeValue }),
-  });
-  if (!dataRes.ok) throw new Error(`Accommodation request failed: HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Accommodation fetch failed');
-
-  let raw = data.content;
-  if (typeof raw === 'string') {
-    try { raw = JSON.parse(raw); } catch { raw = []; }
-  }
-  if (!Array.isArray(raw)) return [];
-
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const res = await fetch(`/api/accommodation?empCode=${encodeURIComponent(clean)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Accommodation fetch HTTP ${res.status}`);
+  const raw = Array.isArray(data.accommodation) ? data.accommodation : [];
   if (raw.length > 0) {
-    console.log('[API 257] total records:', raw.length);
-    console.log('[API 257] all field names:', Object.keys(raw[0]));
-    console.log('[API 257] sample record:', JSON.stringify(raw[0], null, 2));
-  } else {
-    console.warn('[API 257] EMPTY response — emp_code sent:', empCodeValue, '(type:', typeof empCodeValue, ')');
+    console.log('[API 257] records:', raw.length, '| sample:', JSON.stringify(raw[0], null, 2));
   }
-
   return raw;
 }
 
@@ -656,39 +580,10 @@ function accomDT(dt: string | null): string {
 interface KoenigCountry { CountryId: number | null; CountryName: string | null; }
 
 async function fetchCountryList(): Promise<KoenigCountry[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetCountryList',
-      userPassword: '!rT2CBG6nLKM',
-      userRole: 'Get Country List',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`Country token failed: HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Country token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=223` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ CountryName: '' }),
-  });
-  if (!dataRes.ok) throw new Error(`Country list failed: HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Country list failed');
-
-  let raw = data.content;
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-  if (!Array.isArray(raw)) return [];
-  return (raw as KoenigCountry[]).filter(c => c.CountryName);
+  const res = await fetch('/api/countries');
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Country list HTTP ${res.status}`);
+  return Array.isArray(data.countries) ? (data.countries as KoenigCountry[]) : [];
 }
 
 // ── Employee Advance List API (apikey=259) ────────────────────────────────────
@@ -707,49 +602,14 @@ interface RawAdvanceRecord {
 }
 
 async function fetchEmployeeAdvances(empCode: string): Promise<RawAdvanceRecord[]> {
-  const tokenRes = await fetch('/koenig-api/api/Kites/Operator/GetToken', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName: 'Saurav_GetEmployeeAdva',
-      userPassword: 'fDnH56T2$sA$',
-      userRole: 'Get Employee Advance List',
-    }),
-  });
-  if (!tokenRes.ok) throw new Error(`Advance token failed: HTTP ${tokenRes.status}`);
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) throw new Error(tokenData.message || 'Advance token failed');
-  const { accessToken, deviceToken } = tokenData.content;
-
-  const url =
-    `/koenig-api/api/Kites/Operator/common` +
-    `?apikey=259` +
-    `&accessToken=${encodeURIComponent(accessToken)}` +
-    `&deviceToken=${encodeURIComponent(deviceToken)}`;
-
-  const empIdValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode;
-
-  const dataRes = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ EmpID: empIdValue }),
-  });
-  if (!dataRes.ok) throw new Error(`Advances fetch failed: HTTP ${dataRes.status}`);
-  const data = await dataRes.json();
-  if (data.statuscode !== 200) throw new Error(data.message || 'Advances fetch failed');
-
-  let raw = data.content;
-  if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-  if (!Array.isArray(raw)) return [];
-
+  const clean = empCode.replace(/^EMP-/i, '').trim();
+  const res = await fetch(`/api/advances?empCode=${encodeURIComponent(clean)}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || `Advances fetch HTTP ${res.status}`);
+  const raw = Array.isArray(data.advances) ? data.advances : [];
   if (raw.length > 0) {
-    console.log('[API 259] total records:', raw.length);
-    console.log('[API 259] field names:', Object.keys(raw[0]));
-    console.log('[API 259] record[0]:', JSON.stringify(raw[0], null, 2));
-  } else {
-    console.warn('[API 259] EMPTY response — EmpID sent:', empIdValue);
+    console.log('[API 259] records:', raw.length, '| sample:', JSON.stringify(raw[0], null, 2));
   }
-
   return raw as RawAdvanceRecord[];
 }
 

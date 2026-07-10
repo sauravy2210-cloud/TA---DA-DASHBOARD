@@ -111,6 +111,74 @@ export default defineConfig(({ mode }) => {
               return
             }
 
+            // ── /api/accommodation?empCode=... ───────────────────────────
+            if (url.pathname === '/api/accommodation') {
+              const empCode = (url.searchParams.get('empCode') || '').replace(/^EMP-/i, '').trim()
+              if (!empCode) {
+                res.writeHead(400, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: 'empCode required' }))
+                return
+              }
+              const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
+              try {
+                const tok = await koenigToken(
+                  env.KOENIG_ACCOM_USER || '',
+                  env.KOENIG_ACCOM_PASS || '',
+                  'Get Trainer Accommodation Details'
+                )
+                const data = await koenigCommon(257, tok, { koenig_trainer_emp_code: empCodeValue })
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ accommodation: data }))
+              } catch (err) {
+                res.writeHead(502, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }))
+              }
+              return
+            }
+
+            // ── /api/countries ────────────────────────────────────────────
+            if (url.pathname === '/api/countries') {
+              try {
+                const tok = await koenigToken(
+                  env.KOENIG_CTRY_USER || '',
+                  env.KOENIG_CTRY_PASS || '',
+                  'Get Country List'
+                )
+                const data = await koenigCommon(223, tok, { CountryName: '' })
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ countries: data.filter((c: { CountryName: string | null }) => c.CountryName) }))
+              } catch (err) {
+                res.writeHead(502, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }))
+              }
+              return
+            }
+
+            // ── /api/advances?empCode=... ─────────────────────────────────
+            if (url.pathname === '/api/advances') {
+              const empCode = (url.searchParams.get('empCode') || '').replace(/^EMP-/i, '').trim()
+              if (!empCode) {
+                res.writeHead(400, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: 'empCode required' }))
+                return
+              }
+              const empIdValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
+              try {
+                const tok = await koenigToken(
+                  env.KOENIG_ADV_USER || '',
+                  env.KOENIG_ADV_PASS || '',
+                  'Get Employee Advance List'
+                )
+                const data = await koenigCommon(259, tok, { EmpID: empIdValue })
+                res.writeHead(200, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ advances: data }))
+              } catch (err) {
+                res.writeHead(502, { 'Content-Type': 'application/json' })
+                res.end(JSON.stringify({ error: err instanceof Error ? err.message : String(err) }))
+              }
+              return
+            }
+
             // ── /api/assignments?empCode=...&from=...&to=... ─────────────
             if (url.pathname === '/api/assignments') {
               const empCode  = (url.searchParams.get('empCode') || '').replace(/^EMP-/i, '').trim()
