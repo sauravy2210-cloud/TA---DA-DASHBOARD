@@ -3973,8 +3973,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 </div>
               )}
 
-              {/* Manual Entry Form */}
-              <div className="pt-3 border-t border-gray-100">
+              {/* Manual Entry Form — hidden per product decision */}
+              {false && <div className="pt-3 border-t border-gray-100">
                 <p className="text-xs font-semibold text-gray-500 mb-2">Add Hotel Stay Manually</p>
                 <div className="grid grid-cols-2 gap-2">
                   <div className="col-span-2">
@@ -4031,7 +4031,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                     <Plus size={13} /> Add Stay
                   </button>
                 </div>
-              </div>
+              </div>}
 
               {/* Lodging Entries List */}
               {lodgingEntries.length > 0 && (
