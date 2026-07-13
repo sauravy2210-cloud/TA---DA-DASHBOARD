@@ -3623,19 +3623,44 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                   </tbody>
                 </table>
               </div>
-              <div className="px-5 py-3 bg-gray-50 border-t border-gray-200 flex justify-end items-center gap-4 flex-wrap">
-                <span className="text-sm font-semibold text-gray-700">Auto DA Total:</span>
-                {Object.entries(
-                  daRows.filter(r => r.amount > 0).reduce<Record<string, number>>((acc, r) => {
+              <div className="px-5 py-4 bg-gray-50 border-t border-gray-200">
+                {(() => {
+                  const totals = daRows.filter(r => r.amount > 0).reduce<Record<string, number>>((acc, r) => {
                     acc[r.currency] = (acc[r.currency] ?? 0) + r.amount;
                     return acc;
-                  }, {})
-                ).map(([cur, total]) => (
-                  <span key={cur} className="text-green-700 text-base font-bold">{formatDaCurrency(total, cur)}</span>
-                ))}
-                {daRows.filter(r => r.amount > 0).length === 0 && (
-                  <span className="text-gray-400 text-sm">—</span>
-                )}
+                  }, {});
+                  const hasForeign = Object.keys(totals).some(c => c !== 'INR');
+                  const combinedINR = Object.entries(totals).reduce((s, [c, a]) => s + (c === 'INR' ? a : a * (FX_TO_INR[c] ?? 0)), 0);
+                  return (
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      {/* Per-currency breakdown */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">DA Breakdown:</span>
+                        {Object.entries(totals).map(([cur, total]) => (
+                          <span key={cur} className="px-2.5 py-1 rounded-full bg-green-100 text-green-800 text-sm font-bold border border-green-200">
+                            {formatDaCurrency(total, cur)}
+                          </span>
+                        ))}
+                        {Object.keys(totals).length === 0 && <span className="text-gray-400 text-sm">—</span>}
+                      </div>
+                      {/* Combined INR total */}
+                      {hasForeign ? (
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-green-700 text-white">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide opacity-80">Total DA (INR equiv.)</span>
+                          <span className="text-base font-extrabold">{formatINR(combinedINR)}</span>
+                          <span className="text-[9px] opacity-60 ml-1">
+                            @ {Object.keys(totals).filter(c => c !== 'INR').map(c => `${c}=₹${FX_TO_INR[c] ?? '?'}`).join(', ')}
+                          </span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Auto DA Total:</span>
+                          <span className="text-base font-bold text-green-700">{formatINR(combinedINR)}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </div>
 
