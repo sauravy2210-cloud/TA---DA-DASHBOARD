@@ -24,6 +24,30 @@ interface AppShellProps {
 
 const SIDEBAR_WIDTH = 240;
 
+// Derive notifications for HR/Admin — one per submitted/resubmitted claim
+function deriveHRAdminNotifications(recipientId: string): void {
+  const claims = getClaims().filter(
+    c => c.status === 'Submitted' || c.status === 'Resubmitted'
+  );
+  const existing = getNotifications(recipientId);
+  const existingIds = new Set(existing.map(n => n.notifId));
+
+  for (const claim of claims) {
+    const notifId = `hr_submitted_${claim.claimId}`;
+    if (existingIds.has(notifId)) continue;
+    saveNotification({
+      notifId,
+      recipientId,
+      type: 'submitted',
+      title: `New bill submitted by ${claim.trainerName}`,
+      message: `Bill ${claim.billNo} has been submitted and is awaiting your review.`,
+      relatedClaimId: claim.claimId,
+      read: false,
+      createdAt: claim.submittedAt || new Date().toISOString(),
+    });
+  }
+}
+
 // Derive notifications from claims for the current trainer
 function deriveNotificationsFromClaims(userId: string): NotificationLog[] {
   const claims = getClaims().filter(c => c.trainerId === userId);
@@ -135,11 +159,14 @@ export default function AppShell({
   const [notifications, setNotifications] = useState<NotificationLog[]>([]);
 
   const refreshNotifications = useCallback(() => {
-    // Derive new ones from claims, then load all for this user
-    deriveNotificationsFromClaims(currentUser.id);
+    if (currentUser.role === 'HRAdmin' || currentUser.role === 'SuperAdmin') {
+      deriveHRAdminNotifications(currentUser.id);
+    } else {
+      deriveNotificationsFromClaims(currentUser.id);
+    }
     const all = getNotifications(currentUser.id);
     setNotifications(all.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()));
-  }, [currentUser.id]);
+  }, [currentUser.id, currentUser.role]);
 
   // Load on mount and whenever the page changes (catches bill submissions)
   useEffect(() => {

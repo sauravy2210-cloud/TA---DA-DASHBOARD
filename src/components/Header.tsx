@@ -202,7 +202,7 @@ export default function Header({
             <div className="hidden md:flex flex-col leading-tight">
               <span className="text-xs text-gray-500">Welcome:</span>
               <span className="text-sm font-semibold text-gray-800 leading-tight max-w-[120px] truncate">
-                {currentUser.name}
+                {currentUser.role === 'HRAdmin' ? 'HR/Admin' : currentUser.name}
               </span>
             </div>
             {/* Role pill */}
