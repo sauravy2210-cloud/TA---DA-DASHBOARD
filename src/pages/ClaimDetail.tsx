@@ -2,7 +2,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User, ClaimStatus, UserRole, PendingWith, PaymentStatus, AttachmentCategory } from '../types';
 import { mockClaims, mockAttachments, mockStatusHistory } from '../data/mockClaims';
-import { getClaims } from '../services/storageService';
+import { getClaims, saveClaim } from '../services/storageService';
 import ClaimTimeline from '../components/ClaimTimeline';
 import AmountSummary from '../components/AmountSummary';
 import { AttachmentPreview } from '../components/AttachmentPreview';
@@ -449,20 +449,67 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     setTimeout(() => setToastMsg(null), 3000);
   };
 
+  const persistAction = (action: ActionConfig, reason: string) => {
+    if (!claim || !claimId) return;
+    const base = getClaims().find((c) => c.claimId === claimId);
+    if (!base) return;
+
+    const now = new Date().toISOString();
+    let patch: Partial<import('../types').ClaimHeader> = { lastActionAt: now };
+
+    switch (action.key) {
+      case 'send-clarification':
+        patch = { ...patch, status: 'Clarification Required', pendingWith: 'Trainer', adminRemark: reason };
+        break;
+      case 'approve':
+        patch = { ...patch, status: 'Approved', pendingWith: 'Finance', adminRemark: reason, approvedAmount: base.totalClaimedAmount, netPayable: base.totalClaimedAmount };
+        break;
+      case 'partial-approve':
+        patch = { ...patch, status: 'Partially Approved', pendingWith: 'Finance', adminRemark: reason };
+        break;
+      case 'reject':
+        patch = { ...patch, status: 'Rejected', pendingWith: 'Trainer', adminRemark: reason };
+        break;
+      case 'hold':
+        patch = { ...patch, status: 'On Hold', pendingWith: 'HR/Admin', adminRemark: reason };
+        break;
+      case 'mark-paid':
+        patch = { ...patch, status: 'Paid', pendingWith: undefined, adminRemark: reason };
+        break;
+      case 'reopen':
+        patch = { ...patch, status: 'Submitted', pendingWith: 'HR/Admin', adminRemark: reason };
+        break;
+      case 'cancel':
+        patch = { ...patch, status: 'Cancelled', pendingWith: undefined, adminRemark: reason };
+        break;
+      case 'respond':
+        patch = { ...patch, status: 'Resubmitted', pendingWith: 'HR/Admin', adminRemark: reason };
+        break;
+    }
+
+    saveClaim({ ...base, ...patch });
+  };
+
   const handleActionConfirm = (action: ActionConfig, reason: string) => {
-    console.log(`Action: ${action.key}`, { reason, claimId });
-    showToast(`Action "${action.label}" recorded. (Mock — no persistence)`);
+    persistAction(action, reason);
+    showToast(`${action.label} — saved successfully.`);
+    setTimeout(() => navigate(-1), 1500);
   };
 
   const handleActionClick = (action: ActionConfig) => {
     if (action.needsModal) {
       setActiveModal(action);
     } else {
-      // Immediate actions (edit / start-review)
       if (action.key === 'edit') {
         navigate(`/claims/${claimId}/edit`);
       } else if (action.key === 'start-review') {
-        showToast('Claim picked up for review.');
+        if (claim && claimId) {
+          const base = getClaims().find((c) => c.claimId === claimId);
+          if (base) {
+            saveClaim({ ...base, status: 'Under Review', pendingWith: 'HR/Admin', lastActionAt: new Date().toISOString() });
+          }
+        }
+        navigate(`/claims/${claimId}/review`);
       }
     }
   };
