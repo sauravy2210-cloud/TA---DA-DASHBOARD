@@ -2,6 +2,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User, ClaimStatus, UserRole, PendingWith, PaymentStatus, AttachmentCategory } from '../types';
 import { mockClaims, mockAttachments, mockStatusHistory } from '../data/mockClaims';
+import { getClaims } from '../services/storageService';
 import ClaimTimeline from '../components/ClaimTimeline';
 import AmountSummary from '../components/AmountSummary';
 import { AttachmentPreview } from '../components/AttachmentPreview';
@@ -430,10 +431,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [activeModal, setActiveModal] = useState<ActionConfig | null>(null);
   const [toastMsg, setToastMsg] = useState<string | null>(null);
 
-  const claim = useMemo(
-    () => mockClaims.find((c) => c.claimId === claimId),
-    [claimId]
-  );
+  const claim = useMemo(() => {
+    const realClaim = getClaims().find((c) => c.claimId === claimId);
+    if (realClaim) return realClaim as unknown as (typeof mockClaims)[number];
+    return mockClaims.find((c) => c.claimId === claimId);
+  }, [claimId]);
 
   const claimAttachments = useMemo(
     () => mockAttachments.filter((a) => a.claimId === claimId),
