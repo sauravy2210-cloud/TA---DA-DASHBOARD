@@ -843,8 +843,8 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
           />
         </div>
 
-        {/* ── Charts Row ────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        {/* ── Charts Row — hidden ── */}
+        {false && <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* Pie Chart */}
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <h2 className="mb-4 text-sm font-semibold text-gray-700 uppercase tracking-wide">
@@ -910,13 +910,13 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </div>}
 
         {/* ── Bottom Row ────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-1">
 
-          {/* Attention Required */}
-          <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          {/* Attention Required — hidden */}
+          {false && <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
               <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
                 Attention Required
@@ -960,7 +960,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                 ))
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Recent Submissions */}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
@@ -1013,8 +1013,8 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
             </div>
           </div>
 
-          {/* Amount Breakdown MTD */}
-          <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+          {/* Amount Breakdown MTD — hidden */}
+          {false && <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             <div className="border-b border-gray-100 px-5 py-4">
               <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
                 Amount Breakdown (MTD)
@@ -1044,7 +1044,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
         </div>
 
       </div>
