@@ -1,6 +1,7 @@
 ﻿import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getClaims } from '../services/storageService';
+import { exportClaimsQueue } from '../services/exportEngine';
 import {
   PieChart,
   Pie,
@@ -698,8 +699,12 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  function goToQueue(filter?: string) {
-    navigate(filter ? `/admin/queue?filter=${filter}` : '/admin/queue');
+  function goToQueue(_filter?: string) {
+    navigate('/claims');
+  }
+
+  function handleExport() {
+    exportClaimsQueue(getClaims());
   }
 
   return (
@@ -736,7 +741,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                 Open Queue
               </button>
               <button
-                onClick={() => navigate('/admin/export')}
+                onClick={handleExport}
                 className="inline-flex items-center gap-2 rounded-lg border-2 border-white/40 px-5 py-2.5 text-sm font-semibold text-white hover:bg-white/10 transition-colors"
               >
                 <Download className="w-4 h-4" />
