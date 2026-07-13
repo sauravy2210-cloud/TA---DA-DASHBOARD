@@ -229,7 +229,11 @@ export default function Header({
       {/* Role switcher tabs */}
       <div className="flex items-center gap-1 px-4 pb-2 border-t border-gray-100">
         <span className="text-xs text-gray-400 mr-2 hidden sm:block">View as:</span>
-        {ROLE_TABS.filter(tab => currentUser.role !== 'Trainer' || tab.value === 'Trainer').map((tab) => {
+        {ROLE_TABS.filter(tab => {
+          if (currentUser.role === 'Trainer') return tab.value === 'Trainer';
+          if (currentUser.role === 'HRAdmin') return tab.value === 'HRAdmin';
+          return true;
+        }).map((tab) => {
           const isActive = currentUser.role === tab.value;
           return (
             <button
