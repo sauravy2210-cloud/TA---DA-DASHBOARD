@@ -51,7 +51,7 @@ const ADMIN_GROUPS: NavGroup[] = [
   {
     items: [
       { label: 'Admin Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard size={16} /> },
-      { label: 'Payment Processing', path: '/admin/payments', icon: <CreditCard size={16} /> },
+      { label: 'Payment Processing', path: '/payments', icon: <CreditCard size={16} /> },
     ],
   },
 ];
