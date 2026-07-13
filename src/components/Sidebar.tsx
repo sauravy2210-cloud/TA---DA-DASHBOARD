@@ -204,10 +204,12 @@ export default function Sidebar({ currentUser, currentPath }: SidebarProps) {
       <div className="flex-shrink-0 border-t border-blue-400/30 px-4 py-3">
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-white/20 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
-            {currentUser.avatarInitials}
+            {currentUser.role === 'HRAdmin' ? 'Admin' : currentUser.avatarInitials}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-white text-xs font-semibold truncate">{currentUser.name}</p>
+            <p className="text-white text-xs font-semibold truncate">
+              {currentUser.role === 'HRAdmin' ? 'HR/Admin' : currentUser.name}
+            </p>
             {/* Show designation + department from PMS if available, else role */}
             {currentUser.pmsDetails ? (() => {
               const pms = currentUser.pmsDetails!;
