@@ -2541,6 +2541,9 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     });
   }, [fetched, fromDate, toDate, today, assignments, primaryCountry, leaveDates, pmsFlights]);
 
+  // Indicative FX rates for Grand Total conversion (updated periodically — for display only)
+  const FX_TO_INR: Record<string, number> = { USD: 83.5, AED: 22.7 };
+
   // INR-only DA total (used in grandTotal and INR displays)
   const autoDATotal = useMemo(
     () => daRows.filter(r => r.currency === 'INR').reduce((s, r) => s + r.amount, 0),
@@ -2554,10 +2557,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     }, {}),
     [daRows],
   );
+  // Foreign DA converted to INR equivalent (for grand total)
+  const foreignDATotalINR = useMemo(
+    () => Object.entries(foreignDAMap).reduce((sum, [cur, amt]) => sum + amt * (FX_TO_INR[cur] ?? 0), 0),
+    [foreignDAMap],
+  );
   const travelTotal = useMemo(() => travelBills.reduce((s, b) => s + b.amount, 0), [travelBills]);
   const miscTotal = useMemo(() => miscExpenses.reduce((s, e) => s + e.amount, 0), [miscExpenses]);
   const lodgingTotal = useMemo(() => lodgingEntries.reduce((s, l) => s + l.nights * l.ratePerNight, 0), [lodgingEntries]);
-  const grandTotal = autoDATotal + travelTotal + lodgingTotal + miscTotal;
+  // Grand total includes foreign DA converted to INR at indicative rates
+  const grandTotal = autoDATotal + foreignDATotalINR + travelTotal + lodgingTotal + miscTotal;
 
   function addTravelBill() {
     if (!travelDraft.from || !travelDraft.to || !travelDraft.amount) return;
@@ -5132,11 +5141,11 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                     </div>
                   ))}
                   <div className="border-l border-blue-400 pl-6">
-                    <p className="text-[10px] opacity-70 uppercase tracking-wider">Grand Total</p>
+                    <p className="text-[10px] opacity-70 uppercase tracking-wider">Grand Total (INR)</p>
                     <p className="text-2xl font-extrabold">{formatINR(grandTotal)}</p>
                     {Object.keys(foreignDAMap).length > 0 && (
                       <p className="text-[10px] opacity-75 mt-0.5">
-                        +{Object.entries(foreignDAMap).map(([c, a]) => formatDaCurrency(a, c)).join(' + ')} foreign DA
+                        Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} (indicative)
                       </p>
                     )}
                   </div>
@@ -5220,11 +5229,11 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 </div>
               ))}
               <div className="border-l border-gray-200 pl-4">
-                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Grand Total</p>
+                <p className="text-[10px] text-gray-400 uppercase tracking-wide">Grand Total (INR)</p>
                 <p className="text-lg font-extrabold text-blue-700">{formatINR(grandTotal)}</p>
                 {Object.keys(foreignDAMap).length > 0 && (
                   <p className="text-[10px] text-gray-400 mt-0.5">
-                    +{Object.entries(foreignDAMap).map(([c, a]) => formatDaCurrency(a, c)).join(' + ')} foreign DA
+                    Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} (indicative)
                   </p>
                 )}
               </div>
