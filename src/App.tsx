@@ -333,6 +333,24 @@ export default function App() {
         />
 
         <Route
+          path="/finance/payments"
+          element={
+            <RoleGuard
+              currentUser={currentUser}
+              allowedRoles={['Finance', 'SuperAdmin']}
+            >
+              <ShellWrap
+                currentUser={currentUser!}
+                onRoleSwitch={handleRoleSwitch}
+                onLogout={handleLogout}
+              >
+                <PaymentProcessing currentUser={currentUser!} />
+              </ShellWrap>
+            </RoleGuard>
+          }
+        />
+
+        <Route
           path="/payments"
           element={
             <RoleGuard

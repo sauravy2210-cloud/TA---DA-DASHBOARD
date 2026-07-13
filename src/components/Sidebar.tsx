@@ -3,7 +3,6 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   ClipboardList,
-  FileText,
   FilePlus,
   AlertTriangle,
   CreditCard,
@@ -183,14 +182,14 @@ export default function Sidebar({ currentUser, currentPath }: SidebarProps) {
       style={{ background: '#1f7cc9' }}
     >
       {/* Logo */}
-      <div className="flex items-center gap-3 px-5 py-5 border-b border-blue-400/30 flex-shrink-0">
-        <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
-          <FileText size={16} className="text-white" />
-        </div>
-        <div>
-          <span className="text-white font-bold text-lg tracking-widest">KOENIG</span>
-          <p className="text-blue-200 text-xs leading-none mt-0.5">TA / DA Portal</p>
-        </div>
+      <div className="flex flex-col items-start px-4 py-4 border-b border-blue-400/30 flex-shrink-0">
+        <img
+          src="/koenig-logo-white.svg"
+          alt="Koenig Solutions"
+          className="h-10 w-auto"
+          draggable={false}
+        />
+        <p className="text-blue-200 text-[10px] mt-1 pl-1 tracking-wide">TA / DA Portal</p>
       </div>
 
       {/* Nav */}

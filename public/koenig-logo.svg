@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 72" fill="none">
+  <!-- KOENIG bold wordmark -->
+  <text
+    x="4" y="42"
+    font-family="'Arial Black', 'Arial Bold', Arial, sans-serif"
+    font-weight="900"
+    font-size="34"
+    letter-spacing="3"
+    fill="#3d3d3d"
+  >KOENIG</text>
+
+  <!-- step forward tagline -->
+  <text
+    x="6" y="60"
+    font-family="Georgia, 'Times New Roman', serif"
+    font-weight="400"
+    font-size="12.5"
+    letter-spacing="0.5"
+    fill="#6b8fa8"
+    font-style="italic"
+  >step forward</text>
+
+  <!-- Blue accent — two angled strokes forming stylised mark, right side -->
+  <g transform="translate(196,8)">
+    <line x1="0" y1="28" x2="18" y2="0"  stroke="#1a9cd8" stroke-width="5" stroke-linecap="round"/>
+    <line x1="0" y1="28" x2="18" y2="28" stroke="#1a9cd8" stroke-width="5" stroke-linecap="round"/>
+    <line x1="6" y1="14" x2="18" y2="28" stroke="#1a9cd8" stroke-width="5" stroke-linecap="round"/>
+  </g>
+</svg>

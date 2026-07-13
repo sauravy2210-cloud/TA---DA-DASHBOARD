@@ -1833,6 +1833,78 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const [travelDraft, setTravelDraft] = useState<Partial<TravelBill>>({
     date: '', journeyType: '', travelType: 'Cab', from: '', to: '', distance: '', amount: 0, currency: 'INR', receipt: '',
   });
+  const [distanceCalculating, setDistanceCalculating] = useState(false);
+  // Always-fresh ref so geocode callbacks read latest state after debounce
+  const travelDraftRef = useRef<Partial<TravelBill>>({});
+  useEffect(() => { travelDraftRef.current = travelDraft; });
+
+  // Auto-calculate distance whenever From or To text changes.
+  // • If both lat/lon are already known (user picked from autocomplete): handled by onSelect.
+  // • Otherwise geocode the missing endpoint(s) via Nominatim, then apply haversine.
+  useEffect(() => {
+    const from = (travelDraft.from || '').trim();
+    const to   = (travelDraft.to   || '').trim();
+    if (!from || !to) return;
+
+    // Both coords already present — nothing to geocode (onSelect already computed distance)
+    if (travelDraft.fromLat != null && travelDraft.fromLon != null &&
+        travelDraft.toLat   != null && travelDraft.toLon   != null) return;
+
+    // Geocode missing coord(s) after 700 ms debounce (handles rapid typing)
+    let dead = false;
+    const timer = setTimeout(async () => {
+      const cur  = travelDraftRef.current;
+      const curF = (cur.from || '').trim();
+      const curT = (cur.to   || '').trim();
+      if (!curF || !curT) return;
+
+      // After debounce, user may have selected from dropdown — coords already available
+      if (cur.fromLat != null && cur.fromLon != null &&
+          cur.toLat   != null && cur.toLon   != null) {
+        const dist = `${haversineKm(cur.fromLat, cur.fromLon, cur.toLat, cur.toLon).toFixed(1)} km`;
+        setTravelDraft(p => p.distance === dist ? p : { ...p, distance: dist });
+        return;
+      }
+
+      if (!dead) setDistanceCalculating(true);
+      try {
+        let fLat = cur.fromLat, fLon = cur.fromLon;
+        let tLat = cur.toLat,   tLon = cur.toLon;
+
+        if (fLat == null || fLon == null) {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(curF)}&format=json&limit=1`,
+            { headers: { 'Accept-Language': 'en' } },
+          );
+          const d: LocSuggestion[] = await r.json();
+          if (d[0]) { fLat = parseFloat(d[0].lat); fLon = parseFloat(d[0].lon); }
+        }
+
+        if (!dead && (tLat == null || tLon == null)) {
+          const r = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(curT)}&format=json&limit=1`,
+            { headers: { 'Accept-Language': 'en' } },
+          );
+          const d: LocSuggestion[] = await r.json();
+          if (d[0]) { tLat = parseFloat(d[0].lat); tLon = parseFloat(d[0].lon); }
+        }
+
+        if (!dead && fLat != null && fLon != null && tLat != null && tLon != null) {
+          const dist = `${haversineKm(fLat, fLon, tLat, tLon).toFixed(1)} km`;
+          setTravelDraft(p => ({
+            ...p,
+            fromLat: fLat ?? p.fromLat, fromLon: fLon ?? p.fromLon,
+            toLat:   tLat ?? p.toLat,   toLon:   tLon ?? p.toLon,
+            distance: dist,
+          }));
+        }
+      } catch { /* ignore network errors / aborts */ }
+      if (!dead) setDistanceCalculating(false);
+    }, 700);
+
+    return () => { dead = true; clearTimeout(timer); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [travelDraft.from, travelDraft.to]);
 
   // Misc expenses
   const [miscExpenses, setMiscExpenses] = useState<MiscExpense[]>([]);
@@ -2254,8 +2326,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         const rawArrTime = (returnFlight.arrival_time || '').trim();
         const arrHHMM    = rawArrTime.substring(0, 5);
         flightArrTime.set(end, arrHHMM);
-        // Eligible if no time data (default allow) or arrival time > "12:00"
-        flightRetEligible.set(end, !rawArrTime || rawArrTime.substring(0, 5) >= '12:00');
+        // Policy: return day eligible only if arrival at base is AFTER 12:00 (strictly)
+        flightRetEligible.set(end, !rawArrTime || rawArrTime.substring(0, 5) > '12:00');
       } else {
         // No flight data → standard: day after end; default eligible
         flightRetDay.set(end, addDays(end, 1));
@@ -2278,19 +2350,17 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       isoRange(fromDate, toDate).forEach(d => dateSet.add(d));
     } else {
       assignments.forEach(a => {
-        const start = a.startDate || fromDate;
-        const end   = a.endDate   || toDate;
-        const dep   = flightDepDay.get(start);
-        const ret   = flightRetDay.get(end);
-        // Add departure travel day if available and within window
-        if (dep && dep >= rangeStart && dep <= rangeEnd) dateSet.add(dep);
-        // Add all assignment core days that overlap the window
-        isoRange(
-          start < rangeStart ? rangeStart : start,
-          end   > rangeEnd   ? rangeEnd   : end,
-        ).forEach(d => dateSet.add(d));
-        // Add return travel day if available and within window
-        if (ret && ret >= rangeStart && ret <= rangeEnd) dateSet.add(ret);
+        const start  = a.startDate || fromDate;
+        const end    = a.endDate   || toDate;
+        const dep    = flightDepDay.get(start) || addDays(start, -1);
+        const ret    = flightRetDay.get(end)   || addDays(end,   1);
+        // Policy: include ALL days from departure to return — covers departure day,
+        // pre-batch transit days, core assignment days, post-batch holding days, and return day.
+        // (Policy example: 8PM departure on Day-2, batch Day0..Day4, return Day6 → DA eligible
+        //  for Day-1 through Day5 i.e. all days the trainer is away.)
+        const winFrom = dep > rangeStart ? dep : rangeStart;
+        const winTo   = ret < rangeEnd   ? ret : rangeEnd;
+        if (winFrom <= winTo) isoRange(winFrom, winTo).forEach(d => dateSet.add(d));
       });
     }
 
@@ -2318,9 +2388,23 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           })
         : null;
 
-      const asgn = coreAsgn ?? depAsgn ?? retAsgn ?? null;
+      // Policy: days between the departure flight and assignment start (pre-batch transit),
+      // or between assignment end and return flight (post-batch holding), are eligible for DA
+      // at the destination country rate — the trainer is abroad during these days.
+      const interimAsgn = !coreAsgn && !depAsgn && !retAsgn
+        ? assignments.find(a => {
+            const aStart  = a.startDate || fromDate;
+            const aEnd    = a.endDate   || toDate;
+            const depDay  = flightDepDay.get(aStart) || addDays(aStart, -1);
+            const retDay  = flightRetDay.get(aEnd)   || addDays(aEnd,   1);
+            return (iso > depDay && iso < aStart) || (iso > aEnd && iso < retDay);
+          })
+        : null;
+
+      const asgn = coreAsgn ?? depAsgn ?? retAsgn ?? interimAsgn ?? null;
       const isDeparture = !!depAsgn;
       const isReturn    = !!retAsgn;
+      const isInterim   = !!interimAsgn;
 
       const destCountry = asgn?.country || primaryCountry;
       // On travel days for international assignments, the trainer departs from/arrives in
@@ -2429,6 +2513,18 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         remarks     = isInternationalTravelDay
           ? `${asgnTag} — return to India from ${destCountry} (India rate applied${arrNote})`
           : `${asgnTag} — return day${arrNote}`;
+      } else if (isInterim) {
+        // Policy: days between departure flight and batch start (pre-batch transit),
+        // or between batch end and return flight (post-batch holding), are eligible for DA.
+        // Trainer is abroad during these days → destination country rate applies.
+        // (Delays are not considered per policy — scheduled times only.)
+        const isPostBatch = iso > (asgn?.endDate || toDate);
+        status      = isPostBatch ? 'Allowed (Post-Batch In-Country)' : 'Allowed (Pre-Batch In-Country)';
+        statusClass = 'bg-teal-50 text-teal-700 border border-teal-200';
+        amount      = rate;
+        remarks     = isPostBatch
+          ? `${asgnTag} — in ${destCountry} awaiting return flight (destination rate)`
+          : `${asgnTag} — arrived in ${destCountry} before batch start (destination rate)`;
       } else if (isToday) {
         status      = 'Allowed (Today)';
         statusClass = 'bg-green-100 text-green-700';
@@ -4333,14 +4429,33 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                         })()}
                       </div>
 
-                      {/* Distance — auto-calculated */}
+                      {/* Distance — auto-calculated from From/To */}
                       <div>
                         <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
-                          <Ruler size={11} className="text-gray-400" /> Distance (auto-calculated)
+                          <Ruler size={11} className="text-gray-400" /> Distance
+                          {distanceCalculating && (
+                            <span className="ml-1 flex items-center gap-1 text-blue-500">
+                              <Loader2 size={10} className="animate-spin" /> Calculating…
+                            </span>
+                          )}
                         </label>
-                        <input className={inputCls} placeholder="Select both locations above"
-                          value={travelDraft.distance || ''}
-                          onChange={e => setTravelDraft(p => ({ ...p, distance: e.target.value }))} />
+                        <div className="relative">
+                          <input
+                            className={`${inputCls} ${travelDraft.distance ? 'bg-green-50 border-green-300 font-semibold text-green-800' : ''}`}
+                            placeholder={distanceCalculating ? 'Calculating…' : 'Auto-calculated from locations above'}
+                            readOnly={distanceCalculating}
+                            value={travelDraft.distance || ''}
+                            onChange={e => setTravelDraft(p => ({ ...p, distance: e.target.value }))}
+                          />
+                          {distanceCalculating && (
+                            <Loader2 size={13} className="absolute right-2.5 top-2.5 animate-spin text-blue-400 pointer-events-none" />
+                          )}
+                        </div>
+                        {travelDraft.distance && !distanceCalculating && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] text-green-600 font-medium">
+                            <CheckCircle2 size={10} /> Auto-calculated · edit manually if needed
+                          </p>
+                        )}
                       </div>
 
                       {/* Amount + Currency */}

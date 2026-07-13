@@ -315,7 +315,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">{claim.assignmentIds[0] ?? '—'}</td>
                     <td className="px-4 py-3 text-gray-700">{claim.clientName}</td>
                     <td className="px-4 py-3 text-right font-medium text-gray-900">{fmt(claim.approvedAmount, claim.currency)}</td>
-                    <td className="px-4 py-3 text-right text-gray-500">{fmt(0, claim.currency)}</td>
+                    <td className="px-4 py-3 text-right text-gray-500">{fmt(claim.advanceAdjusted || 0, claim.currency)}</td>
                     <td className="px-4 py-3 text-right text-gray-500">—</td>
                     <td className="px-4 py-3 text-right text-gray-500">{fmt(claim.recoverableAmount, claim.currency)}</td>
                     <td className="px-4 py-3 text-right font-semibold text-gray-900">{fmt(claim.netPayable, claim.currency)}</td>

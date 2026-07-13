@@ -373,11 +373,13 @@ const LoginRoleSelector: React.FC<Props> = ({ onLogin }) => {
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12" style={{ backgroundColor: '#eef4fa' }}>
       {/* Logo */}
       <div className="flex flex-col items-center mb-8">
-        <div className="w-14 h-14 rounded-xl flex items-center justify-center mb-3 shadow-md" style={{ backgroundColor: '#1a56db' }}>
-          <span className="text-white text-2xl font-bold tracking-tight">K</span>
-        </div>
-        <h1 className="text-2xl font-bold text-gray-800 tracking-tight">Koenig Solutions</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Enterprise Training &amp; Learning</p>
+        <img
+          src="/koenig-logo.svg"
+          alt="Koenig Solutions"
+          className="h-16 w-auto mb-2"
+          draggable={false}
+        />
+        <p className="text-sm text-gray-500">Enterprise Training &amp; Learning</p>
       </div>
 
       {/* Card */}
