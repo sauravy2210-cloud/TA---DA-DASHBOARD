@@ -572,6 +572,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
     const totalClaimed = claims.reduce((s, c) => s + c.totalClaimedAmount, 0);
     const totalApproved = claims.reduce((s, c) => s + c.approvedAmount, 0);
     const recoverable = claims.reduce((s, c) => s + c.recoverableAmount, 0);
+    const advanceAdjusted = claims.reduce((s, c) => s + (c.advanceAdjusted || 0), 0);
 
     return {
       newBills,
@@ -586,6 +587,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
       totalClaimed,
       totalApproved,
       recoverable,
+      advanceAdjusted,
     };
   }, []);
 
@@ -838,13 +840,13 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
             onClick={() => goToQueue('Approved')}
           />
           <KpiCard
-            title="Recoverable"
-            value={kpis.recoverable}
-            subtitle="Flagged for recovery"
+            title="Advance Adjusted"
+            value={kpis.advanceAdjusted}
+            subtitle="Deducted from trainer payable"
             icon={AlertTriangle}
             accentColor="teal"
             isAmount
-            onClick={() => goToQueue('recoverable')}
+            onClick={() => goToQueue()}
           />
         </div>
 
@@ -1017,6 +1019,72 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
               </table>
             </div>
           </div>
+
+          {/* Advance Summary */}
+          {(() => {
+            const advanceClaims = getClaims().filter(c => (c.advanceAdjusted || 0) > 0);
+            if (advanceClaims.length === 0) return null;
+            return (
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
+                  <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                    Advance Summary
+                  </h2>
+                  <span className="text-xs text-gray-400">Advances deducted from final payable</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-50 text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Bill No</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Trainer</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Total Claimed</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Advance Adjusted</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Net Payable</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 bg-white">
+                      {advanceClaims.map(c => (
+                        <tr
+                          key={c.claimId}
+                          className="cursor-pointer hover:bg-blue-50 transition-colors"
+                          onClick={() => navigate(`/claims/${c.claimId}`)}
+                        >
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <span className="font-medium text-blue-600">{c.billNo}</span>
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">{c.trainerName}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-800 font-medium">{formatINR(c.totalClaimedAmount)}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <span className="font-semibold text-amber-600">-{formatINR(c.advanceAdjusted)}</span>
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <span className="font-bold text-blue-700">{formatINR(c.netPayable)}</span>
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            <StatusBadge status={c.status} size="sm" />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-50 border-t border-gray-100">
+                      <tr>
+                        <td colSpan={3} className="px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Total</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className="font-bold text-amber-600">-{formatINR(advanceClaims.reduce((s, c) => s + c.advanceAdjusted, 0))}</span>
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className="font-bold text-blue-700">{formatINR(advanceClaims.reduce((s, c) => s + c.netPayable, 0))}</span>
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Amount Breakdown MTD — hidden */}
           {false && <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
