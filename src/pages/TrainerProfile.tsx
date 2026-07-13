@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { User, Mail, BadgeCheck, Save, MapPin, Loader2, RefreshCw, AlertCircle, CreditCard, Calendar, Info, CheckCircle2, XCircle, Building2, Phone, ShieldCheck } from 'lucide-react';
+import { User, BadgeCheck, Save, MapPin, Loader2, RefreshCw, AlertCircle, CreditCard, Calendar, Info, CheckCircle2, XCircle, Phone, ShieldCheck } from 'lucide-react';
 import type { User as UserType, PmsEmployeeDetails } from '../types';
 
 const inputCls = 'w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white';
@@ -157,7 +157,7 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
   // Track which fields came from PMS (non-empty after buildForm)
   const [pmsFields] = useState<Set<keyof FormData>>(() => {
     const base = buildForm(currentUser.pmsDetails ?? null, empCode, currentUser);
-    return new Set(Object.keys(base).filter(k => !!(base as Record<string, string>)[k]) as (keyof FormData)[]);
+    return new Set(Object.keys(base).filter(k => !!(base as unknown as Record<string, string>)[k]) as (keyof FormData)[]);
   });
 
   useEffect(() => {
