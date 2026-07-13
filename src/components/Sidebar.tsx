@@ -6,7 +6,6 @@ import {
   FileText,
   FilePlus,
   AlertTriangle,
-  MessageSquare,
   CreditCard,
   BarChart2,
   BookOpen,
@@ -52,22 +51,7 @@ const ADMIN_GROUPS: NavGroup[] = [
   {
     items: [
       { label: 'Admin Dashboard', path: '/admin/dashboard', icon: <LayoutDashboard size={16} /> },
-      { label: 'Verification Queue', path: '/admin/verification', icon: <CheckSquare size={16} />, badge: 12 },
-      { label: 'Claim Review', path: '/admin/review', icon: <ClipboardList size={16} /> },
-      { label: 'Exception Claims', path: '/admin/exceptions', icon: <AlertTriangle size={16} />, badge: 3 },
-      { label: 'Clarification Monitor', path: '/admin/clarification', icon: <MessageSquare size={16} />, badge: 1 },
       { label: 'Payment Processing', path: '/admin/payments', icon: <CreditCard size={16} /> },
-    ],
-  },
-  {
-    groupLabel: 'Reports & Data',
-    collapsible: true,
-    items: [
-      { label: 'Reports & Exports', path: '/admin/reports', icon: <BarChart2 size={16} /> },
-      { label: 'Policy Master', path: '/admin/policy', icon: <BookOpen size={16} /> },
-      { label: 'Master Data', path: '/admin/master-data', icon: <Database size={16} /> },
-      { label: 'Audit Logs', path: '/admin/audit', icon: <ScrollText size={16} /> },
-      { label: 'Notifications/SLA', path: '/admin/notifications', icon: <Bell size={16} />, badge: 4 },
     ],
   },
 ];
