@@ -648,8 +648,9 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       performedByRole: currentUser.role,
     });
     closeModal();
-    showSuccess('Claim fully approved. All line items marked as Approved.');
-  }, [lineItems, claimId, currentUser, closeModal]);
+    showSuccess('Claim fully approved. Redirecting to queue…');
+    setTimeout(() => navigate('/claims'), 1800);
+  }, [lineItems, claimId, currentUser, closeModal, navigate]);
 
   const handleSavePartial = useCallback(() => {
     const updatedItems = lineItems.map((li) => ({
@@ -685,8 +686,9 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       performedByRole: currentUser.role,
     });
     closeModal();
-    showSuccess('Partial decisions saved. Claim continues in review.');
-  }, [lineItems, decisions, claimId, currentUser, closeModal]);
+    showSuccess('Partial decisions saved. Redirecting to queue…');
+    setTimeout(() => navigate('/claims'), 1800);
+  }, [lineItems, decisions, claimId, currentUser, closeModal, navigate]);
 
   const handleSendClarification = useCallback(() => {
     if (!modalReason) return;
@@ -709,8 +711,9 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       performedByRole: currentUser.role,
     });
     closeModal();
-    showSuccess('Clarification request sent to trainer.');
-  }, [modalReason, addRemark, claimId, currentUser, closeModal]);
+    showSuccess('Clarification request sent to trainer. Redirecting…');
+    setTimeout(() => navigate('/claims'), 1800);
+  }, [modalReason, addRemark, claimId, currentUser, closeModal, navigate]);
 
   const handleReject = useCallback(() => {
     if (!modalReasonCode || !modalRemark) return;
@@ -733,11 +736,20 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       performedByRole: currentUser.role,
     });
     closeModal();
-    showSuccess('Claim rejected. Trainer notified.');
-  }, [modalReasonCode, modalRemark, claimId, currentUser, closeModal]);
+    showSuccess('Claim rejected. Trainer notified. Redirecting…');
+    setTimeout(() => navigate('/claims'), 1800);
+  }, [modalReasonCode, modalRemark, claimId, currentUser, closeModal, navigate]);
 
   const handleHold = useCallback(() => {
     if (!modalRemark) return;
+    if (claim) {
+      saveClaim({
+        ...(claim as import('../types').ClaimHeader),
+        status: 'On Hold',
+        pendingWith: 'HR/Admin',
+        lastActionAt: new Date().toISOString(),
+      });
+    }
     logAction({
       claimId,
       entityType: 'Claim',
@@ -748,8 +760,9 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       performedByRole: currentUser.role,
     });
     closeModal();
-    showSuccess('Claim placed on hold.');
-  }, [modalRemark, claimId, currentUser, closeModal]);
+    showSuccess('Claim placed on hold. Redirecting…');
+    setTimeout(() => navigate('/claims'), 1800);
+  }, [modalRemark, claimId, currentUser, closeModal, claim, navigate]);
 
   // ── 404 guard ──────────────────────────────────────────────────────────────
   if (!claim) {

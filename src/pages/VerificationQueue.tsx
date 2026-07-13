@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useCallback } from 'react';
+﻿import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import type { User, ClaimHeader } from '../types';
 import { ClaimTable } from '../components/ClaimTable';
@@ -294,8 +294,10 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Load all real claims from localStorage
-  const allClaims = useMemo<ClaimHeader[]>(() => getClaims(), []);
+  // Load all real claims from localStorage — re-read on every mount so
+  // the list is fresh when HR returns from ClaimReview after taking action
+  const [allClaims, setAllClaims] = useState<ClaimHeader[]>(() => getClaims());
+  useEffect(() => { setAllClaims(getClaims()); }, []);
 
   // ── Filtering ────────────────────────────────────────────────────────────
   const filtered = useMemo(
