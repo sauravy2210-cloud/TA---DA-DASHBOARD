@@ -36,14 +36,6 @@ type TabId =
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'overview', label: 'Overview' },
-  { id: 'travel', label: 'Travel' },
-  { id: 'da', label: 'DA' },
-  { id: 'lodging', label: 'Lodging' },
-  { id: 'cab', label: 'Cab' },
-  { id: 'other', label: 'Other' },
-  { id: 'documents', label: 'Documents' },
-  { id: 'timeline', label: 'Timeline' },
-  { id: 'audit', label: 'Audit Log' },
 ];
 
 // ─── Status badge ──────────────────────────────────────────────────────────
