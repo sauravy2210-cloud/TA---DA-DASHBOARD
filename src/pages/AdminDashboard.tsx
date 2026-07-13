@@ -19,11 +19,7 @@ import {
   Search,
   AlertCircle,
   CheckCircle2,
-  Clock,
-  FileX,
-  Zap,
   AlertTriangle,
-  BookOpen,
   IndianRupee,
   TrendingUp,
   Download,
@@ -817,42 +813,6 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
             accentColor="yellow"
             isAmount
             onClick={() => goToQueue('Payment+Pending')}
-          />
-          <KpiCard
-            title="Missing Documents"
-            value={kpis.missingDocs}
-            subtitle="Claims with incomplete docs"
-            icon={FileX}
-            accentColor="red"
-            onClick={() => goToQueue('missing-docs')}
-          />
-          <KpiCard
-            title="Exception Claims"
-            value={kpis.exceptions}
-            subtitle="Policy exceptions needing approval"
-            icon={Zap}
-            accentColor="purple"
-            onClick={() => goToQueue('exceptions')}
-          />
-          <KpiCard
-            title="SLA Breached"
-            value={kpis.slaBreached}
-            subtitle="Past 7-business-day SLA"
-            icon={Clock}
-            accentColor="red"
-            onClick={() => goToQueue('sla-breached')}
-          />
-        </div>
-
-        {/* ── KPI Row 3 ─────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <KpiCard
-            title="Ledger Mismatch"
-            value={kpis.ledgerMismatch}
-            subtitle="Reconciliation required"
-            icon={BookOpen}
-            accentColor="yellow"
-            onClick={() => goToQueue('ledger-mismatch')}
           />
           <KpiCard
             title="Total Claimed"
