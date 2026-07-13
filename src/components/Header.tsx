@@ -197,7 +197,7 @@ export default function Header({
               className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
               style={{ background: '#1f7cc9' }}
             >
-              {currentUser.avatarInitials}
+              {currentUser.role === 'HRAdmin' ? 'Admin' : currentUser.avatarInitials}
             </div>
             <div className="hidden md:flex flex-col leading-tight">
               <span className="text-xs text-gray-500">Welcome:</span>
