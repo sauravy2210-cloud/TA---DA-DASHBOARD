@@ -5013,16 +5013,34 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 {/* Step 4 */}
                 <div className="rounded-xl border border-green-200 p-4 bg-green-50">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-green-400 mb-1">Step 4 — DA Eligibility</p>
-                  <div className="flex flex-wrap gap-x-3 gap-y-0.5">
-                    {(autoDATotal > 0 || Object.keys(foreignDAMap).length === 0) && (
-                      <p className="text-xl font-extrabold text-green-700">{formatINR(autoDATotal)}</p>
+                  {/* Individual currency amounts */}
+                  <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                    {autoDATotal > 0 && (
+                      <span className="text-xl font-extrabold text-green-700">{formatINR(autoDATotal)}</span>
                     )}
                     {Object.entries(foreignDAMap).map(([cur, amt]) => (
-                      <p key={cur} className="text-xl font-extrabold text-green-700">{formatDaCurrency(amt, cur)}</p>
+                      <span key={cur} className="text-xl font-extrabold text-green-700">{formatDaCurrency(amt, cur)}</span>
                     ))}
+                    {autoDATotal === 0 && Object.keys(foreignDAMap).length === 0 && (
+                      <span className="text-xl font-extrabold text-green-700">₹0</span>
+                    )}
                   </div>
+                  {/* Combined INR equivalent when foreign DA exists */}
+                  {Object.keys(foreignDAMap).length > 0 && (
+                    <div className="mt-1.5 flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-green-100 border border-green-300">
+                      <span className="text-[10px] text-green-600 font-semibold uppercase tracking-wide">Total DA (INR equiv.)</span>
+                      <span className="text-sm font-extrabold text-green-800 ml-auto">
+                        {formatINR(autoDATotal + foreignDATotalINR)}
+                      </span>
+                    </div>
+                  )}
                   <div className="mt-1 space-y-0.5 text-xs text-gray-600">
                     <p>{daRows.filter(r => r.amount > 0).length} eligible day{daRows.filter(r => r.amount > 0).length !== 1 ? 's' : ''} × rate</p>
+                    {Object.keys(foreignDAMap).length > 0 && (
+                      <p className="text-green-600">
+                        Foreign DA converted @ {Object.entries(foreignDAMap).map(([c]) => `${c} = ₹${FX_TO_INR[c] ?? '?'}`).join(', ')} (indicative)
+                      </p>
+                    )}
                     {leaveDates.size > 0 && (
                       <p className="text-orange-600">{leaveDates.size} leave day{leaveDates.size !== 1 ? 's' : ''} deducted</p>
                     )}
