@@ -50,7 +50,10 @@ export default async function handler(req, res) {
     if (d.statuscode !== 200) throw new Error(d.message || 'API 259 failed');
     let raw = d.content;
     if (typeof raw === 'string') { try { raw = JSON.parse(raw); } catch { raw = []; } }
-    return res.status(200).json({ advances: Array.isArray(raw) ? raw : [] });
+    const list = Array.isArray(raw) ? raw : (raw && typeof raw === 'object' ? [raw] : []);
+    // _sample: first record with all its keys exposed so frontend can map field names correctly
+    const _sample = list.length > 0 ? list[0] : null;
+    return res.status(200).json({ advances: list, _total: list.length, _sample });
   } catch (err) {
     return res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
   }
