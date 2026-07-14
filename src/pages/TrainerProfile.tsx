@@ -264,8 +264,6 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
     );
   }
 
-  const accountTypeOptions = ['Savings', 'Current', 'Salary'];
-
   return (
     <div className="max-w-2xl mx-auto py-6 px-4">
       {/* Header */}
@@ -470,31 +468,6 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
               placeholder="e.g. HDFC0001234"
               maxLength={11}
             />
-          </Field>
-          <Field label="Branch Name" fromPms={fromPms('branchName')}>
-            <input
-              className={fromPms('branchName') ? readonlyCls : inputCls}
-              value={form.branchName || ''}
-              readOnly={fromPms('branchName')}
-              onChange={e => set('branchName', e.target.value)}
-              placeholder="e.g. MG Road, Bangalore"
-            />
-          </Field>
-          <Field label="Account Type" fromPms={fromPms('accountType')}>
-            {fromPms('accountType') ? (
-              <input className={readonlyCls} value={form.accountType} readOnly />
-            ) : (
-              <select className={inputCls} value={form.accountType || ''}
-                onChange={e => set('accountType', e.target.value)}>
-                <option value="">— Select Type —</option>
-                {accountTypeOptions.map(t => <option key={t} value={t}>{t}</option>)}
-              </select>
-            )}
-          </Field>
-          <Field label="UPI ID / VPA">
-            <input className={inputCls} value={form.upiId || ''}
-              onChange={e => set('upiId', e.target.value)}
-              placeholder="e.g. name@upi" />
           </Field>
         </div>
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3 flex items-center gap-2">
