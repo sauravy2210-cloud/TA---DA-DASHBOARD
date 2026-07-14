@@ -1806,6 +1806,28 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [fetched, setFetched] = useState(false);
+
+  // Live FX rates fetched from /api/fx-rates (Frankfurter/ECB — same source as XE mid-market)
+  const [fxRates, setFxRates] = useState<Record<string, number>>({ USD: 83.5, AED: 22.7 });
+  const [fxUpdatedAt, setFxUpdatedAt] = useState('');
+  const [fxSource, setFxSource] = useState('');
+  useEffect(() => {
+    fetch('/api/fx-rates?base=INR&symbols=USD,AED,EUR,GBP')
+      .then(r => r.json())
+      .then(data => {
+        if (data.rates) {
+          // API returns INR→foreign rates; invert to get foreign→INR
+          const inverted: Record<string, number> = {};
+          for (const [cur, rate] of Object.entries(data.rates as Record<string, number>)) {
+            if (rate > 0) inverted[cur] = parseFloat((1 / rate).toFixed(4));
+          }
+          if (Object.keys(inverted).length > 0) setFxRates(inverted);
+          setFxUpdatedAt(data.updatedAt || '');
+          setFxSource(data.source || '');
+        }
+      })
+      .catch(() => { /* keep hardcoded fallback */ });
+  }, []);
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchError, setFetchError] = useState('');
   const [fetchStatus, setFetchStatus] = useState<'idle' | 'success' | 'empty' | 'error'>('idle');
@@ -2541,8 +2563,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     });
   }, [fetched, fromDate, toDate, today, assignments, primaryCountry, leaveDates, pmsFlights]);
 
-  // Indicative FX rates for Grand Total conversion (updated periodically — for display only)
-  const FX_TO_INR: Record<string, number> = { USD: 83.5, AED: 22.7 };
+  // Live FX rates (fetched on mount from /api/fx-rates); falls back to fxRates state
+  const FX_TO_INR = fxRates;
 
   // INR-only DA total (used in grandTotal and INR displays)
   const autoDATotal = useMemo(
@@ -5057,7 +5079,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                     <p>{daRows.filter(r => r.amount > 0).length} eligible day{daRows.filter(r => r.amount > 0).length !== 1 ? 's' : ''} × rate</p>
                     {Object.keys(foreignDAMap).length > 0 && (
                       <p className="text-green-600">
-                        Foreign DA converted @ {Object.entries(foreignDAMap).map(([c]) => `${c} = ₹${FX_TO_INR[c] ?? '?'}`).join(', ')} (indicative)
+                        Foreign DA converted @ {Object.entries(foreignDAMap).map(([c]) => `${c} = ₹${FX_TO_INR[c] ?? '?'}`).join(', ')} {fxSource ? `live · ${fxUpdatedAt ? new Date(fxUpdatedAt).toLocaleDateString('en-IN') : ''}` : 'indicative'}
                       </p>
                     )}
                     {leaveDates.size > 0 && (
@@ -5182,7 +5204,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                     <p className="text-2xl font-extrabold">{formatINR(grandTotal)}</p>
                     {Object.keys(foreignDAMap).length > 0 && (
                       <p className="text-[10px] opacity-75 mt-0.5">
-                        Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} (indicative)
+                        Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} {fxSource ? `live · ${fxUpdatedAt ? new Date(fxUpdatedAt).toLocaleDateString('en-IN') : ''}` : 'indicative'}
                       </p>
                     )}
                   </div>
@@ -5270,7 +5292,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 <p className="text-lg font-extrabold text-blue-700">{formatINR(grandTotal)}</p>
                 {Object.keys(foreignDAMap).length > 0 && (
                   <p className="text-[10px] text-gray-400 mt-0.5">
-                    Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} (indicative)
+                    Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} {fxSource ? `live · ${fxUpdatedAt ? new Date(fxUpdatedAt).toLocaleDateString('en-IN') : ''}` : 'indicative'}
                   </p>
                 )}
               </div>
