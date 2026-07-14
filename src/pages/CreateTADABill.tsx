@@ -498,12 +498,20 @@ async function fetchTrainerFlights(empCode: string, email?: string): Promise<Fli
   return raw;
 }
 
-// Robust date parser — handles ISO, DD-Mon-YYYY, DD/MM/YYYY, DD-MM-YYYY
+// Robust date parser — handles ISO, DD-Mon-YYYY, DD/MM/YYYY, DD-MM-YYYY, Mon DD YYYY
 function parseDT(dt: string | null): string {
   if (!dt) return '';
   const s = dt.trim();
   // ISO / ISO-with-time: 2026-04-26 or 2026-04-26T00:00:00
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // Mon DD YYYY: "Apr 24 2026 12:00AM" — actual Koenig PMS advance date format
+  const mddyMatch = s.match(/^([A-Za-z]{3})\s+(\d{1,2})\s+(\d{4})/);
+  if (mddyMatch) {
+    const [, mon, dd, yyyy] = mddyMatch;
+    const key = mon.charAt(0).toUpperCase() + mon.slice(1).toLowerCase();
+    const mm = MONTH_MAP[mon] ?? MONTH_MAP[key] ?? '01';
+    return `${yyyy}-${mm}-${dd.padStart(2, '0')}`;
+  }
   // DD-Mon-YYYY: 26-Apr-2026
   const monMatch = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
   if (monMatch) {
@@ -600,15 +608,13 @@ async function fetchCountryList(): Promise<KoenigCountry[]> {
 // ── Employee Advance List API (apikey=259) ────────────────────────────────────
 
 interface RawAdvanceRecord {
-  AdvanceId:     number | null;
-  EmpId:         number | string | null;
-  EmpName:       string | null;
-  AdvanceAmount: number | null;
-  AdvanceDate:   string | null;
-  Purpose:       string | null;
-  VoucherNo:     string | null;
-  Status:        string | null;
-  Currency:      string | null;
+  // Actual field names returned by Koenig PMS API 259
+  Date:     string | null;   // "Apr 24 2026 12:00AM"
+  Amount:   string | null;   // "25400.00"
+  Currency: string | null;
+  TABillID: string | null;
+  Type:     string | null;   // "BankTransfer" | "ByCash"
+  Status:   string | null;
   [key: string]: unknown;
 }
 
@@ -2452,14 +2458,14 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       const windowStart = addDays(fromDate, -90);
       const windowEnd   = addDays(toDate, 30);
       const inRange = all.filter(r => {
-        const d = parseDT(r.AdvanceDate);
+        const d = parseDT(r.Date);
         if (!d) return true; // no date — include for manual review
         return d >= windowStart && d <= windowEnd;
       });
       // Sort oldest → newest
       inRange.sort((a, b) => {
-        const da = parseDT(a.AdvanceDate) || '';
-        const db = parseDT(b.AdvanceDate) || '';
+        const da = parseDT(a.Date) || '';
+        const db = parseDT(b.Date) || '';
         return da.localeCompare(db);
       });
       setPmsAdvances(inRange);
@@ -2984,15 +2990,15 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   function removeAdvance(id: string) { setAdvances(prev => prev.filter(a => a.id !== id)); }
 
   function importAdvance(r: RawAdvanceRecord) {
-    const key = String(r.AdvanceId ?? `${r.EmpId}-${r.AdvanceDate}-${r.AdvanceAmount}`);
+    const key = String(r.TABillID ?? `${r.Date}-${r.Amount}`);
     if (importedAdvanceIds.has(key)) return;
     const entry: AdvanceTaken = {
       id: uid(),
-      date: parseDT(r.AdvanceDate) || (fromDate || ''),
-      amount: typeof r.AdvanceAmount === 'number' ? r.AdvanceAmount : Number(r.AdvanceAmount ?? 0),
+      date: parseDT(r.Date) || (fromDate || ''),
+      amount: Number(r.Amount ?? 0),
       currency: r.Currency?.toUpperCase() || 'INR',
-      purpose: r.Purpose || '',
-      reference: r.VoucherNo || (r.AdvanceId ? `ADV-${r.AdvanceId}` : ''),
+      purpose: r.Type || '',
+      reference: r.TABillID && r.TABillID !== '0' ? `BILL-${r.TABillID}` : '',
     };
     setAdvances(prev => [...prev, entry]);
     setImportedAdvanceIds(prev => new Set(prev).add(key));
@@ -3006,12 +3012,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const advWindowStart = addDays(fromDate, -90);
   const advWindowEnd   = addDays(toDate, 30);
   const pmsAdvancesInRange = pmsAdvances.filter(r => {
-    // Skip completely blank rows — must have at least an amount or ID
-    if (r.AdvanceId == null && (r.AdvanceAmount == null || r.AdvanceAmount === 0)) return false;
-    const d = parseDT(r.AdvanceDate);
+    // Skip completely blank rows — must have at least an amount
+    if (!r.Amount || Number(r.Amount) === 0) return false;
+    const d = parseDT(r.Date);
     if (d) return d >= advWindowStart && d <= advWindowEnd;
-    // No date on the record — include if it has a real amount
-    return r.AdvanceAmount != null && r.AdvanceAmount !== 0;
+    // No date — include if it has a real amount
+    return Number(r.Amount) > 0;
   });
 
   function importFlightAsBill(f: FlightRecord) {
@@ -4997,28 +5003,26 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                         </thead>
                         <tbody className="divide-y divide-gray-100 bg-white">
                           {pmsAdvancesInRange.map((r, idx) => {
-                            const key = String(r.AdvanceId ?? `${r.EmpId}-${r.AdvanceDate}-${r.AdvanceAmount}`);
+                            const key = String(r.TABillID ?? `${r.Date}-${r.Amount}`);
                             const alreadyImported = importedAdvanceIds.has(key);
                             const isCancelled = String(r.Status ?? '').toLowerCase().includes('cancel');
                             return (
                               <tr key={idx} className={isCancelled ? 'opacity-50' : 'hover:bg-violet-50/40'}>
                                 <td className="px-3 py-2.5 font-mono text-violet-700 font-semibold">
-                                  {r.AdvanceId ? `#${r.AdvanceId}` : '—'}
+                                  {r.TABillID && r.TABillID !== '0' ? `#${r.TABillID}` : '—'}
                                 </td>
                                 <td className="px-3 py-2.5 font-medium text-gray-800 whitespace-nowrap">
-                                  {r.EmpName || '—'}
+                                  {String(r.Type || '—')}
                                 </td>
                                 <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">
-                                  {parseDT(r.AdvanceDate) ? fmt(parseDT(r.AdvanceDate)) : (r.AdvanceDate || '—')}
+                                  {parseDT(r.Date) ? fmt(parseDT(r.Date)) : (r.Date || '—')}
                                 </td>
                                 <td className="px-3 py-2.5 font-bold text-gray-800 whitespace-nowrap">
-                                  {r.AdvanceAmount != null
-                                    ? Number(r.AdvanceAmount).toLocaleString('en-IN')
-                                    : '—'}
+                                  {r.Amount != null ? Number(r.Amount).toLocaleString('en-IN') : '—'}
                                 </td>
                                 <td className="px-3 py-2.5 text-gray-600">{r.Currency || 'INR'}</td>
-                                <td className="px-3 py-2.5 text-gray-600 max-w-[180px] truncate">{r.Purpose || '—'}</td>
-                                <td className="px-3 py-2.5 font-mono text-gray-400 text-[11px]">{r.VoucherNo || '—'}</td>
+                                <td className="px-3 py-2.5 text-gray-600 max-w-[180px] truncate">{r.Type || '—'}</td>
+                                <td className="px-3 py-2.5 font-mono text-gray-400 text-[11px]">{r.TABillID && r.TABillID !== '0' ? `BILL-${r.TABillID}` : '—'}</td>
                                 <td className="px-3 py-2.5">
                                   {r.Status ? (
                                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
