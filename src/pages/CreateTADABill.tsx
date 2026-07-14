@@ -496,20 +496,29 @@ async function fetchTrainerFlights(empCode: string, email?: string): Promise<Fli
   return raw;
 }
 
-// Robust date parser — handles ISO, DD-Mon-YYYY, DD/MM/YYYY
+// Robust date parser — handles ISO, DD-Mon-YYYY, DD/MM/YYYY, DD-MM-YYYY
 function parseDT(dt: string | null): string {
   if (!dt) return '';
   const s = dt.trim();
+  // ISO / ISO-with-time: 2026-04-26 or 2026-04-26T00:00:00
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  // DD-Mon-YYYY: 26-Apr-2026
   const monMatch = s.match(/^(\d{1,2})-([A-Za-z]{3})-(\d{4})$/);
   if (monMatch) {
     const [, dd, mon, yyyy] = monMatch;
     const mm = MONTH_MAP[mon] ?? MONTH_MAP[mon.charAt(0).toUpperCase() + mon.slice(1).toLowerCase()] ?? '01';
     return `${yyyy}-${mm}-${dd.padStart(2, '0')}`;
   }
+  // DD/MM/YYYY: 26/04/2026
   const slashMatch = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
   if (slashMatch) {
     const [, dd, mm, yyyy] = slashMatch;
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  // DD-MM-YYYY: 26-04-2026 (Koenig PMS advance date format)
+  const dmyMatch = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+  if (dmyMatch) {
+    const [, dd, mm, yyyy] = dmyMatch;
     return `${yyyy}-${mm}-${dd}`;
   }
   return s.slice(0, 10);
@@ -2436,12 +2445,14 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     // ── Advances (apikey=259) ─────────────────────────────────────────────────
     if (advancesResult.status === 'fulfilled') {
       const all = advancesResult.value;
-      // Filter: keep advances whose AdvanceDate falls within [fromDate, toDate]
-      // If date is missing, include the record so trainer can review
+      // Advances are issued BEFORE travel — use a 90-day look-back from trip start
+      // plus 30 days after trip end to catch any post-trip adjustments
+      const windowStart = addDays(fromDate, -90);
+      const windowEnd   = addDays(toDate, 30);
       const inRange = all.filter(r => {
         const d = parseDT(r.AdvanceDate);
         if (!d) return true; // no date — include for manual review
-        return d >= fromDate && d <= toDate;
+        return d >= windowStart && d <= windowEnd;
       });
       // Sort oldest → newest
       inRange.sort((a, b) => {
@@ -2451,7 +2462,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       });
       setPmsAdvances(inRange);
       if (all.length > 0 && inRange.length === 0) {
-        setAdvancesError(`${all.length} advance record(s) found in PMS but none fall within ${fmt(fromDate)} → ${fmt(toDate)}.`);
+        setAdvancesError(`${all.length} advance record(s) found in PMS but none fall within 90 days before ${fmt(fromDate)} → 30 days after ${fmt(toDate)}.`);
       }
     } else {
       const msg = (advancesResult.reason as Error)?.message || 'Could not fetch advance records';
