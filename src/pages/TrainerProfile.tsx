@@ -225,7 +225,7 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
 
   // Profile completeness
   const importantFields: (keyof FormData)[] = [
-    'name', 'email', 'phone', 'designation', 'department', 'gender',
+    'name', 'email', 'phone', 'designation', 'department',
     'baseCity', 'state', 'country', 'address', 'pinCode',
     'bankName', 'accountNumber', 'ifsc',
   ];
@@ -248,7 +248,6 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
     );
   }
 
-  const genderOptions = ['Male', 'Female', 'Other', 'Prefer not to say'];
   const accountTypeOptions = ['Savings', 'Current', 'Salary'];
 
   return (
@@ -364,54 +363,8 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
           <Field label="Department" fromPms={fromPms('department')}>
             {inputField('department', 'e.g. Technical Training')}
           </Field>
-          <Field label="Gender" required>
-            {fromPms('gender') ? (
-              <input className={readonlyCls} value={form.gender} readOnly />
-            ) : (
-              <select
-                className={inputCls}
-                value={form.gender || ''}
-                onChange={e => set('gender', e.target.value)}
-              >
-                <option value="">— Select Gender —</option>
-                {genderOptions.map(g => <option key={g} value={g}>{g}</option>)}
-              </select>
-            )}
-          </Field>
           <Field label="Reporting Manager" fromPms={fromPms('reportingManager')}>
             {inputField('reportingManager', '—')}
-          </Field>
-          <Field label="Date of Birth">
-            {form.dateOfBirth && fromPms('dateOfBirth') ? (
-              <div className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-600">
-                <Calendar size={13} className="text-gray-400" />
-                {fmt(form.dateOfBirth) || form.dateOfBirth}
-              </div>
-            ) : (
-              <input className={inputCls} type="date" value={form.dateOfBirth || ''}
-                onChange={e => set('dateOfBirth', e.target.value)} />
-            )}
-          </Field>
-          <Field label="Date of Joining" fromPms={fromPms('joiningDate')}>
-            {form.joiningDate && fromPms('joiningDate') ? (
-              <div className="flex items-center gap-2 px-3 py-2 text-sm border border-gray-200 rounded-lg bg-gray-50 text-gray-600">
-                <Calendar size={13} className="text-gray-400" />
-                {fmt(form.joiningDate) || form.joiningDate}
-              </div>
-            ) : (
-              <input className={inputCls} type="date" value={form.joiningDate || ''}
-                onChange={e => set('joiningDate', e.target.value)} />
-            )}
-          </Field>
-          <Field label="PAN Number" fromPms={fromPms('panNumber')}>
-            <input
-              className={fromPms('panNumber') ? readonlyCls : inputCls}
-              value={form.panNumber || ''}
-              readOnly={fromPms('panNumber')}
-              onChange={e => set('panNumber', e.target.value.toUpperCase())}
-              placeholder="e.g. ABCDE1234F"
-              maxLength={10}
-            />
           </Field>
         </div>
       </Section>
@@ -543,8 +496,6 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
               { label: 'Department', value: form.department },
               { label: 'Reporting Manager', value: form.reportingManager },
               { label: 'Base City', value: form.baseCity },
-              { label: 'Date of Joining', value: form.joiningDate ? fmt(form.joiningDate) : '' },
-              { label: 'PAN Number', value: form.panNumber },
             ].filter(i => i.value).map(item => (
               <div key={item.label} className="bg-gray-50 rounded-lg px-3 py-2 border border-gray-100">
                 <p className="text-[10px] text-gray-400 uppercase tracking-wide">{item.label}</p>
@@ -593,7 +544,7 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
           : <><Save size={16} /> Save Profile</>}
       </button>
       <p className="text-center text-[11px] text-gray-400 mt-2">
-        Manually entered fields (Gender, Mobile, Bank details) are saved locally on this device.
+        Manually entered fields (Mobile, Bank details) are saved locally on this device.
       </p>
     </div>
   );
