@@ -205,6 +205,19 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empCode]);
 
+  // Auto-lookup bank name from IFSC using Razorpay IFSC API (free, no key required)
+  useEffect(() => {
+    const ifsc = form.ifsc?.trim().toUpperCase();
+    if (!ifsc || form.bankName) return; // skip if no IFSC or bank name already filled
+    fetch(`https://ifsc.razorpay.com/${ifsc}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => {
+        if (data?.BANK) setForm(prev => ({ ...prev, bankName: data.BANK }));
+      })
+      .catch(() => { /* silently ignore — bank name stays blank */ });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.ifsc]);
+
   function handleRefresh() {
     if (!empCode) return;
     setLoading(true); setFetchError('');
