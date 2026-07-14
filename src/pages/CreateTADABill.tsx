@@ -5401,6 +5401,67 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 </div>
               </div>
 
+              {/* ── Row 5: Advance Taken ── */}
+              <div className="rounded-xl border border-violet-200 p-4 bg-violet-50">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-violet-400 mb-2">Step 9 — Advance Taken</p>
+                {(pmsAdvancesInRange.length > 0 || advances.length > 0) ? (
+                  <div className="space-y-2">
+                    {/* PMS advances */}
+                    {pmsAdvancesInRange.length > 0 && (
+                      <div>
+                        <p className="text-[10px] text-violet-500 font-semibold uppercase tracking-wide mb-1">From PMS</p>
+                        <div className="space-y-1">
+                          {pmsAdvancesInRange.map((r, i) => (
+                            <div key={i} className="flex items-center justify-between text-xs">
+                              <span className="text-gray-600 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-violet-400 inline-block" />
+                                {parseDT(r.Date) ? fmt(parseDT(r.Date)) : (r.Date || '—')}
+                                {r.Type && <span className="text-gray-400">· {r.Type}</span>}
+                                {r.TABillID && r.TABillID !== '0' && <span className="text-gray-400 font-mono">· #{r.TABillID}</span>}
+                              </span>
+                              <span className="font-bold text-violet-700 whitespace-nowrap ml-3">
+                                {Number(r.Amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 0 })} {r.Currency || 'INR'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Manually added advances */}
+                    {advances.length > 0 && (
+                      <div className={pmsAdvancesInRange.length > 0 ? 'pt-2 border-t border-violet-200' : ''}>
+                        {pmsAdvancesInRange.length > 0 && (
+                          <p className="text-[10px] text-violet-500 font-semibold uppercase tracking-wide mb-1">Manually Added</p>
+                        )}
+                        <div className="space-y-1">
+                          {advances.map((a, i) => (
+                            <div key={i} className="flex items-center justify-between text-xs">
+                              <span className="text-gray-600 flex items-center gap-1.5">
+                                <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 inline-block" />
+                                {a.date ? fmt(a.date) : '—'}
+                                {a.purpose && <span className="text-gray-400">· {a.purpose}</span>}
+                              </span>
+                              <span className="font-bold text-violet-700 whitespace-nowrap ml-3">
+                                {a.amount.toLocaleString('en-IN')} {a.currency}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Total deduction */}
+                    <div className="pt-2 border-t border-violet-300 flex items-center justify-between">
+                      <span className="text-xs font-semibold text-violet-700">Total Advance Deduction (INR)</span>
+                      <span className="text-base font-extrabold text-violet-800">{formatINR(advanceTotal)}</span>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-500 flex items-center gap-1">
+                    <Info size={11} /> No advances recorded for this period
+                  </p>
+                )}
+              </div>
+
               {/* ── Grand Total Banner ── */}
               <div className="rounded-xl bg-gradient-to-r from-blue-600 to-blue-700 p-5 flex flex-wrap items-center justify-between gap-4">
                 <div className="flex flex-wrap gap-6 text-white text-center">
