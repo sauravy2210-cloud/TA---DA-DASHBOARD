@@ -28,8 +28,10 @@ function dayName(iso: string) {
   return new Date(iso).toLocaleDateString('en-IN', { weekday: 'short' });
 }
 
-function addDays(iso: string, n: number) {
+function addDays(iso: string, n: number): string {
+  if (!iso) return '';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
   d.setDate(d.getDate() + n);
   return d.toISOString().slice(0, 10);
 }
