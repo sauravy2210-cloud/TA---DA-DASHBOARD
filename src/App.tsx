@@ -1,4 +1,5 @@
-﻿import { useState, useEffect } from 'react'
+﻿import { useState, useEffect, Component } from 'react'
+import type { ErrorInfo, ReactNode } from 'react'
 import {
   BrowserRouter,
   Routes,
@@ -30,6 +31,42 @@ import UpcomingTravel from './pages/UpcomingTravel'
 import CreateTADABill from './pages/CreateTADABill'
 import HelpPolicy from './pages/HelpPolicy'
 import TrainerProfile from './pages/TrainerProfile'
+
+// ── Error Boundary ───────────────────────────────────────────────────────────
+class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { error: null }
+  }
+  static getDerivedStateFromError(error: Error) { return { error } }
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('App crash:', error, info)
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#eef4fa', padding: '2rem', fontFamily: 'Arial, sans-serif' }}>
+          <img src="/koenig-logo.svg" alt="Koenig" style={{ height: 56, marginBottom: 24 }} />
+          <h2 style={{ color: '#1e293b', marginBottom: 8 }}>Something went wrong</h2>
+          <p style={{ color: '#64748b', marginBottom: 24, textAlign: 'center', maxWidth: 400 }}>
+            The page failed to load. Please clear your browser cache and try again.
+          </p>
+          <button
+            onClick={() => { localStorage.clear(); window.location.reload(); }}
+            style={{ background: '#7c3aed', color: '#fff', border: 'none', borderRadius: 8, padding: '10px 24px', cursor: 'pointer', fontSize: 14 }}
+          >
+            Clear Cache &amp; Reload
+          </button>
+          <details style={{ marginTop: 16, color: '#94a3b8', fontSize: 12, maxWidth: 500, wordBreak: 'break-word' }}>
+            <summary style={{ cursor: 'pointer' }}>Error details</summary>
+            <pre style={{ marginTop: 8 }}>{this.state.error.message}</pre>
+          </details>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
 
 // ── Local-storage helpers ────────────────────────────────────────────────────
 const LS_KEY = 'tada_current_user'
@@ -179,6 +216,7 @@ export default function App() {
   const handleLogout = () => setCurrentUser(null)
 
   return (
+    <ErrorBoundary>
     <BrowserRouter>
       <Routes>
         {/* Public */}
@@ -492,6 +530,7 @@ export default function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
+    </ErrorBoundary>
   )
 }
 

@@ -7,7 +7,19 @@
     <title>Koenig TA/DA Portal</title>
   </head>
   <body>
+    <noscript style="display:flex;align-items:center;justify-content:center;min-height:100vh;font-family:Arial,sans-serif;color:#64748b;text-align:center;padding:2rem;">
+      JavaScript is required to run the Koenig TA/DA Portal. Please enable JavaScript in your browser.
+    </noscript>
     <div id="root"></div>
+    <script>
+      // Clear corrupt localStorage that can cause blank page
+      try {
+        var u = localStorage.getItem('tada_current_user');
+        if (u) JSON.parse(u);
+      } catch(e) {
+        localStorage.removeItem('tada_current_user');
+      }
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
