@@ -175,18 +175,8 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
   });
 
   useEffect(() => {
-    if (currentUser.pmsDetails) {
-      setPms(currentUser.pmsDetails);
-      const base = buildForm(currentUser.pmsDetails, empCode, currentUser);
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY(empCode));
-        if (stored) { setForm(mergeWithSaved(base, JSON.parse(stored))); return; }
-      } catch { /* ignore */ }
-      setForm(base);
-      setLoading(false);
-      return;
-    }
     if (!empCode) { setLoading(false); return; }
+    // Always re-fetch from PMS on profile open — cached pmsDetails may be stale
     setLoading(true);
     refetchPmsDetails(empCode)
       .then(data => {
@@ -198,7 +188,19 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
         } catch { /* ignore */ }
         setForm(base);
       })
-      .catch(err => setFetchError(err.message || 'Could not load profile from PMS'))
+      .catch(() => {
+        // On network failure fall back to cached pmsDetails
+        if (currentUser.pmsDetails) {
+          const base = buildForm(currentUser.pmsDetails, empCode, currentUser);
+          try {
+            const stored = localStorage.getItem(STORAGE_KEY(empCode));
+            if (stored) { setForm(mergeWithSaved(base, JSON.parse(stored))); return; }
+          } catch { /* ignore */ }
+          setForm(base);
+        } else {
+          setFetchError('Could not load profile from PMS');
+        }
+      })
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empCode]);
