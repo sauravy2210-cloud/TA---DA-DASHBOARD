@@ -2999,14 +2999,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const advancesInRange = advances.filter(a => a.date >= fromDate && a.date <= toDate);
   const advanceTotal = advancesInRange.filter(a => a.currency === 'INR').reduce((s, a) => s + a.amount, 0);
 
-  // Filter PMS advance records: only those within the selected date range and with real data
+  // Filter PMS advance records: advances issued up to 90 days before trip start (pre-trip issuance)
+  // and up to 30 days after trip end, so no advance is missed due to timing
+  const advWindowStart = addDays(fromDate, -90);
+  const advWindowEnd   = addDays(toDate, 30);
   const pmsAdvancesInRange = pmsAdvances.filter(r => {
     // Skip completely blank rows — must have at least an amount or ID
     if (r.AdvanceId == null && (r.AdvanceAmount == null || r.AdvanceAmount === 0)) return false;
-    // Date filter: if AdvanceDate is present, it must fall within the selected range
     const d = parseDT(r.AdvanceDate);
-    if (d) return d >= fromDate && d <= toDate;
-    // No date on the record — still show it (date may be missing from API) but don't hide
+    if (d) return d >= advWindowStart && d <= advWindowEnd;
+    // No date on the record — include if it has a real amount
     return r.AdvanceAmount != null && r.AdvanceAmount !== 0;
   });
 
