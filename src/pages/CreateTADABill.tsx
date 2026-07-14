@@ -859,6 +859,7 @@ const CITY_COUNTRY_MAP: Record<string, string> = {
 
   // ── Bhutan (DA ₹1100) ────────────────────────────────────────────────────
   'thimphu': 'Bhutan',         // capital
+  'thimpu': 'Bhutan',          // PMS typo for Thimphu
   'paro': 'Bhutan',            // international airport city
   'punakha': 'Bhutan',
   'wangdue phodrang': 'Bhutan', 'wangdi': 'Bhutan',
@@ -984,7 +985,18 @@ function mapRawToAssignment(r: RawTrainerAssignment, fallbackFromDate = '', fall
   // ── Location ─────────────────────────────────────────────────────────────────
   const city    = pickStr(r, 'city_of_training', 'CityOfTraining', 'City', 'city');
   const rawCountry = pickStr(r, 'Country', 'country', 'CountryName', 'country_name');
-  const country = rawCountry || inferCountryFromCity(city);
+
+  // PMS frequently returns "India" as a default country even for assignments
+  // in neighboring countries (Nepal, Bangladesh, Myanmar, Bhutan, Sri Lanka).
+  // City-based inference is more accurate for SAARC region — if the city
+  // resolves to a neighboring country, override the PMS-supplied country.
+  const NEIGHBORING_COUNTRIES = new Set([
+    'Nepal', 'Bangladesh', 'Myanmar', 'Burma', 'Bhutan', 'Sri Lanka',
+  ]);
+  const cityInferred = inferCountryFromCity(city);
+  const country = (cityInferred !== 'India' && NEIGHBORING_COUNTRIES.has(cityInferred))
+    ? cityInferred                          // city proves it's a neighboring country → override PMS
+    : (rawCountry || cityInferred);         // otherwise trust PMS, fall back to city inference
 
   const trainingVenue = pickStr(r, 'training_venue', 'TrainingVenue');
 
