@@ -1037,7 +1037,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
       <div className="flex-1 px-6 py-4">
         <ClaimTable
           claims={adaptedClaims as import('../types').ClaimHeader[]}
-          onClaimClick={(claimId) => navigate(`/claims/${claimId}/review`)}
+          onClaimClick={(claimId) => navigate(`/claims/${claimId}`)}
           userRole={userRole}
           showCheckboxes={true}
           selectedIds={selectedIds}
