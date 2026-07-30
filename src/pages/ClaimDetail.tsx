@@ -2916,50 +2916,6 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               />
             </div>
 
-            {/* Ledger — hidden */}
-            {false && isHROrAdmin && (
-              <div className="bg-white rounded-xl border border-gray-200 p-5">
-                <h3 className="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">Ledger</h3>
-                <LedgerPanel
-                  claim={{
-                    claimId: claim.claimId,
-                    billNo: claim.billNo,
-                    trainerName: claim.trainerName,
-                    trainerId: '',
-                    assignmentIds: claim.assignmentIds ?? [],
-                    batchIds: [],
-                    clientName: claim.clientName,
-                    courseName: '',
-                    trainingLocation: claim.trainingLocation ?? '',
-                    claimStartDate: claim.submittedAt ?? '',
-                    claimEndDate: claim.lastActionAt ?? '',
-                    baseCity: claim.baseCity ?? '',
-                    destinationCities: [],
-                    status: claim.status as ClaimStatus,
-                    pendingWith: (claim.pendingWith ?? 'None') as PendingWith,
-                    submittedAt: claim.submittedAt,
-                    lastActionAt: claim.lastActionAt ?? '',
-                    totalClaimedAmount: claim.totalClaimedAmount ?? 0,
-                    eligibleAmount: claim.approvedAmount ?? 0,
-                    approvedAmount: claim.approvedAmount ?? 0,
-                    deductionAmount: claim.deductionAmount ?? 0,
-                    advanceAdjusted: advanceAdjusted,
-                    miscAdjustments: 0,
-                    recoverableAmount: claim.recoverableAmount ?? 0,
-                    netPayable: computedFinalSettlement,
-                    currency: claim.currency ?? 'INR',
-                    exceptionFlag: claim.exceptionFlag ?? false,
-                    missingDocumentFlag: claim.missingDocumentFlag ?? false,
-                    duplicateFlag: false,
-                    ledgerMismatchFlag: claim.ledgerMismatchFlag ?? false,
-                    slaBreached: claim?.slaBreached ?? false,
-                    paymentStatus: 'Unpaid' as PaymentStatus,
-                    agingDays: claim?.agingDays ?? 0,
-                  }}
-                  advanceRecords={[]}
-                />
-              </div>
-            )}
           </div>
         )}
 
