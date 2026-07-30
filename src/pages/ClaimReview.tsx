@@ -421,6 +421,29 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
     return Array.from(map.values());
   }, [lineItems, tursoLineItems]);
 
+  // Resolve trainer email from Koenig PMS — authoritative source, fallback to claim-embedded email
+  const [pmsTrainerEmail, setPmsTrainerEmail] = useState('');
+  useEffect(() => {
+    if (!claim) return;
+    const trainerId = String((claim as import('../types').ClaimHeader & { trainerId?: string }).trainerId ?? '');
+    const empCode = trainerId.replace(/^EMP-/i, '').trim();
+    if (!empCode) return;
+    fetch(`/api/employee?empCode=${encodeURIComponent(empCode)}`)
+      .then(r => r.ok ? r.json() : {})
+      .then((d: Record<string, unknown>) => {
+        const emp = (d.employee ?? {}) as Record<string, unknown>;
+        const email = String(emp.email_address ?? emp.EmailAddress ?? emp.Email ?? emp.email ?? '').trim();
+        if (email) setPmsTrainerEmail(email);
+      })
+      .catch(() => {});
+  }, [claim]);
+
+  // Best email: PMS lookup wins (always current), embedded claim email as fallback
+  const effectiveTrainerEmail =
+    pmsTrainerEmail ||
+    (claim as import('../types').ClaimHeader & { trainerEmail?: string })?.trainerEmail ||
+    '';
+
   const attachments = useMemo(
     () => mergedLineItems.filter((li) => li.receiptData || li.receiptUploaded),
     [mergedLineItems],
@@ -647,8 +670,12 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
   const notifyTrainer = useCallback((actionKey: string, remarks?: string, netPayable?: number) => {
     const c = claim as import('../types').ClaimHeader | null;
     if (!c) return;
-    const email = c.trainerEmail;
-    if (!email) return;
+    // Use PMS-resolved email (always current) with embedded claim email as fallback
+    const email = effectiveTrainerEmail;
+    if (!email) {
+      console.warn(`[notifyTrainer] No email found for trainer ${c.trainerName} (claim ${c.claimId}) — skipping notification`);
+      return;
+    }
     fetch('/api/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -664,8 +691,12 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
         currency: c.currency,
       }),
       keepalive: true,
-    }).catch(() => {});
-  }, [claim, currentUser.name]);
+    }).then(r => {
+      if (!r.ok) console.warn(`[notifyTrainer] Email API returned ${r.status} for ${email}`);
+    }).catch(err => {
+      console.warn(`[notifyTrainer] Email send failed for ${email}:`, err?.message);
+    });
+  }, [claim, currentUser.name, effectiveTrainerEmail]);
 
   // ── Action handlers ────────────────────────────────────────────────────────
   const showSuccess = (msg: string) => {
