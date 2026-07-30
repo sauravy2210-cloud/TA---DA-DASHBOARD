@@ -4042,6 +4042,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   function addTravelBill() {
     if (!travelDraft.from || !travelDraft.to || !travelDraft.amount) return;
     if (!travelDraft.journeyType) return;
+    if (!travelDraft.receiptData || travelDraft.receiptData === '…uploading') return;
     const validation = validateJourneyType(travelDraft.journeyType, travelDraft.date || '', assignments);
     if (validation.blocked) return;
     setTravelBills(prev => [...prev, { ...travelDraft, id: uid() } as TravelBill]);
@@ -6139,7 +6140,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                     </div>
                     <div className="flex items-center gap-3">
                       <div className="flex-1">
-                        <label className="block text-xs text-gray-500 mb-1">Upload Receipt</label>
+                        <label className="block text-xs font-semibold text-red-600 mb-1">Upload Receipt <span className="text-red-500">*</span> <span className="font-normal text-gray-400">(required to add bill)</span></label>
                         <label className="flex items-center gap-2 px-3 py-2 text-xs border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
                           <Upload size={12} className="text-gray-400" />
                           <span className="text-gray-500 truncate max-w-[150px]">{travelDraft.receiptData === '…uploading' ? '⏳ Uploading…' : travelDraft.receipt || 'Choose File'}</span>
@@ -6183,7 +6184,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                         disabled={
                           !travelDraft.from || !travelDraft.to || !travelDraft.amount ||
                           !travelDraft.journeyType ||
-                          travelDraft.receiptData === '…uploading' ||
+                          !travelDraft.receiptData || travelDraft.receiptData === '…uploading' ||
                           (!!travelDraft.journeyType && !!travelDraft.date && validateJourneyType(travelDraft.journeyType, travelDraft.date, assignments).blocked)
                         }
                         className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold mt-4 self-end">
@@ -6312,7 +6313,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="flex-1">
-                      <label className="block text-xs text-gray-500 mb-1">Upload Receipt</label>
+                      <label className="block text-xs font-semibold text-red-600 mb-1">Upload Receipt <span className="text-red-500">*</span> <span className="font-normal text-gray-400">(required to add expense)</span></label>
                       <label className="flex items-center gap-2 px-3 py-2 text-xs border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
                         <Upload size={12} className="text-gray-400" />
                         <span className="text-gray-500 truncate max-w-[150px]">{miscDraft.receiptData === '…uploading' ? '⏳ Uploading…' : miscDraft.receipt || 'Choose File'}</span>
@@ -6326,7 +6327,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                       </label>
                     </div>
                     <button type="button" onClick={addMiscExpense}
-                      disabled={!miscDraft.amount || miscDraft.receiptData === '…uploading'}
+                      disabled={!miscDraft.amount || !miscDraft.receiptData || miscDraft.receiptData === '…uploading'}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold mt-4 self-end">
                       <Plus size={13} /> Add Expense
                     </button>
