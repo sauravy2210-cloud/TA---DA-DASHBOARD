@@ -2952,9 +2952,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                     missingDocumentFlag: claim.missingDocumentFlag ?? false,
                     duplicateFlag: false,
                     ledgerMismatchFlag: claim.ledgerMismatchFlag ?? false,
-                    slaBreached: claim.slaBreached ?? false,
+                    slaBreached: claim?.slaBreached ?? false,
                     paymentStatus: 'Unpaid' as PaymentStatus,
-                    agingDays: claim.agingDays ?? 0,
+                    agingDays: claim?.agingDays ?? 0,
                   }}
                   advanceRecords={[]}
                 />
