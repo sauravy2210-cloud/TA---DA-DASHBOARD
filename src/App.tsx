@@ -6,6 +6,7 @@ import {
   Route,
   Navigate,
   useLocation,
+  useParams,
 } from 'react-router-dom'
 
 import type { User, UserRole } from './types'
@@ -118,17 +119,32 @@ function AuthGuard({ currentUser, children }: GuardProps) {
 
 interface RoleGuardProps extends GuardProps {
   allowedRoles: UserRole[]
+  redirectTo?: string
 }
 
-function RoleGuard({ currentUser, allowedRoles, children }: RoleGuardProps) {
+function RoleGuard({ currentUser, allowedRoles, redirectTo, children }: RoleGuardProps) {
   if (!currentUser) return <Navigate to="/" replace />
   // Always check the real login role (originalRole), not the switched view role
   const authRole = currentUser.originalRole ?? currentUser.role
   // SuperAdmin and HRAdmin bypass all route restrictions
   if (authRole === 'SuperAdmin' || authRole === 'HRAdmin') return <>{children}</>
-  if (!allowedRoles.includes(currentUser.role)) return <AccessDenied />
+  if (!allowedRoles.includes(currentUser.role)) {
+    if (redirectTo) return <Navigate to={redirectTo} replace />
+    return <AccessDenied />
+  }
   return <>{children}</>
 }
+
+// Reads claimId from params and redirects trainers away from the HR-only review page
+function ClaimReviewGuard({ currentUser, children }: { currentUser: User | null; children: ReactNode }) {
+  const { claimId } = useParams<{ claimId: string }>()
+  const authRole = currentUser?.originalRole ?? currentUser?.role
+  if (authRole !== 'SuperAdmin' && authRole !== 'HRAdmin') {
+    return <Navigate to={`/claims/${claimId ?? ''}`} replace />
+  }
+  return <>{children}</>
+}
+
 
 // ── Dashboard redirect (role-aware) ─────────────────────────────────────────
 function DashboardRedirect({ currentUser }: { currentUser: User }) {
@@ -361,10 +377,7 @@ export default function App() {
         <Route
           path="/claims/:claimId/review"
           element={
-            <RoleGuard
-              currentUser={currentUser}
-              allowedRoles={['HRAdmin', 'SuperAdmin']}
-            >
+            <ClaimReviewGuard currentUser={currentUser}>
               <ShellWrap
                 currentUser={currentUser!}
                 onRoleSwitch={handleRoleSwitch}
@@ -372,7 +385,7 @@ export default function App() {
               >
                 <ClaimReview currentUser={currentUser!} />
               </ShellWrap>
-            </RoleGuard>
+            </ClaimReviewGuard>
           }
         />
 
