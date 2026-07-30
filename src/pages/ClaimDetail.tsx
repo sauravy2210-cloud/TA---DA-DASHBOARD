@@ -2916,8 +2916,8 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               />
             </div>
 
-            {/* Ledger — HR/Admin only */}
-            {isHROrAdmin && (
+            {/* Ledger — hidden */}
+            {false && isHROrAdmin && (
               <div className="bg-white rounded-xl border border-gray-200 p-5">
                 <h3 className="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">Ledger</h3>
                 <LedgerPanel
