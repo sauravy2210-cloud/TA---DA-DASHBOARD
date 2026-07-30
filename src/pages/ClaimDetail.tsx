@@ -1631,6 +1631,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 {/* 1. Assignment Details — Step 2 exact replica via shared mapRawToAssignment */}
                 {(() => {
                   const open = summaryOpen.assignment;
+                  // ILO (Online) batches are excluded — DA is calculated only for ILT and FMAT (offline/face-to-face)
+                  const visibleAssignments = summaryAssignments.filter(a => {
+                    const bdm = (a.batchType ?? '').toUpperCase().trim();
+                    if (!bdm) return true; // no batch type info — keep
+                    return bdm !== 'ILO' && !bdm.startsWith('ILO');
+                  });
                   const deliveryColor = (m: string) => m === 'Online' ? 'bg-green-100 text-green-700' : m === 'Hybrid' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700';
                   const deliveryDot   = (m: string) => m === 'Online' ? 'bg-green-500' : m === 'Hybrid' ? 'bg-blue-500' : 'bg-orange-500';
                   return (
@@ -1695,7 +1701,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-gray-100">
-                                  {summaryAssignments.map((a, i) => (
+                                  {visibleAssignments.map((a, i) => (
                                     <tr key={i} className="hover:bg-indigo-50/30">
                                       <td className="px-3 py-2.5 whitespace-nowrap">
                                         {a.assignmentId ? <span className="font-mono text-[11px] text-indigo-700 bg-indigo-50 border border-indigo-100 px-2 py-0.5 rounded">{a.assignmentId}</span> : <span className="text-gray-400">—</span>}
