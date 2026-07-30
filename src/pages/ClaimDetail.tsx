@@ -1,6 +1,6 @@
 ﻿import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import type { User, ClaimStatus, UserRole, PendingWith, PaymentStatus, ClaimAdvanceItem } from '../types';
+import type { User, ClaimStatus, UserRole, ClaimAdvanceItem } from '../types';
 import { mockClaims, mockStatusHistory } from '../data/mockClaims';
 import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims } from '../services/storageService';
 import { sendActionEmail } from '../services/emailService';
@@ -10,7 +10,6 @@ import type { ClaimLineItem } from '../types';
 import ClaimTimeline from '../components/ClaimTimeline';
 import AmountSummary from '../components/AmountSummary';
 import AuditTimeline from '../components/AuditTimeline';
-import { LedgerPanel } from '../components/LedgerPanel';
 import RemarksPanel from '../components/RemarksPanel';
 import { TravelTimeline } from '../components/TravelTimeline';
 import DADayBreakdown from '../components/DADayBreakdown';
@@ -1206,8 +1205,6 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     changedAt: h.changedAt,
     remarks: h.remarks,
   }));
-
-  const isHROrAdmin = currentUser.role === 'HRAdmin' || currentUser.role === 'SuperAdmin';
 
   return (
     <div className="flex flex-col min-h-screen bg-gray-50">
