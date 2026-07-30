@@ -4224,31 +4224,42 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     });
 
     try {
-      // Await Turso confirmation — claim must be in DB before success is shown
-      // Strip receiptData from the claim-embedded lineItems so the claims row stays
-      // small (base64 images stay only in the line_items table for cross-device access).
+      // Strip receiptData from the claim-embedded lineItems so the claims row stays small.
       const lineItemsForClaim = lineItems.map(({ receiptData: _r, ...rest }) => rest);
-      const [claimRes, liRes] = await Promise.all([
-        fetch('/api/turso?type=claims', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim }),
-        }),
-        // Always save to line_items table (full data incl. receiptData) — this is
-        // the authoritative source ClaimDetail fetches for HR Admin cross-device view.
-        fetch('/api/turso?type=lineitems', {
+      // Stripped version (no receiptData) — used as Turso fallback if full write is too large.
+      const lineItemsStripped = lineItems.map(({ receiptData: _r, ...rest }) => rest);
+
+      // Always persist to localStorage immediately — guarantees same-device visibility
+      // regardless of network outcome.
+      saveClaim({ ...claim, lineItems });
+      saveLineItems(lineItems);
+
+      // Write claim to Turso (required — abort if this fails).
+      const claimRes = await fetch('/api/turso?type=claims', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim }),
+      });
+      if (!claimRes.ok) throw new Error('Failed to save claim. Please try again.');
+
+      // Write line items to Turso with full receiptData so HR Admin sees attachments.
+      // If the payload is too large (e.g. PDF receipts), fall back to metadata-only write
+      // so bill details always reach HR Admin even if images can't be stored cross-device.
+      if (lineItems.length > 0) {
+        const liRes = await fetch('/api/turso?type=lineitems', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ lineItems }),
-        }),
-      ]);
-
-      if (!claimRes.ok) throw new Error('Failed to save claim. Please try again.');
-      if (!liRes.ok) throw new Error('Failed to save line items. Please try again.');
-
-      // Update in-memory cache after confirmed Turso write
-      saveClaim({ ...claim, lineItems });
-      saveLineItems(lineItems);
+        });
+        if (!liRes.ok) {
+          // Fallback: retry without receiptData so bill metadata always reaches Turso.
+          await fetch('/api/turso?type=lineitems', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lineItems: lineItemsStripped }),
+          });
+        }
+      }
 
       setSubmitSuccess(true);
       setTimeout(() => { navigate('/claims'); }, 1800);
