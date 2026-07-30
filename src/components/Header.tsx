@@ -18,6 +18,7 @@ interface HeaderProps {
 const ROLE_TABS: { label: string; value: UserRole }[] = [
   { label: 'Trainer', value: 'Trainer' },
   { label: 'HR/Admin', value: 'HRAdmin' },
+  { label: 'Check Details', value: 'CheckDetails' },
   { label: 'Finance', value: 'Finance' },
   { label: 'Super Admin', value: 'SuperAdmin' },
 ];
@@ -197,12 +198,12 @@ export default function Header({
               className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
               style={{ background: '#1f7cc9' }}
             >
-              {currentUser.role === 'HRAdmin' ? 'Admin' : currentUser.avatarInitials}
+              {(currentUser.role === 'HRAdmin' || currentUser.originalRole === 'HRAdmin') ? 'Admin' : currentUser.avatarInitials}
             </div>
             <div className="hidden md:flex flex-col leading-tight">
               <span className="text-xs text-gray-500">Welcome:</span>
               <span className="text-sm font-semibold text-gray-800 leading-tight max-w-[120px] truncate">
-                {currentUser.role === 'HRAdmin' ? 'HR/Admin' : currentUser.name}
+                {(currentUser.role === 'HRAdmin' || currentUser.originalRole === 'HRAdmin') ? 'HR/Admin' : currentUser.name}
               </span>
             </div>
             {/* Role pill */}
@@ -210,7 +211,7 @@ export default function Header({
               className="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold text-white"
               style={{ background: '#1f7cc9' }}
             >
-              {currentUser.role === 'HRAdmin' ? 'HR Admin' : currentUser.role}
+              {(currentUser.role === 'HRAdmin' || currentUser.originalRole === 'HRAdmin') ? 'HR Admin' : currentUser.role}
             </span>
           </div>
 
@@ -231,7 +232,7 @@ export default function Header({
         <span className="text-xs text-gray-400 mr-2 hidden sm:block">View as:</span>
         {ROLE_TABS.filter(tab => {
           if (currentUser.role === 'Trainer') return tab.value === 'Trainer';
-          if (currentUser.role === 'HRAdmin') return tab.value === 'HRAdmin';
+          if (currentUser.role === 'HRAdmin' || currentUser.role === 'CheckDetails') return tab.value === 'HRAdmin' || tab.value === 'CheckDetails';
           return true;
         }).map((tab) => {
           const isActive = currentUser.role === tab.value;

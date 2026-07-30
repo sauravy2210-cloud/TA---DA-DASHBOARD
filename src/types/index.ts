@@ -1,6 +1,6 @@
 ﻿// TA/DA Allowance Dashboard — TypeScript Types
 
-export type UserRole = 'Trainer' | 'HRAdmin' | 'Finance' | 'SuperAdmin';
+export type UserRole = 'Trainer' | 'HRAdmin' | 'Finance' | 'SuperAdmin' | 'CheckDetails';
 
 export interface BankDetails {
   accountNo: string;
@@ -53,6 +53,7 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
+  originalRole?: UserRole;  // preserved when switching view tabs — guards check this
   avatarInitials: string;
   trainerId?: string;
   bankDetails?: BankDetails;
@@ -227,6 +228,17 @@ export type PendingWith =
 
 export type PaymentStatus = 'Unpaid' | 'Processed' | 'Paid';
 
+export interface ClaimAdvanceItem {
+  key: string;         // unique: TABillID or "date-amount"
+  date: string;        // ISO yyyy-mm-dd
+  amount: number;
+  currency: string;
+  type: string;        // BankTransfer | ByCash
+  taBillId: string;    // e.g. "BILL-82412" or ""
+  narration: string;   // e.g. "TABill 82432-3162"
+  source: 'pms' | 'manual';
+}
+
 export interface ClaimHeader {
   claimId: string;
   billNo: string;
@@ -264,6 +276,10 @@ export interface ClaimHeader {
   agingDays: number;
   highValue?: boolean;
   adminRemark?: string;
+  trainerEmail?: string;              // embedded at submit time for email notifications
+  advanceItems?: ClaimAdvanceItem[];  // all advances from Step 9 at submit time
+  lineItems?: ClaimLineItem[];        // embedded at submit time for cross-browser access
+  advanceRecoveries?: Array<{ advanceKey: string; claimAmountUsed: number }>; // set at approve time
 }
 
 export type ExpenseType = 'TA' | 'DA' | 'Lodging' | 'Cab' | 'Other';
@@ -300,6 +316,8 @@ export interface ClaimLineItem {
   trainerVisibleRemark?: string;
   internalRemark?: string;
   clarificationRequired?: boolean;
+  receiptFileName?: string;   // original filename
+  receiptData?: string;       // base64 data URL — stored at submit time so HR Admin can view
 }
 
 export type AttachmentCategory =

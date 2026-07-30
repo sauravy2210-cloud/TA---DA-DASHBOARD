@@ -9,6 +9,7 @@ import {
 } from 'react-router-dom'
 
 import type { User, UserRole } from './types'
+import { initFromDb } from './services/storageService'
 import AppShell from './components/AppShell'
 
 // Pages
@@ -31,6 +32,7 @@ import UpcomingTravel from './pages/UpcomingTravel'
 import CreateTADABill from './pages/CreateTADABill'
 import HelpPolicy from './pages/HelpPolicy'
 import TrainerProfile from './pages/TrainerProfile'
+import CheckDetails from './pages/CheckDetails'
 
 // ── Error Boundary ───────────────────────────────────────────────────────────
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -72,12 +74,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
 const LS_KEY = 'tada_current_user'
 
 function loadUser(): User | null {
-  try {
-    const raw = localStorage.getItem(LS_KEY)
-    return raw ? (JSON.parse(raw) as User) : null
-  } catch {
-    return null
-  }
+  // Always start with login page on every fresh page load — clear any stale session
+  localStorage.removeItem(LS_KEY)
+  return null
 }
 
 function saveUser(user: User | null) {
@@ -123,6 +122,10 @@ interface RoleGuardProps extends GuardProps {
 
 function RoleGuard({ currentUser, allowedRoles, children }: RoleGuardProps) {
   if (!currentUser) return <Navigate to="/" replace />
+  // Always check the real login role (originalRole), not the switched view role
+  const authRole = currentUser.originalRole ?? currentUser.role
+  // SuperAdmin and HRAdmin bypass all route restrictions
+  if (authRole === 'SuperAdmin' || authRole === 'HRAdmin') return <>{children}</>
   if (!allowedRoles.includes(currentUser.role)) return <AccessDenied />
   return <>{children}</>
 }
@@ -130,6 +133,7 @@ function RoleGuard({ currentUser, allowedRoles, children }: RoleGuardProps) {
 // ── Dashboard redirect (role-aware) ─────────────────────────────────────────
 function DashboardRedirect({ currentUser }: { currentUser: User }) {
   if (currentUser.role === 'Trainer') return <TrainerDashboard currentUser={currentUser} />
+  if (currentUser.role === 'CheckDetails') return <Navigate to="/check-details" replace />
   if (currentUser.role === 'Finance') return <Navigate to="/payments" replace />
   return <Navigate to="/admin" replace />
 }
@@ -197,7 +201,7 @@ export default function App() {
         setCurrentUser(prev => prev ? {
           ...prev,
           name:           fullName,
-          email:          emp.email_address ?? prev.email,
+          email:          String(emp.email_address || emp.Email || emp.email || emp.EmailAddress || emp.emailAddress || emp.EmailId || emp.email_id || emp.personal_email || emp.PersonalEmail || emp.OfficialEmail || emp.official_email || emp.WorkEmail || emp.work_email || '').trim() || prev.email,
           avatarInitials: (f + l) || prev.avatarInitials,
           pmsDetails:     emp,
         } : prev)
@@ -206,17 +210,35 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // On app startup: load all claims and line items from Turso into memory.
+  // Turso is the single source of truth — no localStorage for claims/line items.
+  const [dbReady, setDbReady] = useState(false);
+  useEffect(() => {
+    initFromDb().then(() => setDbReady(true));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleLogin = (user: User) => setCurrentUser(user)
 
   const handleRoleSwitch = (role: UserRole) => {
     if (!currentUser) return
-    setCurrentUser({ ...currentUser, role })
+    // Keep originalRole so RoleGuard always checks the real login role
+    const original = currentUser.originalRole ?? currentUser.role
+    setCurrentUser({ ...currentUser, role, originalRole: original })
   }
 
   const handleLogout = () => setCurrentUser(null)
 
   return (
     <ErrorBoundary>
+    {/* Full-screen loading overlay while Turso data loads (only when logged in) */}
+    {!dbReady && currentUser && (
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(255,255,255,0.92)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', zIndex: 9999, gap: 12 }}>
+        <span style={{ width: 36, height: 36, border: '4px solid #3b82f6', borderTopColor: 'transparent', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+        <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        <span style={{ fontSize: 14, color: '#64748b' }}>Loading your data…</span>
+      </div>
+    )}
     <BrowserRouter>
       <Routes>
         {/* Public */}
@@ -226,6 +248,8 @@ export default function App() {
             currentUser ? (
               currentUser.role === 'Trainer' ? (
                 <Navigate to="/dashboard" replace />
+              ) : currentUser.role === 'CheckDetails' ? (
+                <Navigate to="/check-details" replace />
               ) : currentUser.role === 'Finance' ? (
                 <Navigate to="/payments" replace />
               ) : (
@@ -524,6 +548,17 @@ export default function App() {
                 <CreateTADABill currentUser={currentUser!} />
               </ShellWrap>
             </RoleGuard>
+          }
+        />
+
+        <Route
+          path="/check-details"
+          element={
+            <AuthGuard currentUser={currentUser}>
+              <ShellWrap currentUser={currentUser!} onRoleSwitch={handleRoleSwitch} onLogout={handleLogout}>
+                <CheckDetails currentUser={currentUser!} />
+              </ShellWrap>
+            </AuthGuard>
           }
         />
 

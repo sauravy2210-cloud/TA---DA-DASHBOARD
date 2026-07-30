@@ -103,7 +103,7 @@ export const LedgerPanel: React.FC<LedgerPanelProps> = ({
           }}
         >
           <LedgerLine
-            label="Approved Amount"
+            label={(claim.approvedAmount && claim.approvedAmount > 0) ? 'Approved Amount' : 'Total Claimed'}
             amount={ledger.approvedAmount}
             currency={claim.currency}
             bold
@@ -150,10 +150,10 @@ export const LedgerPanel: React.FC<LedgerPanelProps> = ({
                 style={{
                   fontWeight: 700,
                   fontSize: '1.125rem',
-                  color: ledger.isBalanced ? 'var(--success-text)' : 'var(--danger-text)',
+                  color: ledger.finalSettlement >= 0 ? 'var(--success-text)' : 'var(--danger-text)',
                 }}
               >
-                {fmt(ledger.finalSettlement, claim.currency)}
+                {ledger.finalSettlement < 0 ? '- ' : ''}{fmt(ledger.finalSettlement, claim.currency)}
               </span>
             </div>
             {!ledger.isBalanced && (

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { UserCheck, ShieldCheck, Banknote, Crown, Loader2, AlertCircle, ArrowLeft, Eye, EyeOff, Lock } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { UserCheck, ShieldCheck, Banknote, Crown, Loader2, AlertCircle, ArrowLeft, Eye, EyeOff, Lock, Mail, RefreshCw } from 'lucide-react';
 import type { User, UserRole, PmsEmployeeDetails } from '../types';
 import { mockUsers } from '../data/mockUsers';
 
@@ -202,14 +202,90 @@ interface TrainerCardProps {
   onLogin: (user: User) => void;
 }
 
-function TrainerLoginCard({ onLogin }: TrainerCardProps) {
-  const [expanded, setExpanded] = useState(false);
-  const [empCode, setEmpCode] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [showCode, setShowCode] = useState(false);
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  const visible = local.slice(0, 2);
+  return `${visible}${'*'.repeat(Math.max(2, local.length - 2))}@${domain}`;
+}
 
-  async function handleLogin(e: React.FormEvent) {
+const OTP_RESEND_COOLDOWN = 30; // seconds
+
+function TrainerLoginCard({ onLogin }: TrainerCardProps) {
+  const [expanded, setExpanded]   = useState(false);
+  const [empCode, setEmpCode]     = useState('');
+  const [showCode, setShowCode]   = useState(false);
+  const [loading, setLoading]     = useState(false);
+  const [error, setError]         = useState('');
+
+  // Pre-fetch employee while trainer is typing — so PMS lookup is done by the time they click Send OTP
+  const prefetchCache = useRef<{ code: string; promise: Promise<PmsEmployee | null> } | null>(null);
+
+  function getPrefetchedEmployee(code: string): Promise<PmsEmployee | null> {
+    if (prefetchCache.current?.code === code) return prefetchCache.current.promise;
+    const promise = fetchEmployeeFromPMS(code).catch(() => null);
+    prefetchCache.current = { code, promise };
+    return promise;
+  }
+
+  // Prefetch employee as trainer types — eliminates PMS lookup delay on submit
+  useEffect(() => {
+    const code = empCode.trim();
+    if (code.length < 3) return;
+    const t = setTimeout(() => { getPrefetchedEmployee(code); }, 400);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empCode]);
+
+  // OTP step state
+  const [step, setStep]           = useState<'code' | 'otp'>('code');
+  const [otpValue, setOtpValue]   = useState('');
+  const [otpLoading, setOtpLoading] = useState(false);
+  const [otpError, setOtpError]   = useState('');
+  const [maskedEmail, setMaskedEmail] = useState('');
+  const [cooldown, setCooldown]   = useState(0);
+  const [pendingUser, setPendingUser] = useState<User | null>(null);
+  const [screenOtp, setScreenOtp] = useState('');
+  const cooldownRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => { if (cooldownRef.current) clearInterval(cooldownRef.current); };
+  }, []);
+
+  function startCooldown() {
+    setCooldown(OTP_RESEND_COOLDOWN);
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
+    cooldownRef.current = setInterval(() => {
+      setCooldown(c => {
+        if (c <= 1) { clearInterval(cooldownRef.current!); return 0; }
+        return c - 1;
+      });
+    }, 1000);
+  }
+
+  async function sendOtp(user: User, email: string): Promise<boolean> {
+    try {
+      // Single call: server saves OTP to Turso AND sends email in parallel.
+      // Returns only when email is confirmed delivered to Resend — guaranteed in inbox.
+      const res = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'send-otp', email, trainerName: user.name }),
+      });
+      const d = await res.json();
+      if (!res.ok || !d.success) {
+        setError(d.error || 'Failed to send OTP. Please try again.');
+        return false;
+      }
+      if (d.otp) setScreenOtp(String(d.otp));
+      return true;
+    } catch {
+      setError('Unable to send OTP. Please check your connection and try again.');
+      return false;
+    }
+  }
+
+  async function handleCodeSubmit(e: React.FormEvent) {
     e.preventDefault();
     const code = empCode.trim();
     if (!code) { setError('Please enter your employee code.'); return; }
@@ -217,28 +293,18 @@ function TrainerLoginCard({ onLogin }: TrainerCardProps) {
     setLoading(true);
     setError('');
 
-    // Try live PMS API first
     let emp: PmsEmployee | null = null;
     let apiReachable = false;
     try {
-      emp = await fetchEmployeeFromPMS(code);
+      // Use pre-fetched result if available (started as trainer typed) — avoids 2-5s PMS lookup
+      emp = await getPrefetchedEmployee(code);
       apiReachable = true;
     } catch {
-      // API unreachable (proxy error, network issue, JSON parse failure) —
-      // fall through to fallback below
+      // PMS unreachable
     }
 
     if (!apiReachable) {
-      // API unavailable — build a user from the entered employee code
-      const user: User = {
-        id: `emp-${code}`,
-        name: `Trainer ${code}`,
-        email: `emp${code}@koenig-solutions.com`,
-        role: 'Trainer',
-        avatarInitials: code.slice(0, 2).toUpperCase(),
-        trainerId: code,
-      };
-      onLogin(user);
+      setError('Unable to reach Koenig PMS. Please check your connection and try again.');
       setLoading(false);
       return;
     }
@@ -249,22 +315,107 @@ function TrainerLoginCard({ onLogin }: TrainerCardProps) {
       return;
     }
 
-    const firstName = emp.first_name ?? '';
-    const middleName = emp.middle_name ? ` ${emp.middle_name}` : '';
-    const lastName = emp.last_name ? ` ${emp.last_name}` : '';
-    const fullName = `${firstName}${middleName}${lastName}`.trim() || `Trainer ${code}`;
+    const firstName  = emp.first_name ?? emp.FirstName ?? emp.first_Name ?? '';
+    const middleName = emp.middle_name ?? emp.MiddleName ?? '';
+    const lastName   = emp.last_name ?? emp.LastName ?? emp.last_Name ?? '';
+    const fullName   = [firstName, middleName, lastName].filter(Boolean).join(' ') || `Trainer ${code}`;
+
+    // PMS returns email under different field names depending on the API version
+    const email = String(
+      emp.email_address ||
+      emp.Email ||
+      emp.email ||
+      emp.EmailAddress ||
+      emp.emailAddress ||
+      emp.EmailId ||
+      emp.email_id ||
+      emp.personal_email ||
+      emp.PersonalEmail ||
+      emp.OfficialEmail ||
+      emp.official_email ||
+      emp.WorkEmail ||
+      emp.work_email ||
+      ''
+    ).trim();
 
     const user: User = {
       id: `emp-${code}`,
       name: fullName,
-      email: emp.email_address ?? `emp${code}@koenig-solutions.com`,
+      email: email || `emp${code}@koenig-solutions.com`,
       role: 'Trainer',
       avatarInitials: getInitials(emp.first_name, emp.last_name),
       trainerId: code,
       pmsDetails: emp,
     };
-    onLogin(user);
+
+    if (!email) {
+      setError('No email address found in your profile. Please contact HR to update your email before logging in.');
+      setLoading(false);
+      return;
+    }
+
+    // Send OTP
+    const sent = await sendOtp(user, email);
+    if (!sent) { setLoading(false); return; }
+
+    setPendingUser(user);
+    setMaskedEmail(maskEmail(email));
+    setOtpValue('');
+    setOtpError('');
+    setStep('otp');
+    startCooldown();
     setLoading(false);
+  }
+
+  async function handleOtpSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    const entered = otpValue.trim();
+    if (entered.length !== 6 || !/^\d{6}$/.test(entered)) {
+      setOtpError('Please enter the 6-digit OTP sent to your email.');
+      return;
+    }
+
+    setOtpLoading(true);
+    setOtpError('');
+
+    try {
+      const res = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'verify-otp', email: pendingUser!.email, otp: entered }),
+      });
+      const d = await res.json();
+      if (d.valid) {
+        onLogin(pendingUser!);
+      } else {
+        setOtpError(d.error || 'Incorrect OTP. Please check and try again.');
+      }
+    } catch {
+      setOtpError('Verification failed. Please check your connection and try again.');
+    }
+
+    setOtpLoading(false);
+  }
+
+  async function handleResend() {
+    if (cooldown > 0 || !pendingUser) return;
+    setOtpError('');
+    setOtpValue('');
+    const sent = await sendOtp(pendingUser, pendingUser.email);
+    if (sent) startCooldown();
+  }
+
+  function handleBack() {
+    setExpanded(false);
+    setStep('code');
+    setEmpCode('');
+    setError('');
+    setOtpValue('');
+    setOtpError('');
+    setPendingUser(null);
+    setScreenOtp('');
+    setCooldown(0);
+    if (cooldownRef.current) clearInterval(cooldownRef.current);
   }
 
   if (!expanded) {
@@ -297,67 +448,145 @@ function TrainerLoginCard({ onLogin }: TrainerCardProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="bg-blue-50 text-blue-600 rounded-lg p-2.5"><UserCheck size={24} /></div>
+          <div className="bg-blue-50 text-blue-600 rounded-lg p-2.5">
+            {step === 'otp' ? <Mail size={24} /> : <UserCheck size={24} />}
+          </div>
           <div>
-            <p className="font-semibold text-gray-800">Trainer Login</p>
-            <p className="text-xs text-gray-400">Enter your Koenig employee code to continue</p>
+            <p className="font-semibold text-gray-800">
+              {step === 'otp' ? 'Verify Your Identity' : 'Trainer Login'}
+            </p>
+            <p className="text-xs text-gray-400">
+              {step === 'otp'
+                ? `OTP sent to ${maskedEmail}`
+                : 'Enter your Koenig employee code to continue'}
+            </p>
           </div>
         </div>
         <button
           type="button"
-          onClick={() => { setExpanded(false); setError(''); setEmpCode(''); }}
+          onClick={step === 'otp' ? () => { setStep('code'); setOtpValue(''); setOtpError(''); } : handleBack}
           className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600"
         >
-          <ArrowLeft size={13} /> Back
+          <ArrowLeft size={13} /> {step === 'otp' ? 'Change code' : 'Back'}
         </button>
       </div>
 
-      {/* Form */}
-      <form onSubmit={handleLogin} className="space-y-3">
-        <div>
-          <label className="block text-xs font-medium text-gray-600 mb-1">Employee Code</label>
-          <div className="relative">
+      {/* Step 1 — Employee Code */}
+      {step === 'code' && (
+        <form onSubmit={handleCodeSubmit} className="space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Employee Code</label>
+            <div className="relative">
+              <input
+                type={showCode ? 'text' : 'password'}
+                value={empCode}
+                onChange={e => { setEmpCode(e.target.value); setError(''); }}
+                placeholder="e.g. 1234"
+                autoFocus
+                className="w-full px-3 py-2.5 pr-10 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white"
+              />
+              <button
+                type="button"
+                onClick={() => setShowCode(v => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                {showCode ? <EyeOff size={15} /> : <Eye size={15} />}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+              <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading || !empCode.trim()}
+            className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+          >
+            {loading ? (
+              <><Loader2 size={15} className="animate-spin" /> Verifying &amp; Sending OTP…</>
+            ) : (
+              'Send OTP →'
+            )}
+          </button>
+
+          <p className="text-center text-xs text-gray-400">
+            An OTP will be sent to your registered email from Koenig PMS.
+          </p>
+        </form>
+      )}
+
+      {/* Step 2 — OTP */}
+      {step === 'otp' && (
+        <form onSubmit={handleOtpSubmit} className="space-y-3">
+          {/* Info banner */}
+          <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+            <Mail size={14} className="mt-0.5 flex-shrink-0" />
+            <span>
+              A 6-digit OTP has been sent to <strong>{maskedEmail}</strong>. Enter it below to login. Valid for 10 minutes.
+            </span>
+          </div>
+
+          {/* Show OTP on screen so trainer can login instantly without waiting for email */}
+          {screenOtp && (
+            <div className="px-3 py-3 bg-green-50 border border-green-200 rounded-lg text-center">
+              <p className="text-xs text-green-700 font-medium mb-1">Your OTP (also sent to your email):</p>
+              <p className="text-3xl font-bold tracking-[0.3em] text-green-800 font-mono">{screenOtp}</p>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Enter OTP</label>
             <input
-              type={showCode ? 'text' : 'password'}
-              value={empCode}
-              onChange={e => { setEmpCode(e.target.value); setError(''); }}
-              placeholder="e.g. 1234"
+              type="text"
+              inputMode="numeric"
+              pattern="\d{6}"
+              maxLength={6}
+              value={otpValue}
+              onChange={e => { setOtpValue(e.target.value.replace(/\D/g, '')); setOtpError(''); }}
+              placeholder="6-digit OTP"
               autoFocus
-              className="w-full px-3 py-2.5 pr-10 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white"
+              className="w-full px-3 py-2.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 bg-white text-center tracking-[0.4em] font-mono text-lg"
             />
+          </div>
+
+          {otpError && (
+            <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+              <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
+              {otpError}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={otpLoading || otpValue.length !== 6}
+            className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
+          >
+            {otpLoading ? (
+              <><Loader2 size={15} className="animate-spin" /> Verifying…</>
+            ) : (
+              'Login →'
+            )}
+          </button>
+
+          {/* Resend */}
+          <div className="text-center">
             <button
               type="button"
-              onClick={() => setShowCode(v => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              onClick={handleResend}
+              disabled={cooldown > 0}
+              className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline disabled:text-gray-400 disabled:no-underline disabled:cursor-not-allowed"
             >
-              {showCode ? <EyeOff size={15} /> : <Eye size={15} />}
+              <RefreshCw size={11} />
+              {cooldown > 0 ? `Resend OTP in ${cooldown}s` : 'Resend OTP'}
             </button>
           </div>
-        </div>
-
-        {error && (
-          <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
-            <AlertCircle size={14} className="mt-0.5 flex-shrink-0" />
-            {error}
-          </div>
-        )}
-
-        <button
-          type="submit"
-          disabled={loading || !empCode.trim()}
-          className="w-full py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors flex items-center justify-center gap-2"
-        >
-          {loading ? (
-            <><Loader2 size={15} className="animate-spin" /> Verifying with Koenig PMS…</>
-          ) : (
-            'Login →'
-          )}
-        </button>
-
-        <p className="text-center text-xs text-gray-400">
-          Your details will be fetched securely from the Koenig PMS system.
-        </p>
-      </form>
+        </form>
+      )}
     </div>
   );
 }

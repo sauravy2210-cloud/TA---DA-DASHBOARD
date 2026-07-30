@@ -1,6 +1,6 @@
-﻿import { useMemo } from 'react';
+﻿import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getClaims } from '../services/storageService';
+import { getClaims, deleteClaim, saveClaimAsync, refreshClaims } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
 import {
   PieChart,
@@ -26,6 +26,8 @@ import {
   Download,
   ChevronRight,
   Inbox,
+  Trash2,
+  RotateCcw,
 } from 'lucide-react';
 import type { User, ClaimHeader } from '../types';
 import KpiCard from '../components/KpiCard';
@@ -553,59 +555,102 @@ interface AdminDashboardProps {
 export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
   const navigate = useNavigate();
 
-  // ── Aggregations from mock data ──────────────────────────────────────────
+  // ── Delete / Reopen state ────────────────────────────────────────────────
+  const [deleteTarget, setDeleteTarget] = useState<{ claimId: string; billNo: string } | null>(null);
+  const [reopenTarget, setReopenTarget] = useState<{ claimId: string; billNo: string } | null>(null);
+  const [filterAssignment, setFilterAssignment] = useState('');
+  const [filterTrainer, setFilterTrainer] = useState('');
+  const [filterAdvTrainer, setFilterAdvTrainer] = useState('');
+
+  // liveClaims is the authoritative UI state — updated directly from Turso on each poll.
+  // Using component state (not a tick counter) ensures React re-renders every computed value
+  // reactively the moment fresh data arrives, on any device, from any session.
+  const [liveClaims, setLiveClaims] = useState<ClaimHeader[]>(() => getClaims());
+
+  const reloadClaims = useCallback(async () => {
+    await refreshClaims();
+    setLiveClaims([...getClaims()]); // spread so React detects reference change
+  }, []);
+
+  // On mount: pull latest claims from Turso so trainer submissions from other browsers appear.
+  // Poll every 15s so the dashboard stays live without a manual page refresh.
+  useEffect(() => {
+    reloadClaims();
+    const timer = setInterval(reloadClaims, 15_000);
+    return () => clearInterval(timer);
+  }, [reloadClaims]);
+
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const handleDelete = useCallback(async () => {
+    if (!deleteTarget) return;
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      await deleteClaim(deleteTarget.claimId);
+      setDeleteTarget(null);
+      await reloadClaims();
+    } catch {
+      setDeleteError('Failed to delete. Please try again.');
+    } finally {
+      setDeleteLoading(false);
+    }
+  }, [deleteTarget, reloadClaims]);
+
+  const handleReopen = useCallback(async () => {
+    if (!reopenTarget) return;
+    const claim = liveClaims.find(c => c.claimId === reopenTarget.claimId);
+    if (claim) {
+      try {
+        await saveClaimAsync({
+          ...claim,
+          status: 'Reopened',
+          pendingWith: 'HR/Admin',
+          lastActionAt: new Date().toISOString(),
+        });
+      } catch { /* keep going even if Turso write fails */ }
+    }
+    setReopenTarget(null);
+    reloadClaims();
+  }, [reopenTarget, liveClaims, reloadClaims]);
+
+  // ── Aggregations — all derived directly from liveClaims state ────────────
 
   const kpis = useMemo(() => {
-    const claims = getClaims();
-
-    const newBills = claims.filter((c) => c.status === 'Submitted').length;
-    const underReview = claims.filter((c) => c.status === 'Under Review').length;
-    const clarification = claims.filter((c) => c.status === 'Clarification Required').length;
-    const approved = claims.filter((c) => c.status === 'Approved' || c.status === 'Partially Approved').length;
-    const paymentPending = claims
+    const newBills = liveClaims.filter((c) => c.status === 'Submitted').length;
+    const underReview = liveClaims.filter((c) => c.status === 'Under Review').length;
+    const clarification = liveClaims.filter((c) => c.status === 'Clarification Required').length;
+    const approved = liveClaims.filter((c) => c.status === 'Approved' || c.status === 'Partially Approved').length;
+    const paymentPending = liveClaims
       .filter((c) => c.status === 'Payment Pending')
       .reduce((s, c) => s + c.netPayable, 0);
-    const missingDocs = claims.filter((c) => c.missingDocumentFlag).length;
-    const exceptions = claims.filter((c) => c.exceptionFlag).length;
-    const slaBreached = claims.filter((c) => c.slaBreached).length;
-    const ledgerMismatch = claims.filter((c) => c.ledgerMismatchFlag).length;
-    const totalClaimed = claims.reduce((s, c) => s + c.totalClaimedAmount, 0);
-    const totalApproved = claims.reduce((s, c) => s + c.approvedAmount, 0);
-    const recoverable = claims.reduce((s, c) => s + c.recoverableAmount, 0);
-    const advanceAdjusted = claims.reduce((s, c) => s + (c.advanceAdjusted || 0), 0);
-
-    return {
-      newBills,
-      underReview,
-      clarification,
-      approved,
-      paymentPending,
-      missingDocs,
-      exceptions,
-      slaBreached,
-      ledgerMismatch,
-      totalClaimed,
-      totalApproved,
-      recoverable,
-      advanceAdjusted,
-    };
-  }, []);
+    const missingDocs = liveClaims.filter((c) => c.missingDocumentFlag).length;
+    const exceptions = liveClaims.filter((c) => c.exceptionFlag).length;
+    const slaBreached = liveClaims.filter((c) => c.slaBreached).length;
+    const ledgerMismatch = liveClaims.filter((c) => c.ledgerMismatchFlag).length;
+    const totalClaimed = liveClaims.reduce((s, c) => s + c.totalClaimedAmount, 0);
+    const totalApproved = liveClaims.reduce((s, c) => s + c.approvedAmount, 0);
+    const recoverable = liveClaims.reduce((s, c) => s + c.recoverableAmount, 0);
+    const advanceAdjusted = liveClaims.reduce((s, c) => s + (c.advanceAdjusted || 0), 0);
+    return { newBills, underReview, clarification, approved, paymentPending, missingDocs, exceptions, slaBreached, ledgerMismatch, totalClaimed, totalApproved, recoverable, advanceAdjusted };
+  }, [liveClaims]);
 
   // ── Pie chart data ───────────────────────────────────────────────────────
 
   const pieData = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const c of getClaims()) {
+    for (const c of liveClaims) {
       counts[c.status] = (counts[c.status] ?? 0) + 1;
     }
     return Object.entries(counts).map(([name, value]) => ({ name, value }));
-  }, []);
+  }, [liveClaims]);
 
   // ── Aging bucket data ────────────────────────────────────────────────────
 
   const agingData = useMemo(() => {
     const buckets = { '<1 day': 0, '1-2 days': 0, '2-3 days': 0, '3-5 days': 0, '>5 days': 0 };
-    for (const c of getClaims()) {
+    for (const c of liveClaims) {
       if (c.agingDays < 1) buckets['<1 day']++;
       else if (c.agingDays <= 2) buckets['1-2 days']++;
       else if (c.agingDays <= 3) buckets['2-3 days']++;
@@ -613,91 +658,54 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
       else buckets['>5 days']++;
     }
     return Object.entries(buckets).map(([name, count]) => ({ name, count }));
-  }, []);
+  }, [liveClaims]);
 
   // ── Attention items ──────────────────────────────────────────────────────
 
   const attentionItems = useMemo<AttentionItem[]>(() => {
     const items: AttentionItem[] = [];
-    for (const c of getClaims()) {
-      if (c.slaBreached) {
-        items.push({
-          claimId: c.claimId,
-          billNo: c.billNo,
-          trainerName: c.trainerName,
-          issueType: 'sla',
-          issueLabel: 'SLA Breached',
-          agingDays: c.agingDays,
-          actionLabel: 'Escalate',
-        });
-      }
-      if (c.missingDocumentFlag) {
-        items.push({
-          claimId: c.claimId,
-          billNo: c.billNo,
-          trainerName: c.trainerName,
-          issueType: 'missing-doc',
-          issueLabel: 'Missing Docs',
-          agingDays: c.agingDays,
-          actionLabel: 'Request',
-        });
-      }
-      if (c.exceptionFlag) {
-        items.push({
-          claimId: c.claimId,
-          billNo: c.billNo,
-          trainerName: c.trainerName,
-          issueType: 'exception',
-          issueLabel: 'Exception',
-          agingDays: c.agingDays,
-          actionLabel: 'Review',
-        });
-      }
-      if (c.ledgerMismatchFlag) {
-        items.push({
-          claimId: c.claimId,
-          billNo: c.billNo,
-          trainerName: c.trainerName,
-          issueType: 'ledger',
-          issueLabel: 'Ledger Mismatch',
-          agingDays: c.agingDays,
-          actionLabel: 'Reconcile',
-        });
-      }
+    for (const c of liveClaims) {
+      if (c.slaBreached) items.push({ claimId: c.claimId, billNo: c.billNo, trainerName: c.trainerName, issueType: 'sla', issueLabel: 'SLA Breached', agingDays: c.agingDays, actionLabel: 'Escalate' });
+      if (c.missingDocumentFlag) items.push({ claimId: c.claimId, billNo: c.billNo, trainerName: c.trainerName, issueType: 'missing-doc', issueLabel: 'Missing Docs', agingDays: c.agingDays, actionLabel: 'Request' });
+      if (c.exceptionFlag) items.push({ claimId: c.claimId, billNo: c.billNo, trainerName: c.trainerName, issueType: 'exception', issueLabel: 'Exception', agingDays: c.agingDays, actionLabel: 'Review' });
+      if (c.ledgerMismatchFlag) items.push({ claimId: c.claimId, billNo: c.billNo, trainerName: c.trainerName, issueType: 'ledger', issueLabel: 'Ledger Mismatch', agingDays: c.agingDays, actionLabel: 'Reconcile' });
     }
     return items.slice(0, 8);
-  }, []);
+  }, [liveClaims]);
 
   // ── Recent submissions (last 5 by submittedAt) ────────────────────────────
 
-  const recentClaims = useMemo(
-    () =>
-      [...getClaims()]
-        .filter((c) => c.submittedAt)
-        .sort((a, b) =>
-          new Date(b.submittedAt!).getTime() - new Date(a.submittedAt!).getTime()
-        )
-        .slice(0, 5),
-    []
-  );
+  const recentClaims = useMemo(() => {
+    const assignQ = filterAssignment.trim().toLowerCase();
+    const trainerQ = filterTrainer.trim().toLowerCase();
+    const filtered = [...liveClaims]
+      .filter((c) => c.submittedAt)
+      .filter((c) => {
+        if (assignQ) {
+          const match = (c.assignmentIds ?? []).some(id => id.toLowerCase().includes(assignQ));
+          if (!match) return false;
+        }
+        if (trainerQ) {
+          if (!(c.trainerName ?? '').toLowerCase().includes(trainerQ)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.submittedAt!).getTime() - new Date(a.submittedAt!).getTime());
+    return (assignQ || trainerQ) ? filtered : filtered.slice(0, 5);
+  }, [liveClaims, filterAssignment, filterTrainer]);
 
   // ── MTD amounts ──────────────────────────────────────────────────────────
 
   const mtd = useMemo(() => {
-    const claims = getClaims();
-    const totalClaimed = claims.reduce((s, c) => s + c.totalClaimedAmount, 0);
-    const eligible = claims.reduce((s, c) => s + c.eligibleAmount, 0);
-    const totalApproved = claims.reduce((s, c) => s + c.approvedAmount, 0);
-    const deductions = claims.reduce((s, c) => s + c.deductionAmount, 0);
-    const recoverable = claims.reduce((s, c) => s + c.recoverableAmount, 0);
-    const paymentPending = claims
-      .filter((c) => c.status === 'Payment Pending')
-      .reduce((s, c) => s + c.netPayable, 0);
-    const paid = claims
-      .filter((c) => c.paymentStatus === 'Paid')
-      .reduce((s, c) => s + c.netPayable, 0);
+    const totalClaimed = liveClaims.reduce((s, c) => s + c.totalClaimedAmount, 0);
+    const eligible = liveClaims.reduce((s, c) => s + c.eligibleAmount, 0);
+    const totalApproved = liveClaims.reduce((s, c) => s + c.approvedAmount, 0);
+    const deductions = liveClaims.reduce((s, c) => s + c.deductionAmount, 0);
+    const recoverable = liveClaims.reduce((s, c) => s + c.recoverableAmount, 0);
+    const paymentPending = liveClaims.filter((c) => c.status === 'Payment Pending').reduce((s, c) => s + c.netPayable, 0);
+    const paid = liveClaims.filter((c) => c.paymentStatus === 'Paid').reduce((s, c) => s + c.netPayable, 0);
     return { totalClaimed, eligible, totalApproved, deductions, recoverable, paymentPending, paid };
-  }, []);
+  }, [liveClaims]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
@@ -706,7 +714,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
   }
 
   function handleExport() {
-    exportClaimsQueue(getClaims());
+    exportClaimsQueue(liveClaims);
   }
 
   return (
@@ -971,26 +979,56 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
           {/* Recent Submissions */}
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-              <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-                Recent Submissions
-              </h2>
-              <button
-                onClick={() => goToQueue()}
-                className="text-xs font-medium text-blue-600 hover:underline"
-              >
-                View all
-              </button>
+            <div className="border-b border-gray-100 px-5 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                  Recent Submissions
+                </h2>
+                <button
+                  onClick={() => goToQueue()}
+                  className="text-xs font-medium text-blue-600 hover:underline"
+                >
+                  View all
+                </button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Filter by Assignment ID…"
+                    value={filterAssignment}
+                    onChange={e => setFilterAssignment(e.target.value)}
+                    className="pl-3 pr-8 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 w-52"
+                  />
+                  {filterAssignment && (
+                    <button onClick={() => setFilterAssignment('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Filter by Trainer…"
+                    value={filterTrainer}
+                    onChange={e => setFilterTrainer(e.target.value)}
+                    className="pl-3 pr-8 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 w-44"
+                  />
+                  {filterTrainer && (
+                    <button onClick={() => setFilterTrainer('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>
+                  )}
+                </div>
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-gray-50 text-xs">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Bill No</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Assignment ID</th>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Trainer</th>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Amount</th>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Status</th>
                     <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Submitted</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Action</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50 bg-white">
@@ -1003,6 +1041,19 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         <span className="font-medium text-blue-600">{c.billNo}</span>
                       </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap">
+                        {c.assignmentIds && c.assignmentIds.length > 0 ? (
+                          <div className="flex flex-col gap-0.5">
+                            {c.assignmentIds.map((id) => (
+                              <span key={id} className="font-mono text-xs text-indigo-700 bg-indigo-50 border border-indigo-100 rounded px-1.5 py-0.5 whitespace-nowrap">
+                                {id}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400">—</span>
+                        )}
+                      </td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">{c.trainerName}</td>
                       <td className="px-4 py-2.5 whitespace-nowrap text-gray-800 font-medium">
                         {formatINR(c.totalClaimedAmount)}
@@ -1013,6 +1064,28 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                       <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">
                         {formatDate(c.submittedAt)}
                       </td>
+                      <td className="px-4 py-2.5 whitespace-nowrap text-right">
+                        <div className="inline-flex items-center gap-1">
+                          {c.status !== 'Reopened' && c.status !== 'Draft' && (
+                            <button
+                              onClick={e => { e.stopPropagation(); setReopenTarget({ claimId: c.claimId, billNo: c.billNo }); }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-amber-600 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                              title="Reopen bill"
+                            >
+                              <RotateCcw size={13} />
+                              Reopen
+                            </button>
+                          )}
+                          <button
+                            onClick={e => { e.stopPropagation(); setDeleteTarget({ claimId: c.claimId, billNo: c.billNo }); }}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-red-500 hover:bg-red-50 hover:text-red-700 transition-colors"
+                            title="Delete entry"
+                          >
+                            <Trash2 size={13} />
+                            Delete
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -1022,15 +1095,33 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
           {/* Advance Summary */}
           {(() => {
-            const advanceClaims = getClaims().filter(c => (c.advanceAdjusted || 0) > 0);
-            if (advanceClaims.length === 0) return null;
+            const allAdvanceClaims = liveClaims.filter(c => (c.advanceAdjusted || 0) > 0);
+            if (allAdvanceClaims.length === 0) return null;
+            const advQ = filterAdvTrainer.trim().toLowerCase();
+            const advanceClaims = advQ
+              ? allAdvanceClaims.filter(c => (c.trainerName ?? '').toLowerCase().includes(advQ))
+              : allAdvanceClaims;
             return (
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4">
-                  <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
-                    Advance Summary
-                  </h2>
-                  <span className="text-xs text-gray-400">Advances deducted from final payable</span>
+                <div className="border-b border-gray-100 px-5 py-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                      Advance Summary
+                    </h2>
+                    <span className="text-xs text-gray-400">Advances deducted from final payable</span>
+                  </div>
+                  <div className="relative w-44">
+                    <input
+                      type="text"
+                      placeholder="Filter by Trainer…"
+                      value={filterAdvTrainer}
+                      onChange={e => setFilterAdvTrainer(e.target.value)}
+                      className="pl-3 pr-8 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 w-full"
+                    />
+                    {filterAdvTrainer && (
+                      <button onClick={() => setFilterAdvTrainer('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>
+                    )}
+                  </div>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-gray-50 text-xs">
@@ -1045,7 +1136,11 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50 bg-white">
-                      {advanceClaims.map(c => (
+                      {advanceClaims.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-4 py-6 text-center text-xs text-gray-400">No records match the filter.</td>
+                        </tr>
+                      ) : advanceClaims.map(c => (
                         <tr
                           key={c.claimId}
                           className="cursor-pointer hover:bg-blue-50 transition-colors"
@@ -1121,6 +1216,79 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
         </div>
 
       </div>
+
+      {/* ── Delete confirmation modal ── */}
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                <Trash2 size={18} className="text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-gray-800">Delete Entry</p>
+                <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete <span className="font-semibold text-gray-800">{deleteTarget.billNo}</span>?
+            </p>
+            {deleteError && (
+              <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{deleteError}</p>
+            )}
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setDeleteTarget(null); setDeleteError(null); }}
+                disabled={deleteLoading}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleteLoading}
+                className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors disabled:opacity-60"
+              >
+                {deleteLoading ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Reopen confirmation modal ── */}
+      {reopenTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <RotateCcw size={18} className="text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-gray-800">Reopen Bill</p>
+                <p className="text-xs text-gray-500 mt-0.5">Bill will be reopened for HR Admin re-review</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              Reopen <span className="font-semibold text-gray-800">{reopenTarget.billNo}</span>? Status will change to <span className="font-semibold text-amber-700">Reopened</span> and the bill will be pending with <span className="font-semibold text-amber-700">HR/Admin</span> for re-review.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setReopenTarget(null)}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReopen}
+                className="flex-1 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition-colors"
+              >
+                Reopen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

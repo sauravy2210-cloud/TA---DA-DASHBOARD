@@ -1,5 +1,14 @@
 ﻿import { formatINR } from '../services/calculationEngine';
 
+// Same formatter as LedgerPanel — 2 decimal places, absolute value
+function fmtDecimal(amount: number, currency = 'INR'): string {
+  const symbol = currency === 'INR' ? '₹' : `${currency} `;
+  return `${symbol}${Math.abs(amount).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 interface AmountSummaryProps {
   claimedAmount: number;
   eligibleAmount: number;
@@ -92,21 +101,28 @@ export default function AmountSummary({
 
         <SectionSeparator />
 
-        {/* Net Payable */}
+        {/* Net Payable / Final Settlement */}
         <div
           className={[
             'flex items-center justify-between rounded-lg px-3 py-2.5',
             netPayable >= 0 ? 'bg-green-50 border border-green-100' : 'bg-red-50 border border-red-100',
           ].join(' ')}
         >
-          <span className="text-sm font-bold text-gray-800">Net Payable</span>
+          <div className="flex flex-col gap-0.5">
+            <span className="text-sm font-bold text-gray-800">
+              {netPayable >= 0 ? 'Net Payable' : 'Recovery from Trainer'}
+            </span>
+            {netPayable < 0 && (
+              <span className="text-[10px] text-red-400">Advance exceeds approved amount</span>
+            )}
+          </div>
           <span
             className={[
               'text-base font-bold tabular-nums',
               netPayable >= 0 ? 'text-green-700' : 'text-red-600',
             ].join(' ')}
           >
-            {formatINR(netPayable)}
+            {netPayable < 0 ? '- ' : ''}{fmtDecimal(Math.abs(netPayable), currency)}
           </span>
         </div>
       </div>

@@ -83,7 +83,7 @@ function buildForm(p: PmsEmployeeDetails | null, empCode: string, fallbackUser: 
 
   return {
     name:             fullName,
-    email:            pick(p, 'email_address') || fallbackUser.email,
+    email:            pick(p, 'email_address', 'Email', 'email', 'EmailAddress', 'emailAddress', 'EmailId', 'email_id', 'personal_email', 'PersonalEmail', 'OfficialEmail', 'official_email', 'WorkEmail', 'work_email') || fallbackUser.email,
     phone:            pick(p, 'personal_phone_number', 'mobile_number', 'phone_number',
                           'MobileNumber', 'PhoneNumber', 'contact_number', 'ContactNumber',
                           'mobile', 'phone', 'cell_number', 'CellNumber', 'cell', 'Cell'),
@@ -485,7 +485,7 @@ export default function TrainerProfile({ currentUser }: { currentUser: UserType 
         </div>
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mt-3 flex items-center gap-2">
           <Info size={12} className="flex-shrink-0" />
-          Bank details are used for TA/DA disbursement. Contact HR to update account information if incorrect.
+          Bank details are used for TA/DA disbursement. To update your account information, please make changes from the ESS section of the RMS Portal.
         </p>
       </Section>
 

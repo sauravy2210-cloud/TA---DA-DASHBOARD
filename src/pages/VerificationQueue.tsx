@@ -2,7 +2,7 @@
 import { useNavigate } from 'react-router-dom';
 import type { User, ClaimHeader } from '../types';
 import { ClaimTable } from '../components/ClaimTable';
-import { getClaims, STORAGE_KEYS, saveToStorage } from '../services/storageService';
+import { getClaims, saveClaimAsync, refreshClaims } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -294,10 +294,19 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
   const [filterOpen, setFilterOpen] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
-  // Load all real claims from localStorage — re-read on every mount so
-  // the list is fresh when HR returns from ClaimReview after taking action
   const [allClaims, setAllClaims] = useState<ClaimHeader[]>(() => getClaims());
-  useEffect(() => { setAllClaims(getClaims()); }, []);
+
+  // On mount: pull latest from Turso so trainer submissions from other browsers are visible.
+  // Poll every 30s to keep the queue live without requiring a manual page refresh.
+  useEffect(() => {
+    const load = async () => {
+      await refreshClaims();
+      setAllClaims(getClaims());
+    };
+    load();
+    const timer = setInterval(load, 15_000);
+    return () => clearInterval(timer);
+  }, []);
 
   // ── Filtering ────────────────────────────────────────────────────────────
   const filtered = useMemo(
@@ -351,52 +360,48 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
 
   // ── Bulk actions ─────────────────────────────────────────────────────────
   const updateClaimsInStorage = useCallback(
-    (ids: string[], updater: (c: ClaimHeader) => Partial<ClaimHeader>) => {
+    async (ids: string[], updater: (c: ClaimHeader) => Partial<ClaimHeader>) => {
       const storedAll = getClaims();
       const storedMap = new Map(storedAll.map((c) => [c.claimId, c]));
-
       const updatedList = allClaims
         .filter((c) => ids.includes(c.claimId))
-        .map((c) => {
-          const base = storedMap.get(c.claimId) ?? c;
-          return { ...base, ...updater(c) };
-        });
+        .map((c) => ({ ...( storedMap.get(c.claimId) ?? c), ...updater(c) }));
 
-      const idsSet = new Set(ids);
-      const retained = storedAll.filter((c) => !idsSet.has(c.claimId));
-      saveToStorage(STORAGE_KEYS.CLAIMS, [...retained, ...updatedList]);
+      // Await all Turso writes in parallel — no fire-and-forget
+      await Promise.all(updatedList.map(c => saveClaimAsync(c)));
+
+      // Refresh local state from cache immediately after saves
+      await refreshClaims();
+      setAllClaims(getClaims());
     },
     [allClaims]
   );
 
-  const handleMarkUnderReview = () => {
-    updateClaimsInStorage(selectedIds, () => ({
+  const handleMarkUnderReview = async () => {
+    await updateClaimsInStorage(selectedIds, () => ({
       status: 'Under Review' as import('../types').ClaimStatus,
       lastActionAt: new Date().toISOString(),
     }));
-    alert(`Marked ${selectedIds.length} claim(s) as Under Review.`);
     setSelectedIds([]);
   };
 
-  const handleBulkApprove = () => {
+  const handleBulkApprove = async () => {
     if (!bulkApproveEligible) return;
-    updateClaimsInStorage(selectedIds, (c) => ({
+    await updateClaimsInStorage(selectedIds, (c) => ({
       status: 'Approved' as import('../types').ClaimStatus,
       approvedAmount: c.totalClaimedAmount,
       lastActionAt: new Date().toISOString(),
     }));
-    alert(`Bulk approved ${selectedIds.length} claim(s).`);
     setSelectedIds([]);
   };
 
-  const handleAssignReviewer = () => {
+  const handleAssignReviewer = async () => {
     const reviewer = prompt('Enter reviewer name to assign:');
     if (!reviewer) return;
-    updateClaimsInStorage(selectedIds, () => ({
+    await updateClaimsInStorage(selectedIds, () => ({
       adminRemark: `Assigned to ${reviewer}`,
       lastActionAt: new Date().toISOString(),
     }));
-    alert(`Assigned ${selectedIds.length} claim(s) to ${reviewer}.`);
     setSelectedIds([]);
   };
 

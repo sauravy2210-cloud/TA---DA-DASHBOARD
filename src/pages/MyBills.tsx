@@ -5,7 +5,7 @@ import { FilterBar } from '../components/FilterBar';
 import type { FilterConfig } from '../components/FilterBar';
 import { SearchInput } from '../components/SearchInput';
 import { ClaimTable } from '../components/ClaimTable';
-import { getClaims, deleteClaim } from '../services/storageService';
+import { getClaims, deleteClaim, refreshClaims } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
 import type { ClaimHeader } from '../types';
 
@@ -96,10 +96,12 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
   const [page, setPage] = useState(1);
   const [allClaims, setAllClaims] = useState<ClaimHeader[]>([]);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Reload from storage whenever this page mounts
+  // Always pull fresh from Turso on mount (cross-device accuracy)
   useEffect(() => {
-    setAllClaims(getClaims());
+    refreshClaims().then(() => setAllClaims(getClaims()));
   }, []);
 
   // Filter claims to current trainer (for Trainer role) or all for others
@@ -199,11 +201,20 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
     exportClaimsQueue(filtered as ClaimHeader[]);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (!deleteConfirmId) return;
-    deleteClaim(deleteConfirmId);
-    setAllClaims(getClaims());
-    setDeleteConfirmId(null);
+    setDeleteLoading(true);
+    setDeleteError(null);
+    try {
+      await deleteClaim(deleteConfirmId);
+      await refreshClaims();
+      setAllClaims(getClaims());
+      setDeleteConfirmId(null);
+    } catch {
+      setDeleteError('Failed to delete. Please try again.');
+    } finally {
+      setDeleteLoading(false);
+    }
   };
 
   return (
@@ -294,24 +305,29 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
                   <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone.</p>
                 </div>
               </div>
-              <p className="text-sm text-gray-700 mb-5">
+              <p className="text-sm text-gray-700 mb-4">
                 Are you sure you want to delete bill{' '}
                 <span className="font-semibold text-gray-900">{bill?.billNo ?? deleteConfirmId}</span>?
               </p>
+              {deleteError && (
+                <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-4">{deleteError}</p>
+              )}
               <div className="flex gap-3 justify-end">
                 <button
                   type="button"
-                  onClick={() => setDeleteConfirmId(null)}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                  onClick={() => { setDeleteConfirmId(null); setDeleteError(null); }}
+                  disabled={deleteLoading}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400 disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
                   onClick={handleDeleteConfirm}
-                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500"
+                  disabled={deleteLoading}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60"
                 >
-                  Delete
+                  {deleteLoading ? 'Deleting…' : 'Delete'}
                 </button>
               </div>
             </div>

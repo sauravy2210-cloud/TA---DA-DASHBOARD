@@ -18,17 +18,22 @@ export function reconcileLedger(
 ): LedgerResult {
   const blockers: string[] = [];
 
-  // Approved amount: sum of approved line items, falling back to claim-level approvedAmount
+  // Approved amount: sum of approved line items, falling back to claim-level approvedAmount.
+  // When approvedAmount is 0 (claim not yet approved), use totalClaimedAmount so the ledger
+  // matches the Amount Summary section which uses the same fallback.
   const approvedAmount =
     lineItems.length > 0
       ? lineItems.reduce((sum, item) => sum + (item.approvedAmount ?? 0), 0)
-      : (claim.approvedAmount ?? 0);
+      : (claim.approvedAmount && claim.approvedAmount > 0
+          ? claim.approvedAmount
+          : claim.totalClaimedAmount ?? 0);
 
-  // Advance adjusted: sum of adjustedAmount across all advance records for this claim
-  const advanceAdjusted = advanceRecords.reduce(
-    (sum, rec) => sum + (rec.adjustedAmount ?? 0),
-    0
-  );
+  // Advance adjusted: use claim.advanceAdjusted (live from checkbox selection) if present,
+  // otherwise fall back to summing adjustedAmount from advance records
+  const advanceAdjusted =
+    advanceRecords.length === 0
+      ? (claim.advanceAdjusted ?? 0)
+      : advanceRecords.reduce((sum, rec) => sum + (rec.adjustedAmount ?? 0), 0);
 
   // Misc adjustments: deduction amount stored on the claim header (signed — positive means deduction applied)
   const miscAdjustments = -(claim.deductionAmount ?? 0);

@@ -56,7 +56,6 @@ import type {
 import {
   mockClaims,
   mockLineItems,
-  mockAttachments,
   mockStatusHistory,
   mockRemarks,
   mockExceptions,
@@ -67,7 +66,7 @@ import { mockAssignments } from '../data/mockAssignments';
 
 // Services
 import { logAction, ACTION_TYPES } from '../services/auditEngine';
-import { saveToStorage, STORAGE_KEYS, getClaims, saveClaim } from '../services/storageService';
+import { getClaims, saveClaimAsync, saveLineItems, getLineItems, refreshClaims } from '../services/storageService';
 import { formatINR } from '../services/calculationEngine';
 
 // Components
@@ -79,7 +78,6 @@ import AuditTimeline from '../components/AuditTimeline';
 import RemarksPanel from '../components/RemarksPanel';
 import ExceptionPanel from '../components/ExceptionPanel';
 import LedgerPanel from '../components/LedgerPanel';
-import AttachmentPreview from '../components/AttachmentPreview';
 import PolicyComparison from '../components/PolicyComparison';
 import TravelTimeline from '../components/TravelTimeline';
 import DADayBreakdown from '../components/DADayBreakdown';
@@ -380,20 +378,52 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
   const { claimId } = useParams<{ claimId: string }>();
   const navigate = useNavigate();
 
+  const [reviewRefreshTick, setReviewRefreshTick] = useState(0);
+  useEffect(() => {
+    refreshClaims().then(() => setReviewRefreshTick(n => n + 1));
+  }, [claimId]);
+
   // ── Resolve claim — real storage first, mock as fallback ──────────────────
   const claim = useMemo(
     () => getClaims().find((c) => c.claimId === claimId) ?? mockClaims.find((c) => c.claimId === claimId),
-    [claimId],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [claimId, reviewRefreshTick],
   );
 
   const lineItems = useMemo(
-    () => mockLineItems.filter((li) => li.claimId === claimId),
-    [claimId],
+    () => {
+      const real = getLineItems(claimId);
+      return real.length > 0 ? real : mockLineItems.filter((li) => li.claimId === claimId);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [claimId, reviewRefreshTick],
   );
 
+  // Fetch full line items (with receiptData) from Turso per-claim
+  const [tursoLineItems, setTursoLineItems] = useState<ClaimLineItem[]>([]);
+  useEffect(() => {
+    if (!claimId) return;
+    fetch(`/api/turso?type=lineitems&claimId=${encodeURIComponent(claimId)}`)
+      .then(r => r.ok ? r.json() : { lineItems: [] })
+      .then(d => {
+        if (Array.isArray(d.lineItems) && d.lineItems.length > 0) {
+          setTursoLineItems(d.lineItems);
+        }
+      })
+      .catch(() => {});
+  }, [claimId]);
+
+  // Merge turso items into lineItems map — turso wins for same lineItemId (has receiptData)
+  const mergedLineItems = useMemo(() => {
+    if (tursoLineItems.length === 0) return lineItems;
+    const map = new Map(lineItems.map(li => [li.lineItemId, li]));
+    tursoLineItems.forEach(li => map.set(li.lineItemId, li));
+    return Array.from(map.values());
+  }, [lineItems, tursoLineItems]);
+
   const attachments = useMemo(
-    () => mockAttachments.filter((a) => a.claimId === claimId),
-    [claimId],
+    () => mergedLineItems.filter((li) => li.receiptData || li.receiptUploaded),
+    [mergedLineItems],
   );
 
   // statusHistory resolved but not used in render — kept for potential future use
@@ -580,6 +610,8 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
   const [modalReasonCode, setModalReasonCode] = useState('');
   const [modalRemark, setModalRemark] = useState('');
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [actionSaving, setActionSaving] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const openModal = useCallback((type: ModalType) => {
     setModalReason('');
@@ -611,26 +643,49 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
     [claimId, currentUser.name],
   );
 
+  // ── Email helper — fire-and-forget, never blocks the action ──────────────
+  const notifyTrainer = useCallback((actionKey: string, remarks?: string, netPayable?: number) => {
+    const c = claim as import('../types').ClaimHeader | null;
+    if (!c) return;
+    const email = c.trainerEmail;
+    if (!email) return;
+    fetch('/api/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        toEmail: email,
+        toName: c.trainerName,
+        actionKey,
+        claimId: c.claimId,
+        billNo: c.billNo,
+        remarks,
+        hrName: currentUser.name,
+        netPayable,
+        currency: c.currency,
+      }),
+      keepalive: true,
+    }).catch(() => {});
+  }, [claim, currentUser.name]);
+
   // ── Action handlers ────────────────────────────────────────────────────────
   const showSuccess = (msg: string) => {
     setActionSuccess(msg);
     setTimeout(() => setActionSuccess(null), 3500);
   };
 
-  const handleApproveAll = useCallback(() => {
+  const handleApproveAll = useCallback(async () => {
+    if (actionSaving) return;
     setDecisions((prev) => {
       const next = { ...prev };
       lineItems.forEach((li) => {
-        next[li.lineItemId] = {
-          ...next[li.lineItemId],
-          decision: 'Approved',
-          approvedAmount: li.claimedAmount,
-        };
+        next[li.lineItemId] = { ...next[li.lineItemId], decision: 'Approved', approvedAmount: li.claimedAmount };
       });
       return next;
     });
-    if (claim) {
-      saveClaim({
+    if (!claim) return;
+    setActionSaving(true); setActionError(null);
+    try {
+      await saveClaimAsync({
         ...(claim as import('../types').ClaimHeader),
         status: 'Approved',
         approvedAmount: (claim as import('../types').ClaimHeader).totalClaimedAmount ?? 0,
@@ -638,21 +693,20 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
         pendingWith: 'Finance',
         lastActionAt: new Date().toISOString(),
       });
+      logAction({ claimId: claimId, entityType: 'Claim', entityId: claimId ?? '', action: ACTION_TYPES.APPROVED, performedBy: currentUser.name, performedByRole: currentUser.role });
+      notifyTrainer('approve', undefined, (claim as import('../types').ClaimHeader).totalClaimedAmount ?? 0);
+      closeModal();
+      showSuccess('Claim fully approved. Redirecting to queue…');
+      setTimeout(() => navigate('/claims'), 1800);
+    } catch {
+      setActionError('Failed to save approval. Please try again.');
+    } finally {
+      setActionSaving(false);
     }
-    logAction({
-      claimId: claimId,
-      entityType: 'Claim',
-      entityId: claimId ?? '',
-      action: ACTION_TYPES.APPROVED,
-      performedBy: currentUser.name,
-      performedByRole: currentUser.role,
-    });
-    closeModal();
-    showSuccess('Claim fully approved. Redirecting to queue…');
-    setTimeout(() => navigate('/claims'), 1800);
-  }, [lineItems, claimId, currentUser, closeModal, navigate]);
+  }, [lineItems, claimId, claim, currentUser, closeModal, navigate, actionSaving]);
 
-  const handleSavePartial = useCallback(() => {
+  const handleSavePartial = useCallback(async () => {
+    if (actionSaving) return;
     const updatedItems = lineItems.map((li) => ({
       ...li,
       adminDecision: decisions[li.lineItemId]?.decision,
@@ -661,108 +715,97 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       internalRemark: decisions[li.lineItemId]?.internalRemark,
       approvedAmount: decisions[li.lineItemId]?.approvedAmount,
     }));
-    const stored = JSON.parse(
-      localStorage.getItem(STORAGE_KEYS.LINE_ITEMS) ?? '[]',
-    ) as ClaimLineItem[];
-    const merged = [
-      ...stored.filter((l) => l.claimId !== claimId),
-      ...updatedItems,
-    ];
-    saveToStorage(STORAGE_KEYS.LINE_ITEMS, merged);
-    if (claim) {
-      saveClaim({
+    if (!claim) return;
+    setActionSaving(true); setActionError(null);
+    try {
+      saveLineItems(updatedItems as import('../types').ClaimLineItem[]);
+      await saveClaimAsync({
         ...(claim as import('../types').ClaimHeader),
         status: 'Partially Approved',
         pendingWith: 'Finance',
         lastActionAt: new Date().toISOString(),
       });
+      logAction({ claimId, entityType: 'Claim', entityId: claimId ?? '', action: ACTION_TYPES.PARTIALLY_APPROVED, performedBy: currentUser.name, performedByRole: currentUser.role });
+      notifyTrainer('partial-approve');
+      closeModal();
+      showSuccess('Partial decisions saved. Redirecting to queue…');
+      setTimeout(() => navigate('/claims'), 1800);
+    } catch {
+      setActionError('Failed to save partial approval. Please try again.');
+    } finally {
+      setActionSaving(false);
     }
-    logAction({
-      claimId,
-      entityType: 'Claim',
-      entityId: claimId ?? '',
-      action: ACTION_TYPES.PARTIALLY_APPROVED,
-      performedBy: currentUser.name,
-      performedByRole: currentUser.role,
-    });
-    closeModal();
-    showSuccess('Partial decisions saved. Redirecting to queue…');
-    setTimeout(() => navigate('/claims'), 1800);
-  }, [lineItems, decisions, claimId, currentUser, closeModal, navigate]);
+  }, [lineItems, decisions, claimId, claim, currentUser, closeModal, navigate, actionSaving]);
 
-  const handleSendClarification = useCallback(() => {
-    if (!modalReason) return;
+  const handleSendClarification = useCallback(async () => {
+    if (!modalReason || actionSaving) return;
     addRemark(modalReason, 'HR');
-    if (claim) {
-      saveClaim({
+    if (!claim) return;
+    setActionSaving(true); setActionError(null);
+    try {
+      await saveClaimAsync({
         ...(claim as import('../types').ClaimHeader),
         status: 'Clarification Required',
         pendingWith: 'Trainer',
         lastActionAt: new Date().toISOString(),
       });
+      logAction({ claimId, entityType: 'Claim', entityId: claimId ?? '', action: ACTION_TYPES.CLARIFICATION_SENT, remarks: modalReason, performedBy: currentUser.name, performedByRole: currentUser.role });
+      notifyTrainer('send-clarification', modalReason);
+      closeModal();
+      showSuccess('Clarification request sent to trainer. Redirecting…');
+      setTimeout(() => navigate('/claims'), 1800);
+    } catch {
+      setActionError('Failed to send clarification. Please try again.');
+    } finally {
+      setActionSaving(false);
     }
-    logAction({
-      claimId,
-      entityType: 'Claim',
-      entityId: claimId ?? '',
-      action: ACTION_TYPES.CLARIFICATION_SENT,
-      remarks: modalReason,
-      performedBy: currentUser.name,
-      performedByRole: currentUser.role,
-    });
-    closeModal();
-    showSuccess('Clarification request sent to trainer. Redirecting…');
-    setTimeout(() => navigate('/claims'), 1800);
-  }, [modalReason, addRemark, claimId, currentUser, closeModal, navigate]);
+  }, [modalReason, addRemark, claimId, claim, currentUser, closeModal, navigate, actionSaving]);
 
-  const handleReject = useCallback(() => {
-    if (!modalReasonCode || !modalRemark) return;
-    if (claim) {
-      saveClaim({
+  const handleReject = useCallback(async () => {
+    if (!modalReasonCode || !modalRemark || actionSaving) return;
+    if (!claim) return;
+    setActionSaving(true); setActionError(null);
+    try {
+      await saveClaimAsync({
         ...(claim as import('../types').ClaimHeader),
         status: 'Rejected',
         pendingWith: 'None',
         lastActionAt: new Date().toISOString(),
       });
+      logAction({ claimId, entityType: 'Claim', entityId: claimId ?? '', action: ACTION_TYPES.REJECTED, reasonCode: modalReasonCode, remarks: modalRemark, performedBy: currentUser.name, performedByRole: currentUser.role });
+      notifyTrainer('reject', modalRemark);
+      closeModal();
+      showSuccess('Claim rejected. Trainer notified. Redirecting…');
+      setTimeout(() => navigate('/claims'), 1800);
+    } catch {
+      setActionError('Failed to reject claim. Please try again.');
+    } finally {
+      setActionSaving(false);
     }
-    logAction({
-      claimId,
-      entityType: 'Claim',
-      entityId: claimId ?? '',
-      action: ACTION_TYPES.REJECTED,
-      reasonCode: modalReasonCode,
-      remarks: modalRemark,
-      performedBy: currentUser.name,
-      performedByRole: currentUser.role,
-    });
-    closeModal();
-    showSuccess('Claim rejected. Trainer notified. Redirecting…');
-    setTimeout(() => navigate('/claims'), 1800);
-  }, [modalReasonCode, modalRemark, claimId, currentUser, closeModal, navigate]);
+  }, [modalReasonCode, modalRemark, claimId, claim, currentUser, closeModal, navigate, actionSaving]);
 
-  const handleHold = useCallback(() => {
-    if (!modalRemark) return;
-    if (claim) {
-      saveClaim({
+  const handleHold = useCallback(async () => {
+    if (!modalRemark || actionSaving) return;
+    if (!claim) return;
+    setActionSaving(true); setActionError(null);
+    try {
+      await saveClaimAsync({
         ...(claim as import('../types').ClaimHeader),
         status: 'On Hold',
         pendingWith: 'HR/Admin',
         lastActionAt: new Date().toISOString(),
       });
+      logAction({ claimId, entityType: 'Claim', entityId: claimId ?? '', action: ACTION_TYPES.CLAIM_HELD, remarks: modalRemark, performedBy: currentUser.name, performedByRole: currentUser.role });
+      notifyTrainer('hold', modalRemark);
+      closeModal();
+      showSuccess('Claim placed on hold. Redirecting…');
+      setTimeout(() => navigate('/claims'), 1800);
+    } catch {
+      setActionError('Failed to place claim on hold. Please try again.');
+    } finally {
+      setActionSaving(false);
     }
-    logAction({
-      claimId,
-      entityType: 'Claim',
-      entityId: claimId ?? '',
-      action: ACTION_TYPES.CLAIM_HELD,
-      remarks: modalRemark,
-      performedBy: currentUser.name,
-      performedByRole: currentUser.role,
-    });
-    closeModal();
-    showSuccess('Claim placed on hold. Redirecting…');
-    setTimeout(() => navigate('/claims'), 1800);
-  }, [modalRemark, claimId, currentUser, closeModal, claim, navigate]);
+  }, [modalRemark, claimId, claim, currentUser, closeModal, navigate, actionSaving]);
 
   // ── 404 guard ──────────────────────────────────────────────────────────────
   if (!claim) {
@@ -1022,14 +1065,64 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
       case 'attachments':
         return (
           <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-            <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-4">
-              Attachments
-            </h3>
-            <AttachmentPreview
-              attachments={attachments}
-              isEditable={false}
-              userRole={currentUser.role}
-            />
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Attachments</h3>
+              <span className="text-xs text-gray-400">{attachments.length} receipt{attachments.length !== 1 ? 's' : ''} uploaded</span>
+            </div>
+            {attachments.length === 0 ? (
+              <div className="text-center py-10">
+                <p className="text-sm text-gray-400">No attachments uploaded for this claim.</p>
+                <p className="text-xs text-gray-300 mt-1">Trainer did not upload any receipts.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {attachments.map(li => {
+                  const fileName = li.receiptFileName || `${li.expenseType}-receipt`;
+                  const isImage = li.receiptData && (li.receiptData.startsWith('data:image') || /\.(jpg|jpeg|png|gif|webp)/i.test(fileName));
+                  const isPdf = li.receiptData && (li.receiptData.startsWith('data:application/pdf') || /\.pdf$/i.test(fileName));
+                  const expLabel = li.expenseType === 'TA' ? 'Travel' : li.expenseType === 'Other' ? 'Misc' : li.expenseType;
+                  return (
+                    <div key={li.lineItemId} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow bg-white">
+                      <div className="w-full h-44 bg-gray-50 flex items-center justify-center overflow-hidden border-b border-gray-100">
+                        {isImage && li.receiptData ? (
+                          <a href={li.receiptData} target="_blank" rel="noopener noreferrer" className="w-full h-full">
+                            <img src={li.receiptData} alt={fileName} className="w-full h-full object-contain" />
+                          </a>
+                        ) : isPdf && li.receiptData ? (
+                          <a href={li.receiptData} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-2 text-red-500 hover:text-red-700">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                            <span className="text-xs font-medium">View PDF</span>
+                          </a>
+                        ) : li.receiptUploaded ? (
+                          <div className="flex flex-col items-center gap-2 text-gray-400">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
+                            <span className="text-xs">Receipt uploaded (preview unavailable)</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-2 text-gray-300">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                            <span className="text-xs">No preview</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-3">
+                        <p className="text-xs font-semibold text-gray-700 truncate" title={fileName}>{fileName}</p>
+                        <p className="text-xs text-gray-400 mt-0.5 truncate" title={li.description}>{li.description}</p>
+                        <div className="flex items-center justify-between mt-2">
+                          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700">{expLabel}</span>
+                          <span className="text-[10px] text-gray-400">{li.date}</span>
+                          {li.receiptData && (
+                            <a href={li.receiptData} download={fileName} className="text-[10px] text-blue-600 hover:underline font-medium">
+                              Download
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
 
@@ -1199,6 +1292,19 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
         <div className="fixed top-4 right-4 z-50 bg-green-600 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 animate-fade-in">
           <CheckCircle2 className="w-4 h-4" />
           <span className="text-sm font-medium">{actionSuccess}</span>
+        </div>
+      )}
+      {/* Saving overlay */}
+      {actionSaving && (
+        <div className="fixed top-4 right-4 z-50 bg-blue-600 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-2">
+          <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" />
+          <span className="text-sm font-medium">Saving to database…</span>
+        </div>
+      )}
+      {/* Error toast */}
+      {actionError && (
+        <div className="fixed top-4 right-4 z-50 bg-red-600 text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-2 cursor-pointer" onClick={() => setActionError(null)}>
+          <span className="text-sm font-medium">{actionError}</span>
         </div>
       )}
 

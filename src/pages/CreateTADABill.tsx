@@ -1,7 +1,7 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { saveClaim, saveLineItems } from '../services/storageService';
-import type { ClaimHeader, ClaimLineItem } from '../types';
+import type { ClaimHeader, ClaimLineItem, ClaimAdvanceItem } from '../types';
 import {
   Calendar, MapPin, Hotel, Building2, Ruler, Info,
   Plus, Trash2, Download, Upload, Send, Save,
@@ -609,12 +609,13 @@ async function fetchCountryList(): Promise<KoenigCountry[]> {
 
 interface RawAdvanceRecord {
   // Actual field names returned by Koenig PMS API 259
-  Date:     string | null;   // "Apr 24 2026 12:00AM"
-  Amount:   string | null;   // "25400.00"
-  Currency: string | null;
-  TABillID: string | null;
-  Type:     string | null;   // "BankTransfer" | "ByCash"
-  Status:   string | null;
+  Date:      string | null;   // "Apr 24 2026 12:00AM"
+  Amount:    string | null;   // "25400.00"
+  Currency:  string | null;
+  TABillID:  string | null;
+  Type:      string | null;   // "BankTransfer" | "ByCash"
+  Status:    string | null;
+  Narration: string | null;   // e.g. "TABill 82432-3162"
   [key: string]: unknown;
 }
 
@@ -632,6 +633,8 @@ async function fetchEmployeeAdvances(empCode: string): Promise<RawAdvanceRecord[
 
 // ── Lodging entry (hotel stay in this page) ───────────────────────────────────
 
+type LodgingStayType = 'Apartment' | 'Hotel' | 'Guest House' | 'PG' | 'Other';
+
 interface LodgingEntry {
   id: string;
   hotelName: string;
@@ -643,6 +646,23 @@ interface LodgingEntry {
   ratePerNight: number;
   receipt: string;
   source: 'pms' | 'manual';
+  stayType: LodgingStayType;
+}
+
+// Detect apartment from accommodation name — strict keyword match on "apartment"
+// Covers: "GGN Apartment", "Koenig Apartment", "Serviced Apartment", "XYZ Apartments", etc.
+function isApartmentName(name: string): boolean {
+  return /apartment/i.test(name || '');
+}
+
+// Infer stay type from accommodation name string (PMS or manual entry)
+function inferStayType(name: string): LodgingStayType {
+  if (isApartmentName(name)) return 'Apartment';
+  const n = (name || '').toLowerCase();
+  if (/pg|paying.?guest|hostel/.test(n)) return 'PG';
+  if (/guest.?house|guesthouse|transit.?house/.test(n)) return 'Guest House';
+  if (/hotel|inn|lodge|resort|suites?|oyo|ibis|lemon|marriott|hyatt|hilton|sheraton|radisson|novotel|courtyard|holiday|sarovar|lalit/.test(n)) return 'Hotel';
+  return 'Other';
 }
 
 // ── Assignment model ──────────────────────────────────────────────────────────
@@ -671,6 +691,10 @@ interface Assignment {
   batchType?: string;       // batch_delivery_mode: ILO | ILT | FMAT
   batchCategory?: string;
   deliveryMode?: string;    // derived: Online | Offline | Hybrid
+  scid?: string;
+  noOfParticipants?: number;
+  startTime?: string;       // e.g. "15:0" from Start_time
+  endTime?: string;         // e.g. "17:0" from end_time
 }
 
 function deriveDeliveryMode(bdm: string): string {
@@ -759,7 +783,20 @@ const CITY_COUNTRY_MAP: Record<string, string> = {
   // Thailand
   'bangkok': 'Thailand', 'phuket': 'Thailand', 'chiang mai': 'Thailand',
   // Philippines
-  'manila': 'Philippines', 'cebu': 'Philippines',
+  'manila': 'Philippines', 'cebu': 'Philippines', 'makati': 'Philippines',
+  'quezon city': 'Philippines', 'davao': 'Philippines', 'taguig': 'Philippines',
+  'pasig': 'Philippines', 'paranaque': 'Philippines', 'parañaque': 'Philippines',
+  'antipolo': 'Philippines', 'cagayan de oro': 'Philippines', 'zamboanga': 'Philippines',
+  'iloilo': 'Philippines', 'bacolod': 'Philippines', 'general santos': 'Philippines',
+  'mandaluyong': 'Philippines', 'marikina': 'Philippines', 'caloocan': 'Philippines',
+  'malabon': 'Philippines', 'navotas': 'Philippines', 'valenzuela': 'Philippines',
+  'las pinas': 'Philippines', 'las piñas': 'Philippines', 'muntinlupa': 'Philippines',
+  'pasay': 'Philippines', 'tondo': 'Philippines', 'ermita': 'Philippines',
+  'bgc': 'Philippines', 'bonifacio global city': 'Philippines',
+  'clark': 'Philippines', 'angeles': 'Philippines', 'olongapo': 'Philippines',
+  'baguio': 'Philippines', 'laoag': 'Philippines', 'dagupan': 'Philippines',
+  'tacloban': 'Philippines', 'legazpi': 'Philippines', 'naga': 'Philippines',
+  'butuan': 'Philippines', 'cotabato': 'Philippines', 'iligan': 'Philippines',
   // Indonesia
   'jakarta': 'Indonesia', 'bali': 'Indonesia', 'surabaya': 'Indonesia',
   // Vietnam
@@ -963,7 +1000,890 @@ const CITY_COUNTRY_MAP: Record<string, string> = {
   // Russia
   'moscow': 'Russia', 'st. petersburg': 'Russia',
   // Oman
-  'muscat': 'Oman',
+  'muscat': 'Oman', 'salalah': 'Oman', 'sohar': 'Oman',
+  // Yemen
+  "sana'a": 'Yemen', 'sanaa': 'Yemen', 'aden': 'Yemen', "aden'a": 'Yemen',
+  // Lebanon
+  'beirut': 'Lebanon', 'tripoli lb': 'Lebanon',
+  // Syria
+  'damascus': 'Syria', 'aleppo': 'Syria', 'homs': 'Syria', 'hama': 'Syria',
+  // Afghanistan
+  'kabul': 'Afghanistan', 'kandahar': 'Afghanistan', 'herat': 'Afghanistan', 'mazar-i-sharif': 'Afghanistan',
+  // Iran
+  'tehran': 'Iran', 'isfahan': 'Iran', 'mashhad': 'Iran', 'shiraz': 'Iran', 'tabriz': 'Iran',
+  // Iraq
+  'baghdad': 'Iraq', 'basra': 'Iraq', 'erbil': 'Iraq', 'mosul': 'Iraq', 'najaf': 'Iraq',
+  // Palestine
+  'ramallah': 'Palestine', 'gaza': 'Palestine', 'nablus': 'Palestine', 'hebron': 'Palestine',
+  'bethlehem': 'Palestine', 'jenin': 'Palestine', 'jericho': 'Palestine',
+  // Libya
+  'tripoli': 'Libya', 'benghazi': 'Libya', 'misrata': 'Libya',
+  // Algeria
+  'algiers': 'Algeria', 'oran': 'Algeria', 'constantine': 'Algeria',
+  // Tunisia
+  'tunis': 'Tunisia', 'sfax': 'Tunisia', 'sousse': 'Tunisia',
+  // Sudan
+  'khartoum': 'Sudan', 'omdurman': 'Sudan', 'port sudan': 'Sudan',
+  // Ethiopia
+  'addis ababa': 'Ethiopia', 'addis': 'Ethiopia', 'dire dawa': 'Ethiopia',
+  // Eritrea
+  'asmara': 'Eritrea', 'asmera': 'Eritrea', 'keren': 'Eritrea',
+  // Djibouti
+  'djibouti city': 'Djibouti', 'djibouti': 'Djibouti',
+  // Somalia
+  'mogadishu': 'Somalia', 'hargeisa': 'Somalia',
+  // Kenya (capitals already covered above)
+  // Tanzania
+  'dar es salaam': 'Tanzania', 'dodoma': 'Tanzania', 'mwanza': 'Tanzania', 'arusha': 'Tanzania',
+  // Uganda
+  'kampala': 'Uganda', 'entebbe': 'Uganda', 'jinja': 'Uganda',
+  // Rwanda
+  'kigali': 'Rwanda',
+  // Burundi
+  'bujumbura': 'Burundi', 'gitega': 'Burundi',
+  // Zambia
+  'lusaka': 'Zambia', 'ndola': 'Zambia', 'kitwe': 'Zambia',
+  // Zimbabwe
+  'harare': 'Zimbabwe', 'bulawayo': 'Zimbabwe',
+  // Malawi
+  'lilongwe': 'Malawi', 'blantyre': 'Malawi',
+  // Mozambique
+  'maputo': 'Mozambique', 'beira': 'Mozambique',
+  // Angola
+  'luanda': 'Angola',
+  // Namibia
+  'windhoek': 'Namibia', 'walvis bay': 'Namibia',
+  // Botswana
+  'gaborone': 'Botswana', 'francistown': 'Botswana',
+  // Lesotho
+  'maseru': 'Lesotho',
+  // Eswatini
+  'mbabane': 'Eswatini', 'lobamba': 'Eswatini',
+  // South Africa (some already exist above, extras below)
+  'pretoria': 'South Africa', 'port elizabeth': 'South Africa', 'bloemfontein': 'South Africa',
+  // Ghana
+  'accra': 'Ghana', 'kumasi': 'Ghana',
+  // Nigeria (already above)
+  // Cameroon
+  'yaounde': 'Cameroon', 'yaoundé': 'Cameroon', 'douala': 'Cameroon',
+  // Senegal
+  'dakar': 'Senegal', 'saint-louis': 'Senegal',
+  // Mali
+  'bamako': 'Mali',
+  // Burkina Faso
+  'ouagadougou': 'Burkina Faso',
+  // Niger
+  'niamey': 'Niger',
+  // Chad
+  "n'djamena": 'Chad', 'ndjamena': 'Chad',
+  // Benin
+  'cotonou': 'Benin', 'porto-novo': 'Benin',
+  // Togo
+  'lome': 'Togo', 'lomé': 'Togo',
+  // Guinea
+  'conakry': 'Guinea',
+  // Guinea-Bissau
+  'bissau': 'Guinea-Bissau',
+  // Sierra Leone
+  'freetown': 'Sierra Leone',
+  // Liberia
+  'monrovia': 'Liberia',
+  // Ivory Coast
+  'abidjan': 'Ivory Coast', 'yamoussoukro': 'Ivory Coast', 'bouake': 'Ivory Coast',
+  // Gabon
+  'libreville': 'Gabon',
+  // Equatorial Guinea
+  'malabo': 'Equatorial Guinea',
+  // Republic of Congo
+  'brazzaville': 'Republic of Congo', 'pointe-noire': 'Republic of Congo',
+  // DRC
+  'kinshasa': 'Democratic Republic of the Congo', 'lubumbashi': 'Democratic Republic of the Congo',
+  'kisangani': 'Democratic Republic of the Congo',
+  // Central African Republic
+  'bangui': 'Central African Republic',
+  // Comoros
+  'moroni': 'Comoros',
+  // Sao Tome and Principe
+  'sao tome': 'Sao Tome and Principe', 'são tomé': 'Sao Tome and Principe',
+  // Madagascar
+  'antananarivo': 'Madagascar', 'toamasina': 'Madagascar',
+  // Mauritius
+  'port louis': 'Mauritius',
+  // Seychelles
+  'victoria': 'Seychelles',
+  // Mauritania
+  'nouakchott': 'Mauritania',
+  // Algeria (covered above)
+  // Morocco — not in doc but common
+  'casablanca': 'Morocco', 'rabat': 'Morocco', 'marrakech': 'Morocco', 'fez': 'Morocco',
+  // Cabo Verde
+  'praia': 'Cabo Verde',
+  // New Caledonia
+  'noumea': 'New Caledonia', 'nouméa': 'New Caledonia',
+  // Maldives
+  'male': 'Maldives', 'malé': 'Maldives',
+  // Denmark
+  'copenhagen': 'Denmark', 'aarhus': 'Denmark', 'odense': 'Denmark',
+  // Spain
+  'madrid': 'Spain', 'barcelona': 'Spain', 'seville': 'Spain', 'valencia': 'Spain',
+  'bilbao': 'Spain', 'málaga': 'Spain', 'malaga': 'Spain', 'zaragoza': 'Spain',
+  // Italy
+  'rome': 'Italy', 'milan': 'Italy', 'naples': 'Italy', 'turin': 'Italy',
+  'florence': 'Italy', 'venice': 'Italy', 'bologna': 'Italy',
+  // Portugal
+  'lisbon': 'Portugal', 'porto': 'Portugal', 'braga': 'Portugal',
+  // Ireland
+  'dublin': 'Ireland', 'cork': 'Ireland', 'galway': 'Ireland',
+  // Greece
+  'athens': 'Greece', 'thessaloniki': 'Greece',
+  // Cyprus
+  'nicosia': 'Cyprus', 'limassol': 'Cyprus', 'larnaca': 'Cyprus',
+  // Malta (not in doc, but common)
+  'valletta': 'Malta',
+  // Austria
+  'vienna': 'Austria', 'salzburg': 'Austria', 'graz': 'Austria', 'innsbruck': 'Austria',
+  // Switzerland (already has Zurich, Geneva, Bern)
+  // Belgium (already has Brussels, Antwerp)
+  'ghent': 'Belgium', 'bruges': 'Belgium',
+  // Netherlands (already has Amsterdam, Rotterdam, The Hague)
+  'utrecht': 'Netherlands', 'eindhoven': 'Netherlands',
+  // Sweden (already has Stockholm, Gothenburg)
+  'malmö': 'Sweden', 'malmo': 'Sweden',
+  // Finland
+  'helsinki': 'Finland', 'tampere': 'Finland', 'espoo': 'Finland',
+  // Norway (not in doc but near neighbors)
+  'oslo': 'Norway', 'bergen': 'Norway',
+  // Iceland
+  'reykjavik': 'Iceland',
+  // Denmark (already above)
+  // Poland
+  'warsaw': 'Poland', 'krakow': 'Poland', 'wroclaw': 'Poland', 'gdansk': 'Poland',
+  // Czech Republic
+  'prague': 'Czech Republic', 'brno': 'Czech Republic',
+  // Slovakia
+  'bratislava': 'Slovakia',
+  // Hungary
+  'budapest': 'Hungary',
+  // Romania
+  'bucharest': 'Romania', 'cluj': 'Romania', 'cluj-napoca': 'Romania', 'timisoara': 'Romania',
+  // Bulgaria
+  'sofia': 'Bulgaria', 'plovdiv': 'Bulgaria', 'varna': 'Bulgaria',
+  // Serbia
+  'belgrade': 'Serbia', 'novi sad': 'Serbia',
+  // Croatia
+  'zagreb': 'Croatia', 'split': 'Croatia', 'dubrovnik': 'Croatia',
+  // Slovenia
+  'ljubljana': 'Slovenia',
+  // Bosnia and Herzegovina
+  'sarajevo': 'Bosnia and Herzegovina', 'banja luka': 'Bosnia and Herzegovina',
+  // Montenegro
+  'podgorica': 'Montenegro',
+  // Kosovo
+  'pristina': 'Kosovo', 'prishtina': 'Kosovo',
+  // North Macedonia
+  'skopje': 'North Macedonia',
+  // Albania
+  'tirana': 'Albania', 'tiranë': 'Albania',
+  // Moldova
+  'chisinau': 'Moldova', 'chișinău': 'Moldova',
+  // Ukraine
+  'kyiv': 'Ukraine', 'kiev': 'Ukraine', 'kharkiv': 'Ukraine', 'odesa': 'Ukraine', 'odessa': 'Ukraine',
+  // Belarus
+  'minsk': 'Belarus',
+  // Latvia
+  'riga': 'Latvia',
+  // Lithuania
+  'vilnius': 'Lithuania',
+  // Estonia
+  'tallinn': 'Estonia',
+  // Luxembourg
+  'luxembourg': 'Luxembourg', 'luxembourg city': 'Luxembourg',
+  // Liechtenstein
+  'vaduz': 'Liechtenstein',
+  // Andorra
+  'andorra la vella': 'Andorra',
+  // Monaco
+  'monte carlo': 'Monaco',
+  // San Marino
+  'san marino': 'San Marino',
+  // Vatican City
+  'vatican': 'Vatican City', 'vatican city': 'Vatican City',
+  // Gibraltar
+  'gibraltar': 'Gibraltar',
+  // Turkey (already has Istanbul, Ankara)
+  'izmir': 'Turkey', 'bursa': 'Turkey', 'antalya': 'Turkey',
+  // Georgia
+  'tbilisi': 'Georgia', 'batumi': 'Georgia',
+  // Armenia
+  'yerevan': 'Armenia',
+  // Azerbaijan
+  'baku': 'Azerbaijan',
+  // Russia (already has Moscow, St. Petersburg)
+  'novosibirsk': 'Russia', 'yekaterinburg': 'Russia', 'vladivostok': 'Russia',
+  // Kazakhstan
+  'almaty': 'Kazakhstan', 'nur-sultan': 'Kazakhstan', 'astana': 'Kazakhstan',
+  'shymkent': 'Kazakhstan',
+  // Uzbekistan
+  'tashkent': 'Uzbekistan', 'samarkand': 'Uzbekistan', 'bukhara': 'Uzbekistan',
+  // Kyrgyzstan
+  'bishkek': 'Kyrgyzstan', 'osh': 'Kyrgyzstan',
+  // Tajikistan
+  'dushanbe': 'Tajikistan',
+  // Turkmenistan
+  'ashgabat': 'Turkmenistan', 'turkmenabat': 'Turkmenistan',
+  // Mongolia
+  'ulaanbaatar': 'Mongolia', 'ulan bator': 'Mongolia',
+  // China (already has Beijing, Shanghai, etc.)
+  'chongqing': 'China', 'wuhan': 'China', 'xian': 'China', "xi'an": 'China',
+  'nanjing': 'China', 'hangzhou': 'China', 'tianjin': 'China',
+  // Taiwan
+  'taipei': 'Taiwan', 'kaohsiung': 'Taiwan', 'taichung': 'Taiwan',
+  // Japan (already has Tokyo, Osaka etc.)
+  'hiroshima': 'Japan', 'sapporo': 'Japan', 'fukuoka': 'Japan', 'kobe': 'Japan',
+  // South Korea (already has Seoul, Busan)
+  'incheon': 'South Korea', 'daegu': 'South Korea',
+  // North Korea
+  'pyongyang': 'North Korea',
+  // Cambodia
+  'phnom penh': 'Cambodia', 'siem reap': 'Cambodia',
+  // Laos
+  'vientiane': 'Laos', 'luang prabang': 'Laos',
+  // Brunei
+  'bandar seri begawan': 'Brunei', 'bsb': 'Brunei',
+  // Myanmar (already extensive)
+  // Vietnam (already has Hanoi, Ho Chi Minh)
+  'da nang': 'Vietnam', 'hue': 'Vietnam', 'haiphong': 'Vietnam',
+  // Indonesia (already has Jakarta, Bali, Surabaya)
+  'medan': 'Indonesia', 'makassar': 'Indonesia', 'bandung': 'Indonesia', 'semarang': 'Indonesia',
+  'yogyakarta': 'Indonesia', 'palembang': 'Indonesia',
+  // Malaysia (already has Kuala Lumpur, Penang, Johor Bahru)
+  'kota kinabalu': 'Malaysia', 'kuching': 'Malaysia', 'ipoh': 'Malaysia',
+  // Papua New Guinea
+  'port moresby': 'Papua New Guinea',
+  // Fiji
+  'suva': 'Fiji', 'nadi': 'Fiji',
+  // Samoa
+  'apia': 'Samoa',
+  // Tonga
+  "nuku'alofa": 'Tonga', 'nukualofa': 'Tonga',
+  // Solomon Islands
+  'honiara': 'Solomon Islands',
+  // Vanuatu
+  'port vila': 'Vanuatu',
+  // Kiribati
+  'tarawa': 'Kiribati',
+  // Tuvalu
+  'funafuti': 'Tuvalu',
+  // Nauru
+  'yaren': 'Nauru',
+  // Marshall Islands
+  'majuro': 'Marshall Islands',
+  // Micronesia
+  'palikir': 'Micronesia',
+  // Palau
+  'koror': 'Palau', 'ngerulmud': 'Palau',
+  // East Timor
+  'dili': 'East Timor',
+  // New Caledonia (already above)
+  // Mexico (already has 'mexico' but need capital)
+  'mexico city': 'Mexico', 'guadalajara': 'Mexico', 'monterrey': 'Mexico',
+  'cancun': 'Mexico', 'puebla': 'Mexico', 'tijuana': 'Mexico',
+  // Guatemala
+  'guatemala city': 'Guatemala',
+  // Honduras
+  'tegucigalpa': 'Honduras', 'san pedro sula': 'Honduras',
+  // El Salvador
+  'san salvador': 'El Salvador',
+  // Nicaragua
+  'managua': 'Nicaragua',
+  // Costa Rica
+  'san jose': 'Costa Rica', 'san josé': 'Costa Rica',
+  // Panama
+  'panama city': 'Panama',
+  // Cuba
+  'havana': 'Cuba', 'habana': 'Cuba',
+  // Dominican Republic
+  'santo domingo': 'Dominican Republic',
+  // Haiti
+  'port-au-prince': 'Haiti',
+  // Jamaica
+  'kingston': 'Jamaica',
+  // Trinidad and Tobago
+  'port of spain': 'Trinidad and Tobago',
+  // Barbados
+  'bridgetown': 'Barbados',
+  // Bahamas
+  'nassau': 'Bahamas',
+  // Belize
+  'belize city': 'Belize', 'belmopan': 'Belize',
+  // Saint Kitts and Nevis
+  'basseterre': 'Saint Kitts and Nevis',
+  // Saint Lucia
+  'castries': 'Saint Lucia',
+  // Saint Vincent
+  'kingstown': 'Saint Vincent and the Grenadines',
+  // Antigua and Barbuda
+  "st. john's": 'Antigua and Barbuda', 'saint johns': 'Antigua and Barbuda',
+  // Dominica
+  'roseau': 'Dominica',
+  // Grenada
+  "st. george's": 'Grenada', 'saint georges': 'Grenada',
+  // Colombia
+  'bogota': 'Colombia', 'bogotá': 'Colombia', 'medellin': 'Colombia', 'medellín': 'Colombia',
+  'cartagena': 'Colombia', 'cali': 'Colombia',
+  // Venezuela
+  'caracas': 'Venezuela', 'maracaibo': 'Venezuela',
+  // Ecuador
+  'quito': 'Ecuador', 'guayaquil': 'Ecuador',
+  // Peru
+  'lima': 'Peru', 'cusco': 'Peru', 'cuzco': 'Peru',
+  // Bolivia
+  'la paz': 'Bolivia', 'sucre': 'Bolivia', 'santa cruz': 'Bolivia',
+  // Chile
+  'santiago': 'Chile', 'valparaiso': 'Chile',
+  // Argentina
+  'buenos aires': 'Argentina', 'córdoba': 'Argentina', 'cordoba': 'Argentina', 'rosario': 'Argentina',
+  // Brazil
+  'sao paulo': 'Brazil', 'são paulo': 'Brazil', 'rio de janeiro': 'Brazil', 'rio': 'Brazil',
+  'brasilia': 'Brazil', 'brasília': 'Brazil', 'salvador': 'Brazil', 'fortaleza': 'Brazil',
+  'belo horizonte': 'Brazil', 'manaus': 'Brazil', 'recife': 'Brazil',
+  // Uruguay
+  'montevideo': 'Uruguay',
+  // Paraguay
+  'asuncion': 'Paraguay', 'asunción': 'Paraguay',
+  // Guyana
+  'georgetown': 'Guyana',
+  // Suriname
+  'paramaribo': 'Suriname',
+  // New Zealand (already has Auckland, Wellington, Christchurch)
+  'hamilton': 'New Zealand', 'tauranga': 'New Zealand',
+  // Australia (already has Sydney, Melbourne, Brisbane, Perth, Adelaide, Canberra)
+  'gold coast': 'Australia', 'hobart': 'Australia', 'darwin': 'Australia',
+  'newcastle au': 'Australia', 'wollongong': 'Australia', 'sunshine coast': 'Australia',
+  'geelong': 'Australia', 'townsville': 'Australia', 'cairns': 'Australia',
+
+  // UK (already has London, Manchester, Birmingham, Edinburgh, Glasgow, Bristol, Leeds, Liverpool)
+  'sheffield': 'UK', 'newcastle': 'UK', 'cardiff': 'UK', 'belfast': 'UK',
+  'oxford': 'UK', 'cambridge': 'UK', 'reading': 'UK', 'southampton': 'UK',
+  'nottingham': 'UK', 'leicester': 'UK', 'coventry': 'UK', 'bradford': 'UK',
+  'aberdeen': 'UK', 'swansea': 'UK', 'stoke-on-trent': 'UK', 'wolverhampton': 'UK',
+  'london city': 'UK', 'heathrow': 'UK', 'gatwick': 'UK',
+
+  // USA (already has New York, LA, Chicago, Houston, San Francisco, Seattle, Boston, Dallas, Austin, Denver, Atlanta, Miami, Washington, Phoenix, Las Vegas)
+  'san diego': 'USA', 'portland': 'USA', 'detroit': 'USA', 'philadelphia': 'USA',
+  'minneapolis': 'USA', 'nashville': 'USA', 'charlotte': 'USA', 'jacksonville': 'USA',
+  'columbus': 'USA', 'indianapolis': 'USA', 'memphis': 'USA', 'louisville': 'USA',
+  'baltimore': 'USA', 'milwaukee': 'USA', 'albuquerque': 'USA', 'tucson': 'USA',
+  'fresno': 'USA', 'sacramento': 'USA', 'kansas city': 'USA', 'mesa': 'USA',
+  'omaha': 'USA', 'raleigh': 'USA', 'virginia beach': 'USA', 'new jersey': 'USA',
+  'new york city': 'USA', 'nyc': 'USA', 'la': 'USA', 'sf': 'USA',
+  'silicon valley': 'USA', 'san jose ca': 'USA',
+
+  // Canada (already has Toronto, Vancouver, Calgary, Ottawa, Montreal, Edmonton)
+  'winnipeg': 'Canada', 'quebec city': 'Canada', 'hamilton on': 'Canada',
+  'saskatoon': 'Canada', 'regina': 'Canada', 'victoria bc': 'Canada',
+  'mississauga': 'Canada', 'brampton': 'Canada', 'surrey': 'Canada',
+
+  // Germany (already has Frankfurt, Munich, Berlin, Hamburg, Düsseldorf, Cologne)
+  'stuttgart': 'Germany', 'dresden': 'Germany', 'nuremberg': 'Germany',
+  'nürnberg': 'Germany', 'leipzig': 'Germany', 'hannover': 'Germany',
+  'dortmund': 'Germany', 'essen': 'Germany', 'bremen': 'Germany',
+  'dusseldorf': 'Germany',
+
+  // France (already has Paris, Lyon, Marseille)
+  'nice': 'France', 'bordeaux': 'France', 'toulouse': 'France',
+  'strasbourg': 'France', 'lille': 'France', 'rennes': 'France',
+  'nantes': 'France', 'montpellier': 'France', 'grenoble': 'France',
+
+  // Italy (already has Rome, Milan, Naples, Turin, Florence, Venice, Bologna)
+  'palermo': 'Italy', 'genoa': 'Italy', 'genova': 'Italy', 'catania': 'Italy',
+  'bari': 'Italy', 'verona': 'Italy', 'padova': 'Italy', 'padua': 'Italy',
+  'trieste': 'Italy', 'pisa': 'Italy', 'siena': 'Italy', 'milan city': 'Italy',
+
+  // Spain (already has Madrid, Barcelona, Seville, Valencia, Bilbao, Malaga, Zaragoza)
+  'palma': 'Spain', 'granada': 'Spain', 'alicante': 'Spain',
+  'murcia': 'Spain', 'córdoba es': 'Spain', 'valladolid': 'Spain',
+
+  // Netherlands (already has Amsterdam, Rotterdam, The Hague, Utrecht, Eindhoven)
+  'tilburg': 'Netherlands', 'groningen': 'Netherlands', 'breda': 'Netherlands',
+
+  // Poland (already has Warsaw, Krakow, Wroclaw, Gdansk)
+  'lodz': 'Poland', 'łódź': 'Poland', 'poznan': 'Poland', 'poznań': 'Poland',
+  'szczecin': 'Poland', 'lublin': 'Poland', 'katowice': 'Poland',
+
+  // Romania (already has Bucharest, Cluj)
+  'iasi': 'Romania', 'iași': 'Romania', 'constanta': 'Romania',
+
+  // Ukraine (already has Kyiv, Kharkiv, Odessa)
+  'lviv': 'Ukraine', 'dnipro': 'Ukraine', 'zaporizhzhia': 'Ukraine',
+
+  // Russia (already has Moscow, St. Petersburg, Novosibirsk, Yekaterinburg, Vladivostok)
+  'kazan': 'Russia', 'nizhny novgorod': 'Russia', 'chelyabinsk': 'Russia',
+  'omsk': 'Russia', 'samara': 'Russia', 'ufa': 'Russia', 'rostov': 'Russia',
+
+  // Turkey (already has Istanbul, Ankara, Izmir, Bursa, Antalya)
+  'adana': 'Turkey', 'konya': 'Turkey', 'gaziantep': 'Turkey', 'mersin': 'Turkey',
+  'trabzon': 'Turkey', 'kayseri': 'Turkey',
+
+  // Saudi Arabia (already has Riyadh, Jeddah, Mecca, Medina, Dammam, Khobar)
+  'taif': 'Saudi Arabia', 'tabuk': 'Saudi Arabia', 'abha': 'Saudi Arabia',
+  'buraidah': 'Saudi Arabia', 'al khobar': 'Saudi Arabia', 'dhahran': 'Saudi Arabia',
+  'jubail': 'Saudi Arabia', 'yanbu': 'Saudi Arabia',
+
+  // UAE (already has Dubai, Abu Dhabi, Sharjah, Ajman, Ras Al Khaimah, Fujairah)
+  'umm al quwain': 'United Arab Emirates', 'al ain': 'United Arab Emirates',
+  'jebel ali': 'United Arab Emirates', 'palm jumeirah': 'United Arab Emirates',
+
+  // Pakistan (already has Karachi, Lahore, Islamabad)
+  'faisalabad': 'Pakistan', 'rawalpindi': 'Pakistan', 'multan': 'Pakistan',
+  'peshawar': 'Pakistan', 'quetta': 'Pakistan', 'sialkot': 'Pakistan',
+  'gujranwala': 'Pakistan', 'hyderabad pk': 'Pakistan',
+
+  // Egypt (already has Cairo, Alexandria)
+  'giza': 'Egypt', 'luxor': 'Egypt', 'aswan': 'Egypt', 'hurghada': 'Egypt',
+  'sharm el sheikh': 'Egypt', 'port said': 'Egypt', 'ismailia': 'Egypt',
+
+  // Nigeria (already has Lagos, Abuja)
+  'kano': 'Nigeria', 'ibadan': 'Nigeria', 'port harcourt': 'Nigeria',
+  'kaduna': 'Nigeria', 'benin city': 'Nigeria', 'maiduguri': 'Nigeria',
+  'zaria': 'Nigeria', 'aba': 'Nigeria', 'jos': 'Nigeria',
+
+  // Kenya (already has Nairobi, Mombasa)
+  'kisumu': 'Kenya', 'nakuru': 'Kenya', 'eldoret': 'Kenya',
+  'thika': 'Kenya', 'malindi': 'Kenya',
+
+  // Ethiopia (already has Addis Ababa, Dire Dawa)
+  'gondar': 'Ethiopia', 'mekelle': 'Ethiopia', 'hawassa': 'Ethiopia',
+
+  // Ghana (already has Accra, Kumasi)
+  'tamale': 'Ghana', 'takoradi': 'Ghana', 'sekondi': 'Ghana',
+
+  // Tanzania (already has Dar es Salaam, Dodoma, Mwanza, Arusha)
+  'zanzibar': 'Tanzania', 'zanzibar city': 'Tanzania', 'moshi': 'Tanzania',
+
+  // South Africa (already has Johannesburg, Cape Town, Durban, Pretoria, Port Elizabeth, Bloemfontein)
+  'east london': 'South Africa', 'sandton': 'South Africa', 'soweto': 'South Africa',
+  'polokwane': 'South Africa', 'nelspruit': 'South Africa', 'kimberley': 'South Africa',
+
+  // Malaysia (already has Kuala Lumpur, Penang, Johor Bahru, Kota Kinabalu, Kuching, Ipoh)
+  'petaling jaya': 'Malaysia', 'putrajaya': 'Malaysia', 'shah alam': 'Malaysia',
+  'subang jaya': 'Malaysia', 'klang': 'Malaysia', 'ampang': 'Malaysia',
+  'cyberjaya': 'Malaysia', 'puchong': 'Malaysia', 'kl': 'Malaysia',
+
+  // Thailand (already has Bangkok, Phuket, Chiang Mai)
+  'pattaya': 'Thailand', 'hua hin': 'Thailand', 'chiang rai': 'Thailand',
+  'hat yai': 'Thailand', 'nakhon ratchasima': 'Thailand', 'korat': 'Thailand',
+  'khon kaen': 'Thailand', 'udon thani': 'Thailand',
+
+  // Indonesia (already has Jakarta, Bali, Surabaya, Medan, Makassar, Bandung, Semarang, Yogyakarta, Palembang)
+  'depok': 'Indonesia', 'tangerang': 'Indonesia', 'bekasi': 'Indonesia',
+  'bogor': 'Indonesia', 'balikpapan': 'Indonesia', 'samarinda': 'Indonesia',
+  'batam': 'Indonesia', 'manado': 'Indonesia', 'lombok': 'Indonesia',
+
+  // Vietnam (already has Hanoi, Ho Chi Minh, Da Nang, Hue, Haiphong)
+  'nha trang': 'Vietnam', 'vung tau': 'Vietnam', 'can tho': 'Vietnam',
+  'bien hoa': 'Vietnam', 'buon ma thuot': 'Vietnam', 'dalat': 'Vietnam',
+
+  // China (already has Beijing, Shanghai, Shenzhen, Guangzhou, Chengdu, Chongqing, Wuhan, Xi'an, Nanjing, Hangzhou, Tianjin)
+  'hefei': 'China', 'qingdao': 'China', 'xiamen': 'China', 'fuzhou': 'China',
+  'kunming': 'China', 'zhengzhou': 'China', 'changsha': 'China', 'jinan': 'China',
+  'harbin': 'China', 'dalian': 'China', 'ningbo': 'China', 'wuxi': 'China',
+  'suzhou': 'China', 'dongguan': 'China', 'foshan': 'China', 'wenzhou': 'China',
+  'macau': 'China', 'macao': 'China',
+
+  // Japan (already has Tokyo, Osaka, Kyoto, Nagoya, Hiroshima, Sapporo, Fukuoka, Kobe)
+  'yokohama': 'Japan', 'kawasaki': 'Japan', 'sendai': 'Japan', 'chiba': 'Japan',
+  'kitakyushu': 'Japan', 'sakai': 'Japan', 'kumamoto': 'Japan', 'okayama': 'Japan',
+
+  // South Korea (already has Seoul, Busan, Incheon, Daegu)
+  'daejeon': 'South Korea', 'gwangju': 'South Korea', 'suwon': 'South Korea',
+  'ulsan': 'South Korea',
+
+  // Israel (already has Tel Aviv, Jerusalem)
+  'haifa': 'Israel', 'beer sheva': 'Israel', 'netanya': 'Israel',
+  'ashdod': 'Israel', 'rishon lezion': 'Israel', 'tel-aviv': 'Israel',
+
+  // Jordan (already has Amman)
+  'aqaba': 'Jordan', 'irbid': 'Jordan', 'zarqa': 'Jordan', 'petra': 'Jordan',
+
+  // Uzbekistan (already has Tashkent, Samarkand, Bukhara)
+  'namangan': 'Uzbekistan', 'andijan': 'Uzbekistan', 'fergana': 'Uzbekistan',
+  'nukus': 'Uzbekistan',
+
+  // Kazakhstan (already has Almaty, Astana, Shymkent)
+  'karaganda': 'Kazakhstan', 'pavlodar': 'Kazakhstan', 'aktobe': 'Kazakhstan',
+
+  // Azerbaijan (already has Baku)
+  'ganja': 'Azerbaijan', 'sumgayit': 'Azerbaijan',
+
+  // Georgia (already has Tbilisi, Batumi)
+  'kutaisi': 'Georgia', 'rustavi': 'Georgia',
+
+  // Armenia (already has Yerevan)
+  'gyumri': 'Armenia', 'vanadzor': 'Armenia',
+
+  // Algeria (already has Algiers, Oran, Constantine)
+  'annaba': 'Algeria', 'blida': 'Algeria', 'tlemcen': 'Algeria',
+
+  // Tunisia (already has Tunis, Sfax, Sousse)
+  'kairouan': 'Tunisia', 'bizerte': 'Tunisia', 'monastir': 'Tunisia',
+
+  // Libya (already has Tripoli, Benghazi)
+  'tobruk': 'Libya', 'sirte': 'Libya',
+
+  // Senegal (already has Dakar)
+  'thies': 'Senegal', 'ziguinchor': 'Senegal',
+
+  // Cameroon (already has Yaoundé, Douala)
+  'bafoussam': 'Cameroon', 'garoua': 'Cameroon',
+
+  // Colombia (already has Bogotá, Medellín, Cartagena, Cali)
+  'barranquilla': 'Colombia', 'bucaramanga': 'Colombia',
+
+  // Brazil (already has São Paulo, Rio, Brasília, Salvador, Fortaleza, Belo Horizonte, Manaus, Recife)
+  'porto alegre': 'Brazil', 'curitiba': 'Brazil', 'goiania': 'Brazil',
+  'belém': 'Brazil', 'belem': 'Brazil', 'natal': 'Brazil', 'maceio': 'Brazil',
+  'campo grande': 'Brazil', 'joao pessoa': 'Brazil', 'florianopolis': 'Brazil',
+
+  // Argentina (already has Buenos Aires, Córdoba, Rosario)
+  'mendoza': 'Argentina', 'tucumán': 'Argentina', 'tucuman': 'Argentina',
+  'mar del plata': 'Argentina', 'la plata': 'Argentina',
+
+  // Chile (already has Santiago, Valparaíso)
+  'concepción': 'Chile', 'concepcion': 'Chile', 'antofagasta': 'Chile',
+  'temuco': 'Chile', 'iquique': 'Chile',
+
+  // Peru (already has Lima, Cusco)
+  'arequipa': 'Peru', 'trujillo': 'Peru', 'chiclayo': 'Peru',
+  'iquitos': 'Peru', 'piura': 'Peru',
+
+  // Venezuela (already has Caracas, Maracaibo)
+  'valencia ve': 'Venezuela', 'barquisimeto': 'Venezuela',
+
+  // Ecuador (already has Quito, Guayaquil)
+  'cuenca': 'Ecuador',
+
+  // Bolivia (already has La Paz, Sucre, Santa Cruz)
+  'cochabamba': 'Bolivia', 'oruro': 'Bolivia',
+
+  // Mexico (already has Mexico City, Guadalajara, Monterrey, Cancun, Puebla, Tijuana, Mexico)
+  'merida': 'Mexico', 'leon': 'Mexico', 'juarez': 'Mexico',
+  'ciudad juarez': 'Mexico', 'tuxtla': 'Mexico', 'acapulco': 'Mexico',
+  'veracruz': 'Mexico', 'hermosillo': 'Mexico', 'culiacan': 'Mexico',
+  'mexicali': 'Mexico', 'aguascalientes': 'Mexico',
+
+  // Honduras (already has Tegucigalpa, San Pedro Sula)
+  'la ceiba': 'Honduras',
+
+  // Angola (already has Luanda)
+  'huambo': 'Angola', 'lobito': 'Angola',
+
+  // DRC (already has Kinshasa, Lubumbashi)
+  'goma': 'Democratic Republic of the Congo', 'mbuji-mayi': 'Democratic Republic of the Congo',
+
+  // Mozambique (already has Maputo, Beira)
+  'nampula': 'Mozambique', 'nacala': 'Mozambique',
+
+  // Zimbabwe (already has Harare, Bulawayo)
+  'mutare': 'Zimbabwe', 'gweru': 'Zimbabwe',
+
+  // Zambia (already has Lusaka, Ndola, Kitwe)
+  'livingstone': 'Zambia', 'kabwe': 'Zambia',
+
+  // Madagascar (already has Antananarivo)
+  'toliara': 'Madagascar', 'fianarantsoa': 'Madagascar',
+
+  // Ivory Coast (already has Abidjan, Yamoussoukro)
+  'san pedro ic': 'Ivory Coast', 'daloa': 'Ivory Coast',
+
+  // Sudan (already has Khartoum, Omdurman, Port Sudan)
+  'kassala': 'Sudan', 'wad madani': 'Sudan',
+
+  // Somalia (already has Mogadishu, Hargeisa)
+  'kismayo': 'Somalia', 'bosaso': 'Somalia',
+
+  // Afghanistan (already has Kabul, Kandahar, Herat)
+  'mazar-e-sharif': 'Afghanistan', 'jalalabad': 'Afghanistan', 'kunduz': 'Afghanistan',
+
+  // Iran (already has Tehran, Isfahan, Mashhad, Shiraz, Tabriz)
+  'ahvaz': 'Iran', 'qom': 'Iran', 'karaj': 'Iran', 'rasht': 'Iran',
+  'yazd': 'Iran', 'bandar abbas': 'Iran', 'hamadan': 'Iran', 'zahedan': 'Iran',
+
+  // Iraq (already has Baghdad, Basra, Erbil, Mosul, Najaf)
+  'karbala': 'Iraq', 'kirkuk': 'Iraq', 'sulaymaniyah': 'Iraq', 'fallujah': 'Iraq',
+
+  // Syria (already has Damascus, Aleppo, Homs, Hama)
+  'latakia': 'Syria', 'raqqa': 'Syria', 'deir ez-zor': 'Syria',
+
+  // Lebanon (already has Beirut)
+  'sidon': 'Lebanon', 'tyre': 'Lebanon', 'tripoli lb2': 'Lebanon',
+  'jounieh': 'Lebanon',
+
+  // Yemen (already has Sana'a, Aden)
+  'taiz': 'Yemen', 'hudaydah': 'Yemen', 'mukalla': 'Yemen',
+
+  // Palestine (already has Ramallah, Gaza, Nablus, Hebron, Bethlehem)
+  'tulkarm': 'Palestine', 'qalqilya': 'Palestine',
+
+  // New Zealand (already has Auckland, Wellington, Christchurch, Hamilton, Tauranga)
+  'dunedin': 'New Zealand', 'palmerston north': 'New Zealand',
+
+  // Singapore (city-state — also handle common misspellings)
+  'singapur': 'Singapore', 'sing': 'Singapore',
+
+  // Maldives (already has Male)
+  'addu': 'Maldives', 'addu city': 'Maldives', 'fuvahmulah': 'Maldives',
+
+  // Denmark (already has Copenhagen, Aarhus, Odense)
+  'aalborg': 'Denmark', 'esbjerg': 'Denmark', 'randers': 'Denmark',
+
+  // Sweden (already has Stockholm, Gothenburg, Malmö)
+  'uppsala': 'Sweden', 'linköping': 'Sweden', 'linkoping': 'Sweden',
+  'örebro': 'Sweden', 'orebro': 'Sweden',
+
+  // Finland (already has Helsinki, Tampere, Espoo)
+  'turku': 'Finland', 'oulu': 'Finland', 'jyväskylä': 'Finland',
+
+  // Norway (not in doc, but nearby)
+  'stavanger': 'Norway', 'trondheim': 'Norway', 'drammen': 'Norway',
+
+  // Belgium (already has Brussels, Antwerp, Ghent, Bruges)
+  'liège': 'Belgium', 'liege': 'Belgium', 'namur': 'Belgium',
+
+  // Switzerland (already has Zurich, Geneva, Bern)
+  'basel': 'Switzerland', 'lausanne': 'Switzerland', 'winterthur': 'Switzerland',
+
+  // Austria (already has Vienna, Salzburg, Graz, Innsbruck)
+  'linz': 'Austria', 'klagenfurt': 'Austria', 'st. pölten': 'Austria',
+
+  // Czech Republic (already has Prague, Brno)
+  'ostrava': 'Czech Republic', 'plzen': 'Czech Republic', 'plzeň': 'Czech Republic',
+
+  // Hungary (already has Budapest)
+  'debrecen': 'Hungary', 'miskolc': 'Hungary', 'pécs': 'Hungary', 'pecs': 'Hungary',
+
+  // Croatia (already has Zagreb, Split, Dubrovnik)
+  'rijeka': 'Croatia', 'osijek': 'Croatia',
+
+  // Serbia (already has Belgrade, Novi Sad)
+  'niš': 'Serbia', 'nis': 'Serbia', 'kragujevac': 'Serbia',
+
+  // Bulgaria (already has Sofia, Plovdiv, Varna)
+  'burgas': 'Bulgaria', 'stara zagora': 'Bulgaria',
+
+  // Greece (already has Athens, Thessaloniki)
+  'patras': 'Greece', 'heraklion': 'Greece', 'larissa': 'Greece',
+  'volos': 'Greece', 'rhodes': 'Greece',
+
+  // Portugal (already has Lisbon, Porto, Braga)
+  'coimbra': 'Portugal', 'funchal': 'Portugal', 'faro': 'Portugal',
+
+  // Ireland (already has Dublin, Cork, Galway)
+  'limerick': 'Ireland', 'waterford': 'Ireland',
+
+  // Cyprus (already has Nicosia, Limassol, Larnaca)
+  'paphos': 'Cyprus', 'famagusta': 'Cyprus',
+
+  // Estonia (already has Tallinn)
+  'tartu': 'Estonia',
+
+  // Latvia (already has Riga)
+  'daugavpils': 'Latvia',
+
+  // Lithuania (already has Vilnius)
+  'kaunas': 'Lithuania', 'klaipeda': 'Lithuania', 'klaipėda': 'Lithuania',
+
+  // Moldova (already has Chisinau)
+  'tiraspol': 'Moldova', 'balti': 'Moldova',
+
+  // Belarus (already has Minsk)
+  'gomel': 'Belarus', 'mogilev': 'Belarus', 'grodno': 'Belarus',
+
+  // Albania (already has Tirana)
+  'durrës': 'Albania', 'durres': 'Albania', 'vlorë': 'Albania',
+
+  // Kosovo (already has Pristina)
+  'prizren': 'Kosovo',
+
+  // North Macedonia (already has Skopje)
+  'bitola': 'North Macedonia',
+
+  // Bosnia and Herzegovina (already has Sarajevo, Banja Luka)
+  'tuzla': 'Bosnia and Herzegovina', 'mostar': 'Bosnia and Herzegovina',
+
+  // Montenegro (already has Podgorica)
+  'nikšić': 'Montenegro', 'niksic': 'Montenegro',
+
+  // Equatorial Guinea (already has Malabo)
+  'bata': 'Equatorial Guinea',
+
+  // Gabon (already has Libreville)
+  'port-gentil': 'Gabon',
+
+  // Rwanda (already has Kigali)
+  'butare': 'Rwanda', 'gitarama': 'Rwanda',
+
+  // Burundi (already has Bujumbura, Gitega)
+  'ngozi': 'Burundi',
+
+  // Cameroon (already has Yaoundé, Douala)
+  'bamenda': 'Cameroon',
+
+  // Gambia (already has Banjul)
+  'serekunda': 'Gambia', 'brikama': 'Gambia',
+
+  // Sierra Leone (already has Freetown)
+  'bo': 'Sierra Leone', 'kenema': 'Sierra Leone',
+
+  // Liberia (already has Monrovia)
+  'gbarnga': 'Liberia',
+
+  // Togo (already has Lomé)
+  'sokode': 'Togo',
+
+  // Benin (already has Cotonou, Porto-Novo)
+  'parakou': 'Benin',
+
+  // Guinea (already has Conakry)
+  'kankan': 'Guinea', 'nzerekore': 'Guinea',
+
+  // Mali (already has Bamako)
+  'gao': 'Mali', 'mopti': 'Mali', 'timbuktu': 'Mali', 'tombouctou': 'Mali',
+
+  // Niger (already has Niamey)
+  'zinder': 'Niger', 'maradi': 'Niger',
+
+  // Burkina Faso (already has Ouagadougou)
+  'bobo-dioulasso': 'Burkina Faso', 'koudougou': 'Burkina Faso',
+
+  // Chad (already has N'Djamena)
+  'moundou': 'Chad', 'sarh': 'Chad',
+
+  // Central African Republic (already has Bangui)
+  'bambari': 'Central African Republic',
+
+  // DRC extras
+  'bunia': 'Democratic Republic of the Congo', 'bukavu': 'Democratic Republic of the Congo',
+
+  // Eritrea (already has Asmara)
+  'massawa': 'Eritrea',
+
+  // Djibouti (already has Djibouti)
+  'ali sabieh': 'Djibouti',
+
+  // Somalia (already has Mogadishu, Hargeisa)
+  'berbera': 'Somalia',
+
+  // Sao Tome and Principe (already has São Tomé)
+  'sao tome city': 'Sao Tome and Principe',
+
+  // Comoros (already has Moroni)
+  'mutsamudu': 'Comoros',
+
+  // Seychelles (already has Victoria)
+  'praslin': 'Seychelles',
+
+  // Cape Verde (already has Praia)
+  'mindelo': 'Cabo Verde',
+
+  // Mauritius (already has Port Louis)
+  'rose hill': 'Mauritius', 'quatre bornes': 'Mauritius',
+
+  // Madagascar (already has Antananarivo)
+  'mahajanga': 'Madagascar', 'antsirabe': 'Madagascar',
+
+  // Mozambique (already has Maputo, Beira, Nampula)
+  'tete': 'Mozambique', 'quelimane': 'Mozambique',
+
+  // Angola (already has Luanda, Huambo, Lobito)
+  'benguela': 'Angola', 'lubango': 'Angola',
+
+  // Namibia (already has Windhoek, Walvis Bay)
+  'swakopmund': 'Namibia', 'rundu': 'Namibia',
+
+  // Botswana (already has Gaborone, Francistown)
+  'maun': 'Botswana',
+
+  // Zimbabwe (already has Harare, Bulawayo, Mutare, Gweru)
+  'chitungwiza': 'Zimbabwe',
+
+  // Zambia (already has Lusaka, Ndola, Kitwe, Livingstone)
+  'chipata': 'Zambia',
+
+  // Malawi (already has Lilongwe, Blantyre)
+  'mzuzu': 'Malawi', 'zomba': 'Malawi',
+
+  // Lesotho (already has Maseru)
+  'teyateyaneng': 'Lesotho',
+
+  // Papua New Guinea (already has Port Moresby)
+  'lae': 'Papua New Guinea', 'madang': 'Papua New Guinea',
+
+  // Brunei (already has Bandar Seri Begawan)
+  'seria': 'Brunei', 'kuala belait': 'Brunei',
+
+  // East Timor (already has Dili)
+  'baucau': 'East Timor',
+
+  // Taiwan (already has Taipei, Kaohsiung, Taichung)
+  'tainan': 'Taiwan', 'keelung': 'Taiwan', 'hsinchu': 'Taiwan',
+
+  // Laos (already has Vientiane, Luang Prabang)
+  'pakse': 'Laos', 'savannakhet': 'Laos',
+
+  // Cambodia (already has Phnom Penh, Siem Reap)
+  'battambang': 'Cambodia', 'sihanoukville': 'Cambodia',
+
+  // Mongolia (already has Ulaanbaatar)
+  'darkhan': 'Mongolia', 'erdenet': 'Mongolia',
+
+  // Tajikistan (already has Dushanbe)
+  'khujand': 'Tajikistan', 'kulob': 'Tajikistan',
+
+  // Turkmenistan (already has Ashgabat, Turkmenabat)
+  'mary': 'Turkmenistan', 'turkmenbashi': 'Turkmenistan',
+
+  // Kyrgyzstan (already has Bishkek, Osh)
+  'jalal-abad': 'Kyrgyzstan', 'karakol': 'Kyrgyzstan',
+
+  // Country name typed as city — fallback handles via DA_POLICY, but add common variants
+  'uk': 'UK', 'england': 'UK', 'britain': 'UK',
+  'usa': 'USA', 'us': 'USA', 'america': 'USA', 'united states': 'USA',
+  'emirates': 'United Arab Emirates',
+  'philippines': 'Philippines', 'pilipinas': 'Philippines',
+  'indonesia': 'Indonesia', 'vietnam': 'Vietnam', 'viet nam': 'Vietnam',
+  'thailand': 'Thailand', 'malaysia': 'Malaysia',
+  'china': 'China', 'japan': 'Japan', 'south korea': 'South Korea',
+  'taiwan': 'Taiwan',
+  'australia': 'Australia', 'canada': 'Canada', 'germany': 'Germany',
+  'france': 'France', 'italy': 'Italy', 'spain': 'Spain',
+  'netherlands': 'Netherlands', 'switzerland': 'Switzerland', 'belgium': 'Belgium',
+  'sweden': 'Sweden', 'denmark': 'Denmark', 'finland': 'Finland',
+  'norway': 'Norway', 'austria': 'Austria', 'poland': 'Poland',
+  'russia': 'Russia', 'turkey': 'Turkey', 'ukraine': 'Ukraine',
+  'saudi arabia': 'Saudi Arabia', 'qatar': 'Qatar',
+  'bahrain': 'Bahrain', 'oman': 'Oman', 'jordan': 'Jordan',
+  'egypt': 'Egypt', 'nigeria': 'Nigeria', 'kenya': 'Kenya',
+  'south africa': 'South Africa', 'ghana': 'Ghana', 'ethiopia': 'Ethiopia',
+  'tanzania': 'Tanzania', 'uganda': 'Uganda', 'mozambique': 'Mozambique',
+  'angola': 'Angola', 'cameroon': 'Cameroon', 'senegal': 'Senegal',
+  'zimbabwe': 'Zimbabwe', 'zambia': 'Zambia', 'malawi': 'Malawi',
+  'rwanda': 'Rwanda', 'burundi': 'Burundi', 'mali': 'Mali',
+  'niger': 'Niger', 'chad': 'Chad', 'somalia': 'Somalia',
+  'brazil': 'Brazil', 'argentina': 'Argentina', 'chile': 'Chile',
+  'colombia': 'Colombia', 'peru': 'Peru', 'venezuela': 'Venezuela',
+  'ecuador': 'Ecuador', 'bolivia': 'Bolivia', 'uruguay': 'Uruguay',
+  'paraguay': 'Paraguay', 'guyana': 'Guyana', 'suriname': 'Suriname',
+  'mexico': 'Mexico', 'cuba': 'Cuba', 'jamaica': 'Jamaica',
+  'iran': 'Iran', 'iraq': 'Iraq', 'afghanistan': 'Afghanistan',
+  'pakistan': 'Pakistan', 'israel': 'Israel', 'lebanon': 'Lebanon',
+  'syria': 'Syria', 'libya': 'Libya', 'algeria': 'Algeria',
+  'tunisia': 'Tunisia', 'morocco': 'Morocco', 'sudan': 'Sudan',
+  'myanmar': 'Myanmar', 'burma': 'Myanmar', 'cambodia': 'Cambodia',
+  'laos': 'Laos', 'brunei': 'Brunei',
+  'new zealand': 'New Zealand', 'maldives': 'Maldives',
+  'sri lanka': 'Sri Lanka', 'nepal': 'Nepal', 'bhutan': 'Bhutan',
+  'bangladesh': 'Bangladesh',
 };
 
 function inferCountryFromCity(city: string): string {
@@ -981,6 +1901,7 @@ function inferCountryFromCity(city: string): string {
   // Default: assume India for unrecognised cities (most Koenig domestic training)
   return 'India';
 }
+
 
 function mapRawToAssignment(r: RawTrainerAssignment, fallbackFromDate = '', fallbackToDate = ''): Assignment {
   // ── Batch type & delivery mode ──────────────────────────────────────────────
@@ -1003,17 +1924,15 @@ function mapRawToAssignment(r: RawTrainerAssignment, fallbackFromDate = '', fall
   const city    = pickStr(r, 'city_of_training', 'CityOfTraining', 'City', 'city');
   const rawCountry = pickStr(r, 'Country', 'country', 'CountryName', 'country_name');
 
-  // PMS frequently returns "India" as a default country even for assignments
-  // in neighboring countries (Nepal, Bangladesh, Myanmar, Bhutan, Sri Lanka).
-  // City-based inference is more accurate for SAARC region — if the city
-  // resolves to a neighboring country, override the PMS-supplied country.
-  const NEIGHBORING_COUNTRIES = new Set([
-    'Nepal', 'Bangladesh', 'Myanmar', 'Burma', 'Bhutan', 'Sri Lanka',
-  ]);
-  const cityInferred = inferCountryFromCity(city);
-  const country = (cityInferred !== 'India' && NEIGHBORING_COUNTRIES.has(cityInferred))
-    ? cityInferred                          // city proves it's a neighboring country → override PMS
-    : (rawCountry || cityInferred);         // otherwise trust PMS, fall back to city inference
+  // PMS frequently returns "India" as a default country even for international assignments.
+  // City-based inference is authoritative — if city resolves to a non-India country,
+  // always use that over the PMS-supplied "India" default.
+  // Use case-insensitive, trimmed comparison so 'india', 'India ', 'INDIA' all match.
+  const cityInferred   = inferCountryFromCity(city);
+  const rawCountryNorm = (rawCountry || '').toLowerCase().trim();
+  const country = (cityInferred !== 'India' && (!rawCountryNorm || rawCountryNorm === 'india'))
+    ? cityInferred                          // city is clearly international → override PMS India default
+    : (rawCountry?.trim() || cityInferred); // PMS has a real non-India country, or city infers India → trust it
 
   const trainingVenue = pickStr(r, 'training_venue', 'TrainingVenue');
 
@@ -1058,6 +1977,12 @@ function mapRawToAssignment(r: RawTrainerAssignment, fallbackFromDate = '', fall
   // trainingDates = raw API string if present; null = inferred (UI shows amber label)
   const trainingDates: string | null = rawTrainingDates || null;
 
+  // ── New fields from apikey=258 ────────────────────────────────────────────────
+  const scid           = r.SCID != null ? String(r.SCID) : undefined;
+  const noOfParticipants = r.NoOfParticipants != null ? Number(r.NoOfParticipants) : undefined;
+  const startTime      = pickStr(r, 'Start_time', 'start_time', 'StartTime') || undefined;
+  const endTime        = pickStr(r, 'end_time', 'End_time', 'EndTime') || undefined;
+
   return {
     id:            uid(),
     assignmentId:  r.AssignmentId != null ? String(r.AssignmentId) : '',
@@ -1081,6 +2006,10 @@ function mapRawToAssignment(r: RawTrainerAssignment, fallbackFromDate = '', fall
     batchType,
     batchCategory: undefined,
     deliveryMode,
+    scid,
+    noOfParticipants,
+    startTime,
+    endTime,
   } as Assignment;
 }
 
@@ -1439,6 +2368,17 @@ function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+// Geocode a location string via server-side proxy (avoids Nominatim CORS + User-Agent issues)
+async function geocode(q: string): Promise<{ lat: number; lon: number } | null> {
+  try {
+    const r = await fetch(`/api/turso?type=geo&q=${encodeURIComponent(q)}`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const d = await r.json();
+    if (d.results?.[0]) return { lat: d.results[0].lat, lon: d.results[0].lon };
+  } catch { /* ignore */ }
+  return null;
+}
+
 function LocationAutocomplete({
   value, onChange, onSelect, placeholder,
 }: {
@@ -1468,11 +2408,11 @@ function LocationAutocomplete({
     timer.current = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await fetch(
-          `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(v)}&format=json&limit=6&addressdetails=0`,
-          { headers: { 'Accept-Language': 'en' } },
-        );
-        const data: LocSuggestion[] = await res.json();
+        const res = await fetch(`/api/turso?type=geo&q=${encodeURIComponent(v)}`);
+        const json = await res.json();
+        const data: LocSuggestion[] = (json.results || []).map((r: { lat: number; lon: number; display_name: string }) => ({
+          display_name: r.display_name, lat: String(r.lat), lon: String(r.lon),
+        }));
         setSuggestions(data);
         setOpen(data.length > 0);
       } catch { /* ignore */ }
@@ -1613,28 +2553,76 @@ interface TravelBill {
   distance: string;
   amount: number;
   currency: string;
-  receipt: string;
+  receipt: string;       // filename (display)
+  receiptData?: string;  // base64 data URL
+}
+
+/** Read a File as a base64 data URL */
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Compress image files using canvas (phone photo 4MB → ~150KB JPEG).
+ * PDFs and non-image files are returned as-is via fileToBase64.
+ */
+async function compressAndEncode(file: File): Promise<string> {
+  if (!file.type.startsWith('image/')) return fileToBase64(file);
+  return new Promise((resolve) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+    img.onload = () => {
+      const MAX = 1200;
+      let w = img.width, h = img.height;
+      if (w > MAX || h > MAX) {
+        if (w >= h) { h = Math.round(h * MAX / w); w = MAX; }
+        else         { w = Math.round(w * MAX / h); h = MAX; }
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(objectUrl);
+      resolve(canvas.toDataURL('image/jpeg', 0.78));
+    };
+    img.onerror = async () => { URL.revokeObjectURL(objectUrl); resolve(await fileToBase64(file)); };
+    img.src = objectUrl;
+  });
 }
 
 const JOURNEY_TYPES = [
   { value: '', label: '— Select Journey Type —' },
-  { value: 'Home → Venue',             label: 'Home → Venue' },
-  { value: 'Venue → Home',             label: 'Venue → Home' },
-  { value: 'Venue → Accommodation',    label: 'Venue → Accommodation' },
-  { value: 'Accommodation → Venue',    label: 'Accommodation → Venue' },
-  { value: 'Accommodation → Airport',  label: 'Accommodation → Airport' },
-  { value: 'Airport → Accommodation',  label: 'Airport → Accommodation' },
-  { value: 'Airport → Venue',          label: 'Airport → Venue' },
-  { value: 'Venue → Airport',          label: 'Venue → Airport' },
+  // Home ↔ Venue
+  { value: 'Home → Venue',                label: 'Home → Venue' },
+  { value: 'Venue → Home',                label: 'Venue → Home' },
+  // Accommodation ↔ Venue
+  { value: 'Venue → Accommodation',       label: 'Venue → Accommodation' },
+  { value: 'Accommodation → Venue',       label: 'Accommodation → Venue' },
+  // Accommodation ↔ Airport
+  { value: 'Accommodation → Airport',     label: 'Accommodation → Airport' },
+  { value: 'Airport → Accommodation',     label: 'Airport → Accommodation' },
+  // Airport ↔ Venue
+  { value: 'Airport → Venue',             label: 'Airport → Venue' },
+  { value: 'Venue → Airport',             label: 'Venue → Airport' },
+  // Home ↔ Airport
+  { value: 'Home → Airport',              label: 'Home → Airport' },
+  { value: 'Airport → Home',              label: 'Airport → Home' },
+  // Accommodation ↔ Home
+  { value: 'Accommodation → Home',        label: 'Accommodation → Home' },
+  { value: 'Home → Accommodation',        label: 'Home → Accommodation' },
 ];
 
 // Valid journey types per date position in an assignment
 const VALID_JOURNEY_BY_POSITION: Record<string, string[]> = {
-  departure:  ['Home → Venue', 'Home → Airport', 'Venue → Airport', 'Airport → Accommodation', 'Airport → Venue'],
-  first:      ['Airport → Accommodation', 'Airport → Venue', 'Home → Venue', 'Venue → Accommodation'],
+  departure:  ['Home → Venue', 'Home → Airport', 'Home → Accommodation', 'Accommodation → Airport', 'Venue → Airport', 'Airport → Accommodation', 'Airport → Venue'],
+  first:      ['Airport → Accommodation', 'Airport → Venue', 'Home → Venue', 'Home → Accommodation', 'Venue → Accommodation', 'Accommodation → Venue'],
   mid:        ['Venue → Accommodation', 'Accommodation → Venue'],
   last:       ['Venue → Airport', 'Accommodation → Airport', 'Venue → Accommodation', 'Accommodation → Venue'],
-  returnDay:  ['Venue → Home', 'Accommodation → Airport', 'Airport → Accommodation', 'Venue → Airport'],
+  returnDay:  ['Venue → Home', 'Accommodation → Home', 'Airport → Home', 'Accommodation → Airport', 'Airport → Accommodation', 'Venue → Airport'],
 };
 
 // ── Auto-fill From/To based on journey type ───────────────────────────────────
@@ -1741,6 +2729,18 @@ function deriveJourneyLocations(
       const airport = getAirport('departing');
       return { from: venue.loc, to: airport.loc, fromSource: venue.src, toSource: airport.src };
     }
+    case 'Accommodation → Home':
+      return { from: accom.loc, to: home.loc, fromSource: accom.src, toSource: home.src };
+    case 'Home → Accommodation':
+      return { from: home.loc, to: accom.loc, fromSource: home.src, toSource: accom.src };
+    case 'Home → Airport': {
+      const airport = getAirport('departing');
+      return { from: home.loc, to: airport.loc, fromSource: home.src, toSource: airport.src };
+    }
+    case 'Airport → Home': {
+      const airport = getAirport('arriving');
+      return { from: airport.loc, to: home.loc, fromSource: airport.src, toSource: home.src };
+    }
     default:
       return { from: '', to: '', fromSource: '', toSource: '' };
   }
@@ -1756,11 +2756,17 @@ function validateJourneyType(
   const coreAsgn = assignments.find(
     a => a.startDate && a.endDate && date >= a.startDate && date <= a.endDate,
   );
+  // Allow up to 2 days before assignment start (multi-leg international travel)
+  // and up to 2 days after assignment end (return journey connections)
   const depAsgn = !coreAsgn
-    ? assignments.find(a => a.startDate && addDays(a.startDate, -1) === date)
+    ? assignments
+        .filter(a => a.startDate && (addDays(a.startDate, -1) === date || addDays(a.startDate, -2) === date))
+        .sort((a, b) => (a.startDate! < b.startDate! ? -1 : 1))[0] ?? null
     : null;
   const retAsgn = !coreAsgn && !depAsgn
-    ? assignments.find(a => a.endDate && addDays(a.endDate, +1) === date)
+    ? assignments
+        .filter(a => a.endDate && (addDays(a.endDate, 1) === date || addDays(a.endDate, 2) === date))
+        .sort((a, b) => (b.endDate! > a.endDate! ? 1 : -1))[0] ?? null
     : null;
 
   if (!coreAsgn && !depAsgn && !retAsgn) {
@@ -1808,7 +2814,8 @@ interface MiscExpense {
   amount: number;
   currency: string;
   remarks: string;
-  receipt: string;
+  receipt: string;       // filename (display)
+  receiptData?: string;  // base64 data URL
 }
 
 // ── Sub-components ─────────────────────────────────────────────────────────────
@@ -2029,30 +3036,32 @@ function AssignmentModal({ open, initial, fromDate, toDate, koenigCountries, cou
 
 export default function CreateTADABill({ currentUser }: { currentUser?: User }) {
   const navigate = useNavigate();
+
+  // HR Admin Check Details proxy — hide submit-related UI
+  const isProxyMode = !!(currentUser?.originalRole && currentUser.originalRole !== currentUser.role);
+
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
   const [fetched, setFetched] = useState(false);
 
-  // Live FX rates fetched from /api/fx-rates (Frankfurter/ECB — same source as XE mid-market)
-  const [fxRates, setFxRates] = useState<Record<string, number>>({ USD: 83.5, AED: 22.7 });
+  // Live FX rates from open.er-api.com (same mid-market source as XE)
+  // rates[cur] = how many `cur` per 1 USD; convert to INR-per-foreign via rates['INR']/rates[cur]
+  const [fxRates, setFxRates] = useState<Record<string, number>>({ USD: 84, AED: 22.9, EUR: 91, GBP: 107, SGD: 63 });
   const [fxUpdatedAt, setFxUpdatedAt] = useState('');
   const [fxSource, setFxSource] = useState('');
   useEffect(() => {
-    fetch('/api/fx-rates?base=INR&symbols=USD,AED,EUR,GBP')
-      .then(r => r.json())
-      .then(data => {
-        if (data.rates) {
-          // API returns INR→foreign rates; invert to get foreign→INR
-          const inverted: Record<string, number> = {};
-          for (const [cur, rate] of Object.entries(data.rates as Record<string, number>)) {
-            if (rate > 0) inverted[cur] = parseFloat((1 / rate).toFixed(4));
-          }
-          if (Object.keys(inverted).length > 0) setFxRates(inverted);
-          setFxUpdatedAt(data.updatedAt || '');
-          setFxSource(data.source || '');
+    import('../lib/currencyRates').then(({ fetchLiveRates }) => {
+      fetchLiveRates().then(usdRates => {
+        const inrPerUsd = usdRates['INR'] ?? 84;
+        const inrRates: Record<string, number> = {};
+        for (const [cur, perUsd] of Object.entries(usdRates)) {
+          if (perUsd > 0) inrRates[cur] = parseFloat((inrPerUsd / perUsd).toFixed(4));
         }
-      })
-      .catch(() => { /* keep hardcoded fallback */ });
+        if (Object.keys(inrRates).length > 0) setFxRates(inrRates);
+        setFxSource('open.er-api.com (XE mid-market)');
+        setFxUpdatedAt(new Date().toISOString());
+      }).catch(() => { /* keep fallback */ });
+    });
   }, []);
   const [fetchLoading, setFetchLoading] = useState(false);
   const [fetchError, setFetchError] = useState('');
@@ -2081,6 +3090,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const [travelDraft, setTravelDraft] = useState<Partial<TravelBill>>({
     date: '', journeyType: '', travelType: 'Cab', from: '', to: '', distance: '', amount: 0, currency: 'INR', receipt: '',
   });
+  const [aiExtracting, setAiExtracting] = useState(false);
+  const [aiExtracted, setAiExtracted] = useState<{ from?: boolean; to?: boolean; amount?: boolean }>({});
   const [distanceCalculating, setDistanceCalculating] = useState(false);
   // Always-fresh ref so geocode callbacks read latest state after debounce
   const travelDraftRef = useRef<Partial<TravelBill>>({});
@@ -2094,11 +3105,11 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     const to   = (travelDraft.to   || '').trim();
     if (!from || !to) return;
 
-    // Both coords already present — nothing to geocode (onSelect already computed distance)
+    // Coords already present and distance set — nothing to do
     if (travelDraft.fromLat != null && travelDraft.fromLon != null &&
-        travelDraft.toLat   != null && travelDraft.toLon   != null) return;
+        travelDraft.toLat   != null && travelDraft.toLon   != null &&
+        travelDraft.distance) return;
 
-    // Geocode missing coord(s) after 700 ms debounce (handles rapid typing)
     let dead = false;
     const timer = setTimeout(async () => {
       const cur  = travelDraftRef.current;
@@ -2106,53 +3117,38 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       const curT = (cur.to   || '').trim();
       if (!curF || !curT) return;
 
-      // After debounce, user may have selected from dropdown — coords already available
-      if (cur.fromLat != null && cur.fromLon != null &&
-          cur.toLat   != null && cur.toLon   != null) {
-        const dist = `${haversineKm(cur.fromLat, cur.fromLon, cur.toLat, cur.toLon).toFixed(1)} km`;
-        setTravelDraft(p => p.distance === dist ? p : { ...p, distance: dist });
-        return;
-      }
-
       if (!dead) setDistanceCalculating(true);
       try {
-        let fLat = cur.fromLat, fLon = cur.fromLon;
-        let tLat = cur.toLat,   tLon = cur.toLon;
+        let fLat = cur.fromLat ?? null;
+        let fLon = cur.fromLon ?? null;
+        let tLat = cur.toLat   ?? null;
+        let tLon = cur.toLon   ?? null;
 
-        if (fLat == null || fLon == null) {
-          const r = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(curF)}&format=json&limit=1`,
-            { headers: { 'Accept-Language': 'en' } },
-          );
-          const d: LocSuggestion[] = await r.json();
-          if (d[0]) { fLat = parseFloat(d[0].lat); fLon = parseFloat(d[0].lon); }
-        }
-
-        if (!dead && (tLat == null || tLon == null)) {
-          const r = await fetch(
-            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(curT)}&format=json&limit=1`,
-            { headers: { 'Accept-Language': 'en' } },
-          );
-          const d: LocSuggestion[] = await r.json();
-          if (d[0]) { tLat = parseFloat(d[0].lat); tLon = parseFloat(d[0].lon); }
-        }
+        // Geocode via server proxy — avoids CORS and Nominatim User-Agent requirement
+        const [fromGeo, toGeo] = await Promise.all([
+          (fLat == null || fLon == null) ? geocode(curF) : Promise.resolve(null),
+          (tLat == null || tLon == null) ? geocode(curT) : Promise.resolve(null),
+        ]);
+        if (!dead && fromGeo) { fLat = fromGeo.lat; fLon = fromGeo.lon; }
+        if (!dead && toGeo)   { tLat = toGeo.lat;   tLon = toGeo.lon; }
 
         if (!dead && fLat != null && fLon != null && tLat != null && tLon != null) {
-          const dist = `${haversineKm(fLat, fLon, tLat, tLon).toFixed(1)} km`;
-          setTravelDraft(p => ({
+          const km   = haversineKm(fLat, fLon, tLat, tLon);
+          const dist = `${km.toFixed(1)} km`;
+          if (!dead) setTravelDraft(p => ({
             ...p,
-            fromLat: fLat ?? p.fromLat, fromLon: fLon ?? p.fromLon,
-            toLat:   tLat ?? p.toLat,   toLon:   tLon ?? p.toLon,
+            fromLat: fLat!, fromLon: fLon!,
+            toLat:   tLat!, toLon:   tLon!,
             distance: dist,
           }));
         }
-      } catch { /* ignore network errors / aborts */ }
+      } catch { /* ignore */ }
       if (!dead) setDistanceCalculating(false);
     }, 700);
 
     return () => { dead = true; clearTimeout(timer); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [travelDraft.from, travelDraft.to]);
+  }, [travelDraft.from, travelDraft.to, travelDraft.fromLat, travelDraft.fromLon, travelDraft.toLat, travelDraft.toLon]);
 
   // Misc expenses
   const [miscExpenses, setMiscExpenses] = useState<MiscExpense[]>([]);
@@ -2172,7 +3168,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   // Lodging state
   const [lodgingEntries, setLodgingEntries] = useState<LodgingEntry[]>([]);
   const [lodgingDraft, setLodgingDraft] = useState<Partial<LodgingEntry>>({
-    hotelName: '', city: '', roomNo: '', checkIn: fromDate, checkOut: '', nights: 0, ratePerNight: 0, receipt: '',
+    hotelName: '', city: '', roomNo: '', checkIn: fromDate, checkOut: '', nights: 0, ratePerNight: 0, receipt: '', stayType: 'Other',
   });
   const [pmsAccom, setPmsAccom] = useState<AccommodationRecord[]>([]);
   const [accomLoading, setAccomLoading] = useState(false);
@@ -2422,22 +3418,22 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       );
       setPmsLeaves(inRange);
 
-      // Auto-mark approved/sanctioned leaves on the date grid
+      // Auto-mark ALL leaves from backend on the date grid — no status filter.
+      // Whatever the API returns, those exact dates are marked. No extra logic.
       const autoMarked = new Set<string>();
       inRange.forEach(r => {
-        if (!isApprovedLeave(r.leave_status)) return;
         const fd = parseLeaveDate(r.from_date);
         const td = parseLeaveDate(r.to_date) || fd;
         if (!fd) return;
-        // Expand every calendar day in [fd, td] that falls inside [fromDate, toDate].
-        // Use date-only strings (no 'T00:00:00') so JS parses them as UTC, avoiding
-        // timezone shift (e.g. IST midnight local → previous day UTC).
-        const cur = new Date(fd);
-        const end = new Date(td);
-        while (cur <= end) {
-          const iso = cur.toISOString().slice(0, 10);
-          if (iso >= fromDate && iso <= toDate) autoMarked.add(iso);
-          cur.setUTCDate(cur.getUTCDate() + 1);
+        // Expand every calendar day in [fd, td] using UTC-only arithmetic to avoid
+        // any local timezone shift (e.g. UTC-5 would shift date by -1 day otherwise).
+        let cur = fd;
+        while (cur <= (td || fd)) {
+          if (cur >= fromDate && cur <= toDate) autoMarked.add(cur);
+          // Increment by 1 day — pure UTC, no local timezone involved
+          const [y, m, d] = cur.split('-').map(Number);
+          const next = new Date(Date.UTC(y, m - 1, d + 1));
+          cur = next.toISOString().slice(0, 10);
         }
       });
       if (autoMarked.size > 0) setLeaveDates(autoMarked);
@@ -2453,14 +3449,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     // ── Advances (apikey=259) ─────────────────────────────────────────────────
     if (advancesResult.status === 'fulfilled') {
       const all = advancesResult.value;
-      // Advances are issued BEFORE travel — use a 90-day look-back from trip start
-      // plus 30 days after trip end to catch any post-trip adjustments
-      const windowStart = addDays(fromDate, -90);
-      const windowEnd   = addDays(toDate, 30);
+      // Window: 90 days before selected fromDate → toDate
+      // Captures advances taken before the trip as well as during it
+      const rangeStart = new Date(fromDate);
+      rangeStart.setDate(rangeStart.getDate() - 90);
+      const effectiveFrom = rangeStart.toISOString().slice(0, 10);
+      const effectiveTo   = toDate;
       const inRange = all.filter(r => {
         const d = parseDT(r.Date);
-        if (!d) return true; // no date — include for manual review
-        return d >= windowStart && d <= windowEnd;
+        if (!d) return false;
+        return d >= effectiveFrom && d <= effectiveTo;
       });
       // Sort oldest → newest
       inRange.sort((a, b) => {
@@ -2470,7 +3468,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       });
       setPmsAdvances(inRange);
       if (all.length > 0 && inRange.length === 0) {
-        setAdvancesError(`${all.length} advance record(s) found in PMS but none fall within 90 days before ${fmt(fromDate)} → 30 days after ${fmt(toDate)}.`);
+        setAdvancesError(`${all.length} advance record(s) found in PMS but none fall within 90 days before the selected range.`);
       }
     } else {
       const msg = (advancesResult.reason as Error)?.message || 'Could not fetch advance records';
@@ -2496,8 +3494,67 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     return isoRange(fromDate, toDate);
   }, [fetched, fromDate, toDate]);
 
+  // ── Layover DA: find the country with the longest 4+ hour layover on a travel day ──
+  // Takes all flights on a given date, sorts by departure time, pairs consecutive flights,
+  // computes layover duration at each intermediate city, and returns the layover country
+  // (mapped via inferCountryFromCity) if any layover is ≥ 4 hours in a non-India country.
+  const getLayoverCountry = useMemo(() => {
+    return (travelDate: string): { country: string; layoverHours: number } | null => {
+      // All flights departing on this date, sorted by departure time
+      const dayFlights = pmsFlights
+        .filter(f => parseDT(f.departure_date) === travelDate && f.Is_cancelled !== 'Yes')
+        .sort((a, b) => (a.departure_time || '').localeCompare(b.departure_time || ''));
+
+      if (dayFlights.length < 2) return null; // no connections → no layover
+
+      let best: { country: string; layoverHours: number } | null = null;
+
+      for (let i = 0; i < dayFlights.length - 1; i++) {
+        const leg1 = dayFlights[i];
+        const leg2 = dayFlights[i + 1];
+
+        // Arrival of leg1 (may be on arrival_date which could be same day or next day)
+        const arr1Date = parseDT(leg1.arrival_date) || travelDate;
+        const arr1Time = (leg1.arrival_time || '').substring(0, 5); // "HH:MM"
+        // Departure of leg2
+        const dep2Date = parseDT(leg2.departure_date) || travelDate;
+        const dep2Time = (leg2.departure_time || '').substring(0, 5);
+
+        if (!arr1Time || !dep2Time) continue;
+
+        // Convert to total minutes from midnight for comparison
+        const toMins = (hhmm: string) => {
+          const [h, m] = hhmm.split(':').map(Number);
+          return (isNaN(h) ? 0 : h) * 60 + (isNaN(m) ? 0 : m);
+        };
+        const arr1Mins = toMins(arr1Time) + (arr1Date > travelDate ? 1440 : 0); // +1 day = +1440 min
+        const dep2Mins = toMins(dep2Time) + (dep2Date > travelDate ? 1440 : 0);
+        const layoverMins = dep2Mins - arr1Mins;
+        const layoverHours = layoverMins / 60;
+
+        if (layoverHours < 4) continue; // less than 4 hours — skip
+
+        // Intermediate country: where leg1 lands (to_city of leg1)
+        const layoverCity    = (leg1.to_city || '').trim();
+        const layoverCountry = inferCountryFromCity(layoverCity);
+
+        if (!layoverCountry || layoverCountry === 'India') continue; // domestic stopover
+
+        // Keep the longest qualifying layover
+        if (!best || layoverHours > best.layoverHours) {
+          best = { country: layoverCountry, layoverHours };
+        }
+      }
+
+      return best;
+    };
+  }, [pmsFlights]);
+
   const daRows = useMemo(() => {
     if (!fetched || !fromDate || !toDate) return [];
+
+    // Only consider active (non-cancelled) flights for all DA calculations
+    const activeFlights = pmsFlights.filter(f => f.Is_cancelled !== 'Yes');
 
     // ── Flight-aware departure / return day resolution ──────────────────────────
     // Rule: use the actual flight departure_date as the travel day.
@@ -2515,6 +3572,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     const flightRetEligible = new Map<string, boolean>(); // endDate   → arrival after 12:00?
     const flightDepTime     = new Map<string, string>();  // startDate → "HH:MM" for remarks
     const flightArrTime     = new Map<string, string>();  // endDate   → "HH:MM" for remarks
+
+    // IST-based travel-day DA: store arrival/departure times + country for timezone conversion
+    const outboundArrTimeLocal = new Map<string, string>(); // startDate → outbound arrival HH:MM (destination local)
+    const outboundArrCountry   = new Map<string, string>(); // startDate → outbound arrival country
+    const returnDepTimeLocal   = new Map<string, string>(); // endDate   → return departure HH:MM (intl local)
+    const returnDepCountry     = new Map<string, string>(); // endDate   → return departure country
 
     // Long-term stay detection (≥ 30 days → DA not applicable per policy)
     const longTermAsgnIds = new Set<string>();
@@ -2536,11 +3599,11 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         obAsgnIds.add(a.assignmentId);
       }
 
-      // Outbound: find flight departing within 2 days before the assignment start date
-      const outbound = pmsFlights.find(f => {
+      // Outbound: find active flight departing within 2 days before assignment start.
+      const outbound = activeFlights.find(f => {
         const fd = parseDT(f.departure_date);
         return fd ? fd >= addDays(start, -2) && fd <= start : false;
-      });
+      }) ?? null;
       if (outbound) {
         const fd = parseDT(outbound.departure_date);
         if (fd && fd < start) {
@@ -2554,17 +3617,23 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         flightDepTime.set(start, depHHMM);
         // Eligible if no time data (default allow) or time < "17:00"
         flightDepEligible.set(start, !rawDepTime || rawDepTime.substring(0, 5) < '17:00');
+        // Store outbound arrival info for IST-based DA calculation
+        const outArrHHMM = (outbound.arrival_time || '').substring(0, 5);
+        const outToCity  = (outbound.to_city || '').trim();
+        const outArrCountry = inferCountryFromCity(outToCity);
+        outboundArrTimeLocal.set(start, outArrHHMM);
+        outboundArrCountry.set(start, outArrCountry);
       } else {
         // No flight data → standard: day before start; default eligible
         flightDepDay.set(start, addDays(start, -1));
         flightDepEligible.set(start, true);
       }
 
-      // Return: find flight departing on or within 2 days after assignment end
-      const returnFlight = pmsFlights.find(f => {
+      // Return: find active flight departing on or within 2 days after assignment end.
+      const returnFlight = activeFlights.find(f => {
         const fd = parseDT(f.departure_date);
         return fd ? fd >= end && fd <= addDays(end, 2) : false;
-      });
+      }) ?? null;
       if (returnFlight) {
         const fd = parseDT(returnFlight.departure_date);
         if (fd && fd > end) {
@@ -2578,6 +3647,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         flightArrTime.set(end, arrHHMM);
         // Policy: return day eligible only if arrival at base is AFTER 12:00 (strictly)
         flightRetEligible.set(end, !rawArrTime || rawArrTime.substring(0, 5) > '12:00');
+        // Store return departure info (from international city) for IST-based DA calculation
+        const retDepHHMM    = (returnFlight.departure_time || '').substring(0, 5);
+        const retFromCity   = (returnFlight.from_city || '').trim();
+        const retDepCountry = inferCountryFromCity(retFromCity);
+        returnDepTimeLocal.set(end, retDepHHMM);
+        returnDepCountry.set(end, retDepCountry);
       } else {
         // No flight data → standard: day after end; default eligible
         flightRetDay.set(end, addDays(end, 1));
@@ -2589,10 +3664,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     // • Actual departure day (from flight or startDate − 1)
     // • all days within each assignment's startDate..endDate
     // • Actual return day (from flight or endDate + 1)
-    // Constrained to ±1 day of the selected date range window.
-    const rangeStart = addDays(fromDate, -1);
-    const rangeEnd   = addDays(toDate,   +1);
-
+    // Shows ALL assignment days regardless of selected date window — trainer needs
+    // full trip DA, not just the slice the user happened to select as the query range.
     const dateSet = new Set<string>();
 
     if (assignments.length === 0) {
@@ -2604,17 +3677,43 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         const end    = a.endDate   || toDate;
         const dep    = flightDepDay.get(start) || addDays(start, -1);
         const ret    = flightRetDay.get(end)   || addDays(end,   1);
-        // Policy: include ALL days from departure to return — covers departure day,
+        // Include ALL days from departure to return — covers departure day,
         // pre-batch transit days, core assignment days, post-batch holding days, and return day.
-        // (Policy example: 8PM departure on Day-2, batch Day0..Day4, return Day6 → DA eligible
-        //  for Day-1 through Day5 i.e. all days the trainer is away.)
-        const winFrom = dep > rangeStart ? dep : rangeStart;
-        const winTo   = ret < rangeEnd   ? ret : rangeEnd;
-        if (winFrom <= winTo) isoRange(winFrom, winTo).forEach(d => dateSet.add(d));
+        isoRange(dep, ret).forEach(d => dateSet.add(d));
       });
     }
 
     const sortedDates = Array.from(dateSet).sort();
+
+    // ── Build apartment-coverage date set (Step 6 → Step 4) ──────────────────
+    // A date is "apartment-covered" if any active accommodation whose name contains
+    // "apartment" (GGN Apartment, Koenig Apartment, Serviced Apartment, etc.)
+    // has checkIn ≤ date < checkOut.  We check BOTH raw PMS records (pmsAccom) and
+    // already-imported lodgingEntries so the rule works even before the trainer clicks Import.
+    const apartmentDates = new Set<string>();
+    // Add a date range to apartmentDates (checkIn inclusive, checkOut inclusive)
+    // checkOut day is included because trainer physically stays at apartment until departure morning
+    const markApartmentRange = (checkIn: string, checkOut: string) => {
+      if (!checkIn || !checkOut) return;
+      const from = checkIn.slice(0, 10);
+      const to   = checkOut.slice(0, 10);
+      if (to >= from) isoRange(from, to).forEach(d => apartmentDates.add(d));
+    };
+    // From raw PMS accommodation records — match any variant: apartment, Apartment, Apartment's, etc.
+    pmsAccom.forEach(r => {
+      const isCancelled = r.Is_caneclled === '1' || r.Is_caneclled === 1;
+      if (isCancelled) return;
+      if (isApartmentName(r.AccommodationName ?? '')) {
+        markApartmentRange(accomDT(r.CheckInDate), accomDT(r.CheckOutDate));
+      }
+    });
+    // From manually-added / imported lodging entries
+    // Detect apartment if: name contains "apartment" (any case/variant) OR stay type is "Apartment"
+    lodgingEntries.forEach(l => {
+      if (isApartmentName(l.hotelName) || l.stayType === 'Apartment') {
+        markApartmentRange(l.checkIn, l.checkOut);
+      }
+    });
 
     return sortedDates.map(iso => {
       // Find the assignment whose core range (startDate..endDate) covers this date
@@ -2656,14 +3755,107 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       const isReturn    = !!retAsgn;
       const isInterim   = !!interimAsgn;
 
-      const destCountry = asgn?.country || primaryCountry;
+      // PMS sometimes stores country='India' even for international assignments.
+      // Override using city when country='India' but city resolves to a different country.
+      const rawCountry  = asgn?.country || primaryCountry;
+      const cityCountry = asgn?.city ? inferCountryFromCity(asgn.city) : '';
+      const destCountry = (rawCountry === 'India' && cityCountry && cityCountry !== 'India')
+        ? cityCountry
+        : rawCountry;
       // On travel days for international assignments, the trainer departs from/arrives in
-      // India, so India DA rate (₹950) applies — not the destination country rate.
-      const isInternationalTravelDay = (isDeparture || isReturn) && destCountry !== 'India' && destCountry !== '';
-      const country    = isInternationalTravelDay ? 'India' : destCountry;
+      // India, so India DA rate (₹950) applies — EXCEPT when the return arrival is between
+      // 12:00 and 17:00, in which case destination country DA rate applies per policy.
+      // LAYOVER RULE: if any connecting flight on this travel day has a layover of 4+ hours
+      // in a non-India country, apply that country's DA rate instead of India rate.
+      // ── Travel-day DA rule (local time comparison) ────────────────────────────
+      // Departure day: if trainer arrives at international destination before 18:00
+      // local time → spent 4+ hours there before end of working day → intl DA.
+      // Return day: if trainer departs international country at/after 04:00 local
+      // time → spent 4+ hours there → intl DA.
+      // All comparisons use LOCAL destination time (not IST) — this matches the
+      // user-visible flight arrival/departure times shown in Step 5.
+
+      let isInternationalTravelDay = false;
+      let travelDayCountry = destCountry;
+
+      if (isDeparture && destCountry !== 'India' && destCountry !== '') {
+        const asgnStart = asgn?.startDate || fromDate;
+        // If the previous assignment was in the same country, trainer was already in-country —
+        // no departure flight needed, so give full international DA.
+        const prevAsgn = assignments
+          .filter(a => a !== asgn && a.endDate && a.endDate < asgnStart)
+          .sort((a, b) => (b.endDate! > a.endDate! ? 1 : -1))[0] ?? null;
+        const prevCountry = prevAsgn
+          ? ((prevAsgn.country === 'India' && prevAsgn.city ? inferCountryFromCity(prevAsgn.city) : prevAsgn.country) || inferCountryFromCity(prevAsgn.city || ''))
+          : '';
+        if (prevCountry === destCountry) {
+          travelDayCountry = destCountry; // already in-country (consecutive same-country assignments)
+        } else {
+          // Apply outbound flight arrival-time cutoff
+          const outboundFlight = activeFlights.find(f => {
+            const fd = parseDT(f.departure_date);
+            return fd ? fd >= addDays(asgnStart, -2) && fd <= asgnStart : false;
+          });
+          const arrLocal = outboundFlight ? (outboundFlight.arrival_time || '').substring(0, 5) : '';
+          if (arrLocal) {
+            if (arrLocal <= '18:00') {
+              travelDayCountry = destCountry;
+            } else {
+              travelDayCountry = 'India';
+              isInternationalTravelDay = true;
+            }
+          } else {
+            travelDayCountry = 'India';
+            isInternationalTravelDay = true;
+          }
+        }
+      } else if (isReturn && destCountry !== 'India' && destCountry !== '') {
+        const asgnEnd = asgn?.endDate || toDate;
+        // If the next assignment is in the same country, trainer stays in-country —
+        // no return flight, so give full international DA.
+        const nextAsgn = assignments
+          .filter(a => a !== asgn && a.startDate && a.startDate > asgnEnd)
+          .sort((a, b) => (a.startDate! < b.startDate! ? -1 : 1))[0] ?? null;
+        const nextCountry = nextAsgn
+          ? ((nextAsgn.country === 'India' && nextAsgn.city ? inferCountryFromCity(nextAsgn.city) : nextAsgn.country) || inferCountryFromCity(nextAsgn.city || ''))
+          : '';
+        if (nextCountry === destCountry) {
+          travelDayCountry = destCountry; // stays in-country (consecutive same-country assignments)
+        } else {
+          // Apply return flight departure-time cutoff
+          const returnFlight2 = activeFlights.find(f => {
+            const fd = parseDT(f.departure_date);
+            return fd ? fd >= asgnEnd && fd <= addDays(asgnEnd, 2) : false;
+          });
+          const depLocal = returnFlight2 ? (returnFlight2.departure_time || '').substring(0, 5) : '';
+          if (depLocal) {
+            if (depLocal >= '04:00') {
+              travelDayCountry = destCountry;
+            } else {
+              travelDayCountry = 'India';
+              isInternationalTravelDay = true;
+            }
+          } else {
+            const endKey = asgn?.endDate || toDate;
+            const arrHHMMReturn = flightArrTime.get(endKey) || '';
+            if (arrHHMMReturn >= '12:00') {
+              travelDayCountry = destCountry;
+            } else {
+              travelDayCountry = 'India';
+              isInternationalTravelDay = true;
+            }
+          }
+        }
+      }
+
+      // Layover rule overrides everything: 4+ hr non-India layover → that country's DA
+      const layoverInfo = (isDeparture || isReturn) ? getLayoverCountry(iso) : null;
+      const country = layoverInfo
+        ? layoverInfo.country
+        : travelDayCountry;
       const asgnId     = asgn?.assignmentId || '';
       const asgnCourse = asgn?.courseName   || '';
-      const daInfo     = getDaInfo(country, isInternationalTravelDay ? undefined : asgn?.city);
+      const daInfo     = getDaInfo(country, layoverInfo ? undefined : isInternationalTravelDay ? undefined : asgn?.city);
       const { rate, currency, allowed } = daInfo;
 
       const isFuture  = iso > today;
@@ -2679,10 +3871,17 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       const isOnlineBatch = asgn &&
         (asgn.batchType === 'ILO' || asgn.deliveryMode === 'Online');
 
-      // Delhi-NCR rule: "No DA, No taxi for travel within Delhi-NCR" (Travel Policy)
-      // Applies when the assignment city is within Delhi-NCR and it's a domestic (India) day
-      const isDelhiNcr = country === 'India' && !isInternationalTravelDay && asgn != null &&
+      // Step 6 → Step 4: check apartment coverage for this date
+      // apartmentDates is built above (outside the per-date loop) from pmsAccom + lodgingEntries
+      const isStayingInApartment = apartmentDates.has(iso);
+
+      // Delhi-NCR rule (per policy):
+      // DA NOT allowed if city is within Delhi-NCR AND trainer is NOT in an apartment stay.
+      // DA IS allowed if within Delhi-NCR AND accommodation name contains "apartment"
+      // (GGN Apartment, Koenig Apartment, Serviced Apartment, etc. — checked by name, not manual selection).
+      const inDelhiNcrCity = country === 'India' && !isInternationalTravelDay && asgn != null &&
         DELHI_NCR_CITIES.has((asgn.city || '').toLowerCase().trim());
+      const isDelhiNcr = inDelhiNcrCity && !isStayingInApartment;
 
       // Long-term stay and OB flags (new policy rules)
       const isLongTermStay = asgn?.assignmentId ? longTermAsgnIds.has(asgn.assignmentId) : false;
@@ -2706,10 +3905,10 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         amount      = 0;
         remarks     = `${asgnTag} — ILO/Online batch, DA not eligible per policy`;
       } else if (isDelhiNcr) {
-        status      = 'Not Applicable — Within Delhi-NCR';
+        status      = 'Not Applicable — Delhi-NCR (No Apartment Stay)';
         statusClass = 'bg-gray-100 text-gray-500 border border-gray-300';
         amount      = 0;
-        remarks     = `${asgnTag} — No DA for travel within Delhi-NCR (per travel policy)`;
+        remarks     = `${asgnTag} — No DA within Delhi-NCR unless staying in an apartment (Step 6). Add apartment stay in Step 6 to enable DA.`;
       } else if (isLongTermStay) {
         status      = 'Not Applicable — Long Term Stay (≥30 days)';
         statusClass = 'bg-gray-100 text-gray-500 border border-gray-300';
@@ -2751,18 +3950,34 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         status      = 'Allowed (Travel Day)';
         statusClass = 'bg-blue-100 text-blue-700';
         amount      = rate;
-        const depNote = depTimeStr ? `, departs ${depTimeStr} (before 17:00)` : '';
-        remarks     = isInternationalTravelDay
-          ? `${asgnTag} — departure from India to ${destCountry} (India rate applied${depNote})`
-          : `${asgnTag} — departure day${depNote}`;
+        const depNote  = depTimeStr ? `, departs ${depTimeStr}` : '';
+        const asgnStart2   = asgn?.startDate || fromDate;
+        const outbFlight2  = activeFlights.find(f => { const fd = parseDT(f.departure_date); return fd ? fd >= addDays(asgnStart2, -2) && fd <= asgnStart2 : false; });
+        const arrLocal2    = outbFlight2 ? (outbFlight2.arrival_time || '').substring(0, 5) : '';
+        const arrNote2     = arrLocal2 ? `, arrives ${arrLocal2} local` : '';
+        remarks     = layoverInfo
+          ? `${asgnTag} — departure day; ${layoverInfo.country} layover ${layoverInfo.layoverHours.toFixed(1)} hrs (≥4 hrs); ${layoverInfo.country} DA applied${depNote}`
+          : isInternationalTravelDay
+            ? `${asgnTag} — departure to ${destCountry}${depNote}${arrNote2}; arrival after 18:00 local (<4 hrs in ${destCountry}), India DA applied`
+            : destCountry !== 'India'
+              ? `${asgnTag} — departure to ${destCountry}${depNote}${arrNote2}; arrival by 18:00 local (4+ hrs in ${destCountry}), ${destCountry} DA applied`
+              : `${asgnTag} — departure day${depNote}`;
       } else if (isReturn) {
         status      = 'Allowed (Return Day)';
         statusClass = 'bg-blue-100 text-blue-700';
         amount      = rate;
-        const arrNote = arrTimeStr ? `, arrives ${arrTimeStr} (after 12:00)` : '';
-        remarks     = isInternationalTravelDay
-          ? `${asgnTag} — return to India from ${destCountry} (India rate applied${arrNote})`
-          : `${asgnTag} — return day${arrNote}`;
+        const arrNote   = arrTimeStr ? `, arrives India ${arrTimeStr}` : '';
+        const asgnEnd2     = asgn?.endDate || toDate;
+        const retFlight2   = activeFlights.find(f => { const fd = parseDT(f.departure_date); return fd ? fd >= asgnEnd2 && fd <= addDays(asgnEnd2, 2) : false; });
+        const retDepLocal2 = retFlight2 ? (retFlight2.departure_time || '').substring(0, 5) : '';
+        const retDepNote   = retDepLocal2 ? `departs ${destCountry} ${retDepLocal2} local` : '';
+        remarks     = layoverInfo
+          ? `${asgnTag} — return day; ${layoverInfo.country} layover ${layoverInfo.layoverHours.toFixed(1)} hrs (≥4 hrs); ${layoverInfo.country} DA applied${arrNote}`
+          : isInternationalTravelDay
+            ? `${asgnTag} — return from ${destCountry}; ${retDepNote}; departed before 04:00 local (<4 hrs in ${destCountry}), India DA applied${arrNote}`
+            : destCountry !== 'India'
+              ? `${asgnTag} — return from ${destCountry}; ${retDepNote}; 4+ hrs in ${destCountry} (departed at/after 04:00 local), ${destCountry} DA applied${arrNote}`
+              : `${asgnTag} — return day${arrNote}`;
       } else if (isInterim) {
         // Policy: days between departure flight and batch start (pre-batch transit),
         // or between batch end and return flight (post-batch holding), are eligible for DA.
@@ -2789,7 +4004,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
 
       return { iso, day: dayName(iso), country, assignmentId: asgnId, courseName: asgnCourse, status, statusClass, rate, currency, amount, remarks };
     });
-  }, [fetched, fromDate, toDate, today, assignments, primaryCountry, leaveDates, pmsFlights]);
+  }, [fetched, fromDate, toDate, today, assignments, primaryCountry, leaveDates, pmsFlights, pmsAccom, lodgingEntries]);
 
   // Live FX rates (fetched on mount from /api/fx-rates); falls back to fxRates state
   const FX_TO_INR = fxRates;
@@ -2812,7 +4027,13 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     () => Object.entries(foreignDAMap).reduce((sum, [cur, amt]) => sum + amt * (FX_TO_INR[cur] ?? 0), 0),
     [foreignDAMap],
   );
-  const travelTotal = useMemo(() => travelBills.reduce((s, b) => s + b.amount, 0), [travelBills]);
+  const travelTotal = useMemo(
+    () => travelBills.reduce((s, b) => {
+      const inr = b.currency && b.currency !== 'INR' ? b.amount * (FX_TO_INR[b.currency] ?? 0) : b.amount;
+      return s + inr;
+    }, 0),
+    [travelBills, FX_TO_INR],
+  );
   const miscTotal = useMemo(() => miscExpenses.reduce((s, e) => s + e.amount, 0), [miscExpenses]);
   const lodgingTotal = useMemo(() => lodgingEntries.reduce((s, l) => s + l.nights * l.ratePerNight, 0), [lodgingEntries]);
   // Grand total includes foreign DA converted to INR at indicative rates
@@ -2832,11 +4053,43 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   }
 
   const [submitSuccess, setSubmitSuccess] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleSubmit() {
+  async function handleSubmit() {
+    const stillUploading = travelBills.some(b => b.receiptData === '…uploading') || miscExpenses.some(m => m.receiptData === '…uploading');
+    if (stillUploading) { setSubmitError('Please wait — file attachments are still uploading.'); return; }
+    setIsSubmitting(true);
+    setSubmitError('');
     const now = new Date().toISOString();
     const claimId = `CLAIM-${Date.now()}`;
     const billNo = `TADA-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+
+    // Build advanceItems: all PMS advances in range + manually added advances
+    const advanceItems: ClaimAdvanceItem[] = [
+      ...pmsAdvancesInRange.map(r => ({
+        key:       String(r.TABillID ?? `${r.Date}-${r.Amount}`),
+        date:      parseDT(r.Date) || fromDate,
+        amount:    Number(r.Amount ?? 0),
+        currency:  r.Currency?.toUpperCase() || 'INR',
+        type:      r.Type || '',
+        taBillId:  r.TABillID && r.TABillID !== '0' ? `BILL-${r.TABillID}` : '',
+        narration: String(r.Narration ?? ''),
+        source:    'pms' as const,
+      })),
+      ...advancesInRange.filter(a => !pmsAdvancesInRange.some(
+        r => String(r.TABillID ?? `${r.Date}-${r.Amount}`) === a.reference || a.reference === `BILL-${r.TABillID}`
+      )).map(a => ({
+        key:       a.id,
+        date:      a.date,
+        amount:    a.amount,
+        currency:  a.currency,
+        type:      a.purpose,
+        taBillId:  a.reference,
+        narration: '',
+        source:    'manual' as const,
+      })),
+    ];
 
     // Build ClaimHeader
     const claim: ClaimHeader = {
@@ -2874,6 +4127,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       paymentStatus: 'Unpaid',
       agingDays: 0,
       adminRemark: employeeRemarks || undefined,
+      trainerEmail: currentUser?.email || undefined,
+      advanceItems,
     };
 
     // Build ClaimLineItems
@@ -2882,7 +4137,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     // DA rows
     daRows.filter(r => r.amount > 0).forEach(r => {
       lineItems.push({
-        lineItemId: `LI-DA-${r.iso}`,
+        lineItemId: `LI-DA-${claimId}-${r.iso}`,
         claimId,
         expenseType: 'DA',
         expenseSubType: r.country,
@@ -2920,6 +4175,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         receiptRequired: true,
         receiptUploaded: !!b.receipt,
         exceptionRequired: false,
+        ...(b.receipt ? { receiptFileName: b.receipt } : {}),
+        ...(b.receiptData ? { receiptData: b.receiptData } : {}),
       });
     });
 
@@ -2961,15 +4218,45 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         receiptRequired: true,
         receiptUploaded: !!m.receipt,
         exceptionRequired: false,
+        ...(m.receipt ? { receiptFileName: m.receipt } : {}),
+        ...(m.receiptData ? { receiptData: m.receiptData } : {}),
       });
     });
 
-    saveClaim(claim);
-    saveLineItems(lineItems);
-    setSubmitSuccess(true);
-    setTimeout(() => {
-      navigate('/claims');
-    }, 1800);
+    try {
+      // Await Turso confirmation — claim must be in DB before success is shown
+      // Strip receiptData from the claim-embedded lineItems so the claims row stays
+      // small (base64 images stay only in the line_items table for cross-device access).
+      const lineItemsForClaim = lineItems.map(({ receiptData: _r, ...rest }) => rest);
+      const [claimRes, liRes] = await Promise.all([
+        fetch('/api/turso?type=claims', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim }),
+        }),
+        // Always save to line_items table (full data incl. receiptData) — this is
+        // the authoritative source ClaimDetail fetches for HR Admin cross-device view.
+        fetch('/api/turso?type=lineitems', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ lineItems }),
+        }),
+      ]);
+
+      if (!claimRes.ok) throw new Error('Failed to save claim. Please try again.');
+      if (!liRes.ok) throw new Error('Failed to save line items. Please try again.');
+
+      // Update in-memory cache after confirmed Turso write
+      saveClaim({ ...claim, lineItems });
+      saveLineItems(lineItems);
+
+      setSubmitSuccess(true);
+      setTimeout(() => { navigate('/claims'); }, 1800);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Submission failed. Please check your connection and try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   function addMiscExpense() {
@@ -3007,17 +4294,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const advancesInRange = advances.filter(a => a.date >= fromDate && a.date <= toDate);
   const advanceTotal = advancesInRange.filter(a => a.currency === 'INR').reduce((s, a) => s + a.amount, 0);
 
-  // Filter PMS advance records: advances issued up to 90 days before trip start (pre-trip issuance)
-  // and up to 30 days after trip end, so no advance is missed due to timing
-  const advWindowStart = addDays(fromDate, -90);
-  const advWindowEnd   = addDays(toDate, 30);
+  // Strict filter: only advances whose date falls within the selected date range (Step 1)
   const pmsAdvancesInRange = pmsAdvances.filter(r => {
-    // Skip completely blank rows — must have at least an amount
     if (!r.Amount || Number(r.Amount) === 0) return false;
     const d = parseDT(r.Date);
-    if (d) return d >= advWindowStart && d <= advWindowEnd;
-    // No date — include if it has a real amount
-    return Number(r.Amount) > 0;
+    if (!d) return false;
+    return d >= fromDate && d <= toDate;
   });
 
   function importFlightAsBill(f: FlightRecord) {
@@ -3047,14 +4329,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   function addLodgingEntry() {
     if (!lodgingDraft.hotelName || !lodgingDraft.checkIn || !lodgingDraft.checkOut) return;
     const nights = calcNights(lodgingDraft.checkIn, lodgingDraft.checkOut);
+    const stayType = lodgingDraft.stayType ?? inferStayType(lodgingDraft.hotelName ?? '');
     setLodgingEntries(prev => [...prev, {
       ...lodgingDraft,
       id: uid(),
       nights,
       ratePerNight: lodgingDraft.ratePerNight ?? 0,
+      stayType,
       source: 'manual',
     } as LodgingEntry]);
-    setLodgingDraft({ hotelName: '', city: '', roomNo: '', checkIn: fromDate, checkOut: '', nights: 0, ratePerNight: 0, receipt: '' });
+    setLodgingDraft({ hotelName: '', city: '', roomNo: '', checkIn: fromDate, checkOut: '', nights: 0, ratePerNight: 0, receipt: '', stayType: 'Other' });
   }
 
   function removeLodgingEntry(id: string) {
@@ -3077,6 +4361,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       nights,
       ratePerNight: 0,
       receipt: r.AccommodationPDF ?? '',
+      stayType: inferStayType(r.AccommodationName ?? ''),
       source: 'pms',
     }]);
     setImportedAccom(prev => new Set([...prev, key]));
@@ -3376,6 +4661,18 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                             <th className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">
                               <span className="flex items-center gap-1"><Building2 size={11} />Trainer</span>
                             </th>
+                            <th className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">
+                              <span className="flex items-center gap-1"><Calendar size={11} />SCID</span>
+                            </th>
+                            <th className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">
+                              <span className="flex items-center gap-1"><Building2 size={11} />Participants</span>
+                            </th>
+                            <th className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">
+                              <span className="flex items-center gap-1"><Calendar size={11} />Start Time</span>
+                            </th>
+                            <th className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">
+                              <span className="flex items-center gap-1"><Calendar size={11} />End Time</span>
+                            </th>
                             <th className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Source</th>
                             <th className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Actions</th>
                           </tr>
@@ -3470,13 +4767,9 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                                     </span>
                                   : <span className="text-gray-400 text-[11px]">—</span>}
                               </td>
-                              {/* Country */}
+                              {/* Country — apply city override so London never shows India */}
                               <td className="px-4 py-3 whitespace-nowrap">
-                                {a.country
-                                  ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-medium text-[11px]">
-                                      {a.country}
-                                    </span>
-                                  : <span className="text-gray-400 text-[11px]">—</span>}
+                                {(() => { const effCountry = (a.country === 'India' && a.city) ? (inferCountryFromCity(a.city) || a.country) : (a.country || inferCountryFromCity(a.city)); return effCountry ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-700 font-medium text-[11px]">{effCountry}</span> : <span className="text-gray-400 text-[11px]">—</span>; })()}
                               </td>
                               {/* Training Venue */}
                               <td className="px-4 py-3 max-w-[180px]">
@@ -3488,6 +4781,30 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                               <td className="px-4 py-3 text-gray-700">
                                 <div className="font-medium whitespace-nowrap">{a.trainerName || '—'}</div>
                                 {a.trainerEmail && <div className="text-[10px] text-gray-400">{a.trainerEmail}</div>}
+                              </td>
+                              {/* SCID */}
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                {a.scid
+                                  ? <span className="font-mono text-[11px] text-cyan-700 bg-cyan-50 border border-cyan-100 px-2 py-0.5 rounded">{a.scid}</span>
+                                  : <span className="text-gray-400 text-[11px]">—</span>}
+                              </td>
+                              {/* No. of Participants */}
+                              <td className="px-4 py-3 whitespace-nowrap text-center">
+                                {a.noOfParticipants != null
+                                  ? <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-semibold text-[11px] border border-indigo-100 min-w-[32px]">{a.noOfParticipants}</span>
+                                  : <span className="text-gray-400 text-[11px]">—</span>}
+                              </td>
+                              {/* Start Time */}
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                {a.startTime
+                                  ? <span className="inline-flex items-center px-2 py-0.5 rounded bg-teal-50 border border-teal-200 text-teal-700 font-semibold text-[11px]">{a.startTime}</span>
+                                  : <span className="text-gray-400 text-[11px]">—</span>}
+                              </td>
+                              {/* End Time */}
+                              <td className="px-4 py-3 whitespace-nowrap">
+                                {a.endTime
+                                  ? <span className="inline-flex items-center px-2 py-0.5 rounded bg-orange-50 border border-orange-200 text-orange-700 font-semibold text-[11px]">{a.endTime}</span>
+                                  : <span className="text-gray-400 text-[11px]">—</span>}
                               </td>
                               {/* Source badge */}
                               <td className="px-4 py-3">
@@ -3595,7 +4912,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                         <Calendar size={13} />
                         {pmsLeaves.length} leave record{pmsLeaves.length !== 1 ? 's' : ''} from Koenig PMS
                         <span className="ml-1 px-2 py-0.5 rounded-full bg-orange-200 text-orange-800 text-[10px]">
-                          Approved leaves auto-marked on date grid
+                          All leaves from PMS auto-marked on date grid
                         </span>
                       </div>
                     </div>
@@ -3783,11 +5100,26 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             {/* ── Section 4: DA Eligibility ──────────────────────────────────── */}
             <div className="bg-white border border-gray-200 rounded-xl shadow-sm overflow-hidden">
               <div className="px-5 pt-4 pb-2">
-                <SectionTitle>Step 4 — DA Eligibility &amp; Auto Calculation (As per Policy)</SectionTitle>
+                <SectionTitle>Step 4 — DA Eligibility &amp; Auto Calculation (As per Policy) <span style={{fontSize:'10px',background:'#dcfce7',color:'#166534',padding:'1px 6px',borderRadius:'4px',marginLeft:'6px'}}>v28Jul-F</span></SectionTitle>
                 <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
                   <Info size={11} />
                   DA rate is fetched per day from the assignment country set in Step 2. Set the correct country per assignment to get accurate rates.
                 </p>
+                {(() => {
+                  const delhiNcrDates = lodgingEntries.length === 0
+                    ? null
+                    : lodgingEntries.filter(l => l.stayType === 'Apartment').length;
+                  return (
+                    <p className={`text-xs mt-1.5 flex items-center gap-1 ${lodgingEntries.length > 0 ? 'text-violet-600' : 'text-amber-600'}`}>
+                      <Info size={11} />
+                      {lodgingEntries.length === 0
+                        ? 'Delhi-NCR dates: DA blocked until you add an Apartment stay in Step 6.'
+                        : delhiNcrDates && delhiNcrDates > 0
+                          ? `${delhiNcrDates} apartment stay(s) in Step 6 — Delhi-NCR DA unlocked for covered dates.`
+                          : 'Lodging added in Step 6. Mark stay type as "Apartment" to unlock DA for Delhi-NCR dates.'}
+                    </p>
+                  );
+                })()}
               </div>
 
               {/* Country DA Rate Summary — derived from Step 2 assignments */}
@@ -4172,6 +5504,15 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 )}
               </div>
 
+              {/* DA ↔ Lodging policy link */}
+              <div className="mb-3 flex items-start gap-2 px-3 py-2.5 bg-violet-50 border border-violet-200 rounded-lg text-xs text-violet-800">
+                <Info size={13} className="flex-shrink-0 mt-0.5 text-violet-500" />
+                <span>
+                  <strong>Step 6 → Step 4 (DA):</strong> For <strong>Delhi-NCR</strong> assignments, DA is allowed <em>only</em> when you are staying in an <strong>Apartment</strong> overnight.
+                  Import your PMS stay below and ensure the <strong>Stay Type</strong> is set to <strong>Apartment</strong> — Step 4 will automatically unlock DA for those dates.
+                </span>
+              </div>
+
               {/* API Error */}
               {accomError && (
                 <div className="flex items-start gap-2 mb-3 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
@@ -4415,7 +5756,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                   <table className="min-w-full text-xs divide-y divide-gray-100">
                     <thead className="bg-gray-50">
                       <tr>
-                        {['Hotel / Accommodation', 'City', 'Check-In', 'Check-Out', 'Nights', 'Rate/Night', 'Total', 'Source', 'Invoice', ''].map(h => (
+                        {['Hotel / Accommodation', 'Stay Type', 'City', 'Check-In', 'Check-Out', 'Nights', 'Rate/Night', 'Total', 'Source', 'Invoice', ''].map(h => (
                           <th key={h} className="px-3 py-2 text-left text-gray-500 font-semibold whitespace-nowrap">{h}</th>
                         ))}
                       </tr>
@@ -4426,6 +5767,23 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                           <td className="px-3 py-2.5 font-medium text-gray-800 max-w-[160px]">
                             <div className="truncate">{l.hotelName || '—'}</div>
                             {l.roomNo && <div className="text-[10px] text-gray-400">Room {l.roomNo}</div>}
+                          </td>
+                          <td className="px-3 py-2.5 whitespace-nowrap">
+                            {(() => {
+                              const isApt = isApartmentName(l.hotelName);
+                              const t = isApt ? 'Apartment' : l.stayType ?? inferStayType(l.hotelName);
+                              const cls = isApt ? 'bg-violet-100 text-violet-700 border-violet-200'
+                                : t === 'Hotel'       ? 'bg-blue-100 text-blue-700 border-blue-200'
+                                : t === 'Guest House' ? 'bg-teal-100 text-teal-700 border-teal-200'
+                                : t === 'PG'          ? 'bg-orange-100 text-orange-700 border-orange-200'
+                                : 'bg-gray-100 text-gray-600 border-gray-200';
+                              return (
+                                <>
+                                  <span className={`text-[11px] font-semibold rounded-full px-2 py-0.5 border ${cls}`}>{t}</span>
+                                  {isApt && <div className="text-[9px] text-violet-500 mt-0.5">✓ DA eligible (Delhi-NCR)</div>}
+                                </>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-2.5 text-gray-600 whitespace-nowrap">{l.city || '—'}</td>
                           <td className="px-3 py-2.5 whitespace-nowrap">
@@ -4662,16 +6020,21 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                           value={travelDraft.from || ''}
                           onChange={v => setTravelDraft(p => ({ ...p, from: v, fromLat: undefined, fromLon: undefined, distance: '' }))}
                           onSelect={(name, lat, lon) => {
-                            setTravelDraft(p => {
-                              const toLat = p.toLat, toLon = p.toLon;
-                              const dist = (toLat != null && toLon != null)
-                                ? `${haversineKm(lat, lon, toLat, toLon).toFixed(1)} km` : '';
-                              return { ...p, from: name, fromLat: lat, fromLon: lon, distance: dist };
-                            });
+                            setTravelDraft(p => ({ ...p, from: name, fromLat: lat, fromLon: lon, distance: '' }));
                           }}
                           placeholder="Search pickup location…"
                         />
-                        {travelDraft.journeyType && travelDraft.from && (() => {
+                        {aiExtracting && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] text-purple-600 font-medium animate-pulse">
+                            <Loader2 size={10} className="animate-spin" /> AI reading receipt…
+                          </p>
+                        )}
+                        {!aiExtracting && aiExtracted.from && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] text-purple-600 font-medium">
+                            <Info size={10} /> 🤖 Auto-filled from receipt
+                          </p>
+                        )}
+                        {!aiExtracting && !aiExtracted.from && travelDraft.journeyType && travelDraft.from && (() => {
                           const locs = deriveJourneyLocations(travelDraft.journeyType, travelDraft.date || '', assignments, lodgingEntries, pmsFlights, currentUser?.pmsDetails);
                           return locs.fromSource ? (
                             <p className="mt-1 flex items-center gap-1 text-[10px] text-blue-600 font-medium">
@@ -4690,16 +6053,21 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                           value={travelDraft.to || ''}
                           onChange={v => setTravelDraft(p => ({ ...p, to: v, toLat: undefined, toLon: undefined, distance: '' }))}
                           onSelect={(name, lat, lon) => {
-                            setTravelDraft(p => {
-                              const fromLat = p.fromLat, fromLon = p.fromLon;
-                              const dist = (fromLat != null && fromLon != null)
-                                ? `${haversineKm(fromLat, fromLon, lat, lon).toFixed(1)} km` : '';
-                              return { ...p, to: name, toLat: lat, toLon: lon, distance: dist };
-                            });
+                            setTravelDraft(p => ({ ...p, to: name, toLat: lat, toLon: lon, distance: '' }));
                           }}
                           placeholder="Search destination…"
                         />
-                        {travelDraft.journeyType && travelDraft.to && (() => {
+                        {aiExtracting && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] text-purple-600 font-medium animate-pulse">
+                            <Loader2 size={10} className="animate-spin" /> AI reading receipt…
+                          </p>
+                        )}
+                        {!aiExtracting && aiExtracted.to && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] text-purple-600 font-medium">
+                            <Info size={10} /> 🤖 Auto-filled from receipt
+                          </p>
+                        )}
+                        {!aiExtracting && !aiExtracted.to && travelDraft.journeyType && travelDraft.to && (() => {
                           const locs = deriveJourneyLocations(travelDraft.journeyType, travelDraft.date || '', assignments, lodgingEntries, pmsFlights, currentUser?.pmsDetails);
                           return locs.toSource ? (
                             <p className="mt-1 flex items-center gap-1 text-[10px] text-red-600 font-medium">
@@ -4763,18 +6131,52 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                         <label className="block text-xs text-gray-500 mb-1">Upload Receipt</label>
                         <label className="flex items-center gap-2 px-3 py-2 text-xs border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
                           <Upload size={12} className="text-gray-400" />
-                          <span className="text-gray-500 truncate max-w-[150px]">{travelDraft.receipt || 'Choose File'}</span>
-                          <input type="file" className="hidden" onChange={e => setTravelDraft(p => ({ ...p, receipt: e.target.files?.[0]?.name || '' }))} />
+                          <span className="text-gray-500 truncate max-w-[150px]">{travelDraft.receiptData === '…uploading' ? '⏳ Uploading…' : travelDraft.receipt || 'Choose File'}</span>
+                          <input type="file" accept="image/*,application/pdf" className="hidden" onChange={async e => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setAiExtracted({});
+                            setTravelDraft(p => ({ ...p, receipt: file.name, receiptData: '…uploading' }));
+                            const data = await compressAndEncode(file);
+                            setTravelDraft(p => ({ ...p, receiptData: data }));
+                            // AI extraction — read receipt and auto-fill From/To/Amount
+                            setAiExtracting(true);
+                            try {
+                              const r = await fetch('/api/turso?type=extract', {
+                                method: 'POST',
+                                headers: { 'content-type': 'application/json' },
+                                body: JSON.stringify({ imageData: data, mediaType: file.type }),
+                                signal: AbortSignal.timeout(20000),
+                              });
+                              if (r.ok) {
+                                const ex = await r.json();
+                                const filled: { from?: boolean; to?: boolean; amount?: boolean } = {};
+                                setTravelDraft(p => {
+                                  const next = { ...p };
+                                  if (ex.from)   { next.from   = ex.from;   filled.from   = true; }
+                                  if (ex.to)     { next.to     = ex.to;     filled.to     = true; }
+                                  if (ex.amount && parseFloat(ex.amount) > 0) {
+                                    next.amount   = parseFloat(ex.amount);  filled.amount = true;
+                                  }
+                                  if (ex.currency) next.currency = ex.currency;
+                                  return next;
+                                });
+                                setAiExtracted(filled);
+                              }
+                            } catch { /* silent fail — trainer fills manually */ }
+                            finally { setAiExtracting(false); }
+                          }} />
                         </label>
                       </div>
                       <button type="button" onClick={addTravelBill}
                         disabled={
                           !travelDraft.from || !travelDraft.to || !travelDraft.amount ||
                           !travelDraft.journeyType ||
+                          travelDraft.receiptData === '…uploading' ||
                           (!!travelDraft.journeyType && !!travelDraft.date && validateJourneyType(travelDraft.journeyType, travelDraft.date, assignments).blocked)
                         }
                         className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold mt-4 self-end">
-                        <Plus size={13} /> Add Bill
+                        <Plus size={13} /> {travelDraft.receiptData === '…uploading' ? '⏳ Uploading…' : 'Add Bill'}
                       </button>
                     </div>
                   </div>
@@ -4811,9 +6213,19 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                               {b.distance && <div className="text-gray-400">{b.distance}</div>}
                             </td>
                             <td className="px-3 py-2 font-semibold text-green-700 whitespace-nowrap">
-                              {b.amount > 0
-                                ? <span>{CURRENCIES.find(c => c.code === (b.currency || 'INR'))?.symbol ?? '₹'} {b.amount.toLocaleString('en-IN')}{b.currency && b.currency !== 'INR' ? ` ${b.currency}` : ''}</span>
-                                : <span className="text-amber-500 font-medium text-[11px]">Enter amount</span>}
+                              {b.amount > 0 ? (
+                                <span>
+                                  {CURRENCIES.find(c => c.code === (b.currency || 'INR'))?.symbol ?? '₹'}{' '}
+                                  {b.amount.toLocaleString('en-IN')}{b.currency && b.currency !== 'INR' ? ` ${b.currency}` : ''}
+                                  {b.currency && b.currency !== 'INR' && FX_TO_INR[b.currency] && (
+                                    <span className="block text-[10px] text-gray-400 font-normal">
+                                      ≈ {formatINR(b.amount * FX_TO_INR[b.currency])}
+                                    </span>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="text-amber-500 font-medium text-[11px]">Enter amount</span>
+                              )}
                             </td>
                             <td className="px-3 py-2">
                               {b.receipt
@@ -4892,12 +6304,18 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                       <label className="block text-xs text-gray-500 mb-1">Upload Receipt</label>
                       <label className="flex items-center gap-2 px-3 py-2 text-xs border border-gray-300 rounded-lg cursor-pointer hover:bg-gray-50">
                         <Upload size={12} className="text-gray-400" />
-                        <span className="text-gray-500 truncate max-w-[150px]">{miscDraft.receipt || 'Choose File'}</span>
-                        <input type="file" className="hidden" onChange={e => setMiscDraft(p => ({ ...p, receipt: e.target.files?.[0]?.name || '' }))} />
+                        <span className="text-gray-500 truncate max-w-[150px]">{miscDraft.receiptData === '…uploading' ? '⏳ Uploading…' : miscDraft.receipt || 'Choose File'}</span>
+                        <input type="file" accept="image/*,application/pdf" className="hidden" onChange={async e => {
+                            const file = e.target.files?.[0];
+                            if (!file) return;
+                            setMiscDraft(p => ({ ...p, receipt: file.name, receiptData: '…uploading' }));
+                            const data = await compressAndEncode(file);
+                            setMiscDraft(p => ({ ...p, receiptData: data }));
+                          }} />
                       </label>
                     </div>
                     <button type="button" onClick={addMiscExpense}
-                      disabled={!miscDraft.amount}
+                      disabled={!miscDraft.amount || miscDraft.receiptData === '…uploading'}
                       className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-semibold mt-4 self-end">
                       <Plus size={13} /> Add Expense
                     </button>
@@ -4959,7 +6377,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                     <p className="text-xs text-gray-400 mt-0.5">
                       Advances for EMP-<span className="font-mono">{empCode}</span> within{' '}
                       <span className="font-semibold text-gray-600">{fromDate ? fmt(fromDate) : '—'} → {toDate ? fmt(toDate) : '—'}</span>
-                      {' '}— auto-fetched from PMS &amp; deducted from net payable
+                      {' '}+ 90 days prior — auto-fetched from PMS &amp; deducted from net payable
                     </p>
                   </div>
                   <div className="flex items-center gap-3">
@@ -4996,7 +6414,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                       <table className="min-w-full text-xs divide-y divide-gray-100">
                         <thead className="bg-violet-50">
                           <tr>
-                            {['Advance ID', 'Emp Name', 'Date', 'Amount', 'Currency', 'Purpose', 'Voucher No.', 'Status', ''].map(h => (
+                            {['Advance ID', 'Emp Name', 'Date', 'Amount', 'Currency', 'Purpose', 'TA Bill No.', 'Narration', 'Status', ''].map(h => (
                               <th key={h} className="px-3 py-2.5 text-left text-violet-700 font-semibold whitespace-nowrap">{h}</th>
                             ))}
                           </tr>
@@ -5023,6 +6441,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                                 <td className="px-3 py-2.5 text-gray-600">{r.Currency || 'INR'}</td>
                                 <td className="px-3 py-2.5 text-gray-600 max-w-[180px] truncate">{r.Type || '—'}</td>
                                 <td className="px-3 py-2.5 font-mono text-gray-400 text-[11px]">{r.TABillID && r.TABillID !== '0' ? `BILL-${r.TABillID}` : '—'}</td>
+                                <td className="px-3 py-2.5 text-gray-600 text-[11px] max-w-[180px] truncate" title={r.Narration || ''}>{r.Narration || '—'}</td>
                                 <td className="px-3 py-2.5">
                                   {r.Status ? (
                                     <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
@@ -5183,7 +6602,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       </div>
 
       {/* ── Employee Remarks ───────────────────────────────────────────────────── */}
-      {fetched && (
+      {fetched && !isProxyMode && (
         <div className="max-w-4xl mx-auto px-4 mt-5">
           <div className="bg-white border border-gray-200 rounded-xl shadow-sm p-5">
             <h3 className="text-sm font-bold text-gray-700 flex items-center gap-2 mb-1">
@@ -5212,13 +6631,13 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       )}
 
       {/* ── Step 9: Claim Review & Submit ──────────────────────────────────────── */}
-      {fetched && (
+      {fetched && !isProxyMode && (
         <div className="max-w-4xl mx-auto px-4 pb-40">
           <div className="bg-white border-2 border-blue-200 rounded-2xl shadow-lg overflow-hidden">
             {/* Header */}
             <div className="bg-gradient-to-r from-blue-600 to-blue-700 px-6 py-4">
               <h2 className="text-base font-bold text-white flex items-center gap-2">
-                <CheckCircle2 size={18} /> Step 9 — Claim Review &amp; Submit
+                <CheckCircle2 size={18} /> Step 10 — Claim Review &amp; Submit
               </h2>
               <p className="text-blue-100 text-xs mt-0.5">All steps consolidated — verify before submitting</p>
             </div>
@@ -5243,11 +6662,20 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 <div className="rounded-xl border border-gray-200 p-4 bg-gray-50">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Step 2 — Assignments</p>
                   {assignments.length > 0 ? (
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       {assignments.slice(0, 2).map((a, i) => (
-                        <div key={i} className="flex items-center gap-2">
-                          <CheckCircle2 size={12} className="text-green-500 flex-shrink-0" />
-                          <span className="text-xs text-gray-700 truncate">{a.courseName || a.clientName}</span>
+                        <div key={i} className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 size={12} className="text-green-500 flex-shrink-0" />
+                            <span className="text-xs text-gray-700 truncate">{a.courseName || a.clientName}</span>
+                          </div>
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 ml-5 text-[10px] text-gray-500">
+                            {a.scid && <span>SCID: <span className="font-mono text-cyan-700">{a.scid}</span></span>}
+                            {a.noOfParticipants != null && <span>Pax: <span className="font-semibold text-indigo-700">{a.noOfParticipants}</span></span>}
+                            {(a.startTime || a.endTime) && (
+                              <span>{a.startTime || '—'} – {a.endTime || '—'}</span>
+                            )}
+                          </div>
                         </div>
                       ))}
                       {assignments.length > 2 && (
@@ -5488,9 +6916,15 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                       <p className="text-base font-bold">{formatINR(item.value)}</p>
                     </div>
                   ))}
+                  {advanceTotal > 0 && (
+                    <div>
+                      <p className="text-[10px] opacity-70 uppercase tracking-wider">Advance Taken</p>
+                      <p className="text-base font-bold text-red-300">− {formatINR(advanceTotal)}</p>
+                    </div>
+                  )}
                   <div className="border-l border-blue-400 pl-6">
                     <p className="text-[10px] opacity-70 uppercase tracking-wider">Grand Total (INR)</p>
-                    <p className="text-2xl font-extrabold">{formatINR(grandTotal)}</p>
+                    <p className="text-2xl font-extrabold">{formatINR(Math.max(0, grandTotal - advanceTotal))}</p>
                     {Object.keys(foreignDAMap).length > 0 && (
                       <p className="text-[10px] opacity-75 mt-0.5">
                         Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} {fxSource ? `live · ${fxUpdatedAt ? new Date(fxUpdatedAt).toLocaleDateString('en-IN') : ''}` : 'indicative'}
@@ -5505,10 +6939,10 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                     <Save size={15} /> Save Draft
                   </button>
                   <button type="button" onClick={handleSubmit}
-                    disabled={submitSuccess}
+                    disabled={submitSuccess || isSubmitting}
                     className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-white hover:bg-blue-50 text-blue-700 text-sm font-bold transition-colors shadow disabled:opacity-60">
-                    {submitSuccess ? <CheckCircle2 size={15} className="text-green-600" /> : <Send size={15} />}
-                    {submitSuccess ? 'Submitted!' : 'Submit Claim'}
+                    {submitSuccess ? <CheckCircle2 size={15} className="text-green-600" /> : isSubmitting ? <span className="w-4 h-4 border-2 border-blue-400 border-t-transparent rounded-full animate-spin inline-block" /> : <Send size={15} />}
+                    {submitSuccess ? 'Submitted!' : isSubmitting ? 'Saving...' : 'Submit Claim'}
                   </button>
                 </div>
               </div>
@@ -5543,7 +6977,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       )}
 
       {/* ── Sticky bottom bar ─────────────────────────────────────────────────── */}
-      {fetched && (
+      {fetched && !isProxyMode && (
         <div className="fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 shadow-xl">
           <div className="max-w-6xl mx-auto px-4 py-3 flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2 text-blue-700">
@@ -5576,9 +7010,15 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                   <p className={`text-sm font-bold ${item.color}`}>{formatINR(item.value)}</p>
                 </div>
               ))}
+              {advanceTotal > 0 && (
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase tracking-wide">Advance Taken</p>
+                  <p className="text-sm font-bold text-red-600">− {formatINR(advanceTotal)}</p>
+                </div>
+              )}
               <div className="border-l border-gray-200 pl-4">
                 <p className="text-[10px] text-gray-400 uppercase tracking-wide">Grand Total (INR)</p>
-                <p className="text-lg font-extrabold text-blue-700">{formatINR(grandTotal)}</p>
+                <p className="text-lg font-extrabold text-blue-700">{formatINR(Math.max(0, grandTotal - advanceTotal))}</p>
                 {Object.keys(foreignDAMap).length > 0 && (
                   <p className="text-[10px] text-gray-400 mt-0.5">
                     Incl. {Object.entries(foreignDAMap).map(([c, a]) => `${formatDaCurrency(a, c)} @ ~${FX_TO_INR[c] ?? '?'}₹`).join(' + ')} {fxSource ? `live · ${fxUpdatedAt ? new Date(fxUpdatedAt).toLocaleDateString('en-IN') : ''}` : 'indicative'}
@@ -5597,12 +7037,17 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 <Save size={14} /> Save Draft
               </button>
               <button type="button" onClick={handleSubmit}
-                disabled={submitSuccess}
+                disabled={submitSuccess || isSubmitting}
                 className="flex items-center gap-2 px-5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold transition-colors disabled:opacity-60">
-                {submitSuccess ? <CheckCircle2 size={14} /> : <Send size={14} />}
-                {submitSuccess ? 'Submitted!' : 'Submit Claim'}
+                {submitSuccess ? <CheckCircle2 size={14} /> : isSubmitting ? <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin inline-block" /> : <Send size={14} />}
+                {submitSuccess ? 'Submitted!' : isSubmitting ? 'Saving...' : 'Submit Claim'}
               </button>
             </div>
+            {submitError && (
+              <div className="mt-3 flex items-center gap-2 px-4 py-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+                <span className="font-semibold">Error:</span> {submitError}
+              </div>
+            )}
           </div>
         </div>
       )}

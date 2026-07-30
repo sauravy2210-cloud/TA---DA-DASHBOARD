@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 
 import KpiCard from '../components/KpiCard';
-import { getClaims } from '../services/storageService';
+import { getClaims, refreshClaims } from '../services/storageService';
 import type { User, ClaimHeader } from '../types';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -116,12 +116,14 @@ export default function TrainerDashboard({ currentUser }: TrainerDashboardProps)
   const [myClaims, setMyClaims] = useState<ClaimHeader[]>([]);
 
   useEffect(() => {
-    const all = getClaims();
-    const mine = all.filter(
-      c => c.trainerId === (currentUser?.trainerId || currentUser?.id) ||
-           c.trainerName === trainerName
-    );
-    setMyClaims(mine);
+    refreshClaims().then(() => {
+      const all = getClaims();
+      const mine = all.filter(
+        c => c.trainerId === (currentUser?.trainerId || currentUser?.id) ||
+             c.trainerName === trainerName
+      );
+      setMyClaims(mine);
+    });
   }, [currentUser, trainerName]);
 
   // Upcoming travel state (live API)
