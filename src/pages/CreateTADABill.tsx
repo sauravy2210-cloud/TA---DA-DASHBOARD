@@ -4266,8 +4266,13 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       // Stripped version (no base64) — safe to store in Turso; URLs are tiny.
       const lineItemsForTurso = lineItemsWithUrls.map(li => {
         // If receiptData is still base64 (blob upload failed), strip it from Turso row.
-        const isBase64 = li.receiptData && !li.receiptData.startsWith('http');
-        return isBase64 ? (({ receiptData: _r, ...rest }) => rest)(li) : li;
+        const rd = li.receiptData;
+        const isBase64 = rd && !rd.startsWith('http');
+        if (isBase64) {
+          const { receiptData: _r, ...rest } = li;
+          return rest;
+        }
+        return li;
       });
 
       // Always persist to localStorage immediately — guarantees same-device visibility.
