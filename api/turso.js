@@ -1,17 +1,19 @@
-// Vercel serverless — all Turso DB operations + geocoding + AI extraction in ONE function
+// Vercel serverless — all Turso DB operations + geocoding + AI extraction + receipt upload in ONE function
 // (Hobby plan: max 12 serverless functions)
 //
-// Claims:     GET/POST/DELETE /api/turso?type=claims[&trainerId=x|&id=x]
-// Line Items: GET/POST/DELETE /api/turso?type=lineitems[&claimId=x]
-// Feedback:   GET  /api/turso?type=feedback
-//             POST /api/turso?type=feedback  → save to DB + email saurav.yadav@koenig-solutions.com
-// Extract:    POST /api/turso?type=extract   → AI receipt extraction (Claude vision)
+// Claims:         GET/POST/DELETE /api/turso?type=claims[&trainerId=x|&id=x]
+// Line Items:     GET/POST/DELETE /api/turso?type=lineitems[&claimId=x]
+// Feedback:       GET  /api/turso?type=feedback
+//                 POST /api/turso?type=feedback  → save to DB + email saurav.yadav@koenig-solutions.com
+// Extract:        POST /api/turso?type=extract   → AI receipt extraction (Claude vision)
+// Upload receipt: POST /api/turso?type=upload-receipt → upload base64 to Vercel Blob, return URL
 
-export const config = { api: { bodyParser: { sizeLimit: '6mb' } } };
+export const config = { api: { bodyParser: { sizeLimit: '10mb' } } };
 
 const FEEDBACK_TO = 'saurav.yadav@koenig-solutions.com';
 
 import { createClient } from '@libsql/client/http';
+import { put } from '@vercel/blob';
 
 let _client = null;
 let _tablesReady = false; // only create tables once per warm instance, never on GET paths
@@ -275,6 +277,26 @@ export default async function handler(req, res) {
       } catch (err) {
         return res.status(500).json({ error: 'Email send failed' });
       }
+    }
+  }
+
+  // ── Upload Receipt to Vercel Blob ───────────────────────────────────────────
+  if (type === 'upload-receipt' && req.method === 'POST') {
+    try {
+      const { base64, filename, contentType } = req.body;
+      if (!base64 || !filename) return res.status(400).json({ error: 'Missing base64 or filename' });
+      const raw = base64.replace(/^data:[^;]+;base64,/, '');
+      const buffer = Buffer.from(raw, 'base64');
+      const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `receipts/${Date.now()}_${safeName}`;
+      const blob = await put(path, buffer, {
+        access: 'public',
+        contentType: contentType || 'application/octet-stream',
+        addRandomSuffix: false,
+      });
+      return res.status(200).json({ url: blob.url });
+    } catch (err) {
+      return res.status(500).json({ error: String(err?.message ?? err) });
     }
   }
 

@@ -4245,7 +4245,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           if (!li.receiptData || li.receiptData.startsWith('http')) return li;
           try {
             const contentType = li.receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
-            const res = await fetch('/api/upload-receipt', {
+            const res = await fetch('/api/turso?type=upload-receipt', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
