@@ -317,7 +317,8 @@ export interface ClaimLineItem {
   internalRemark?: string;
   clarificationRequired?: boolean;
   receiptFileName?: string;   // original filename
-  receiptData?: string;       // base64 data URL — stored at submit time so HR Admin can view
+  receiptData?: string;       // base64 data URL or Vercel Blob URL after backfill
+  receiptUrl?: string;        // permanent Vercel Blob URL (set after upload)
 }
 
 export type AttachmentCategory =

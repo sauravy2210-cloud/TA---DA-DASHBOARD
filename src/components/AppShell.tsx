@@ -13,6 +13,7 @@ import {
   saveToStorage,
   STORAGE_KEYS,
 } from '../services/storageService';
+import { backfillReceiptsToBlob } from '../services/receiptBackfill';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -172,6 +173,14 @@ export default function AppShell({
   useEffect(() => {
     refreshNotifications();
   }, [refreshNotifications, location.pathname]);
+
+  // Silently upload any base64 receipts in localStorage to Vercel Blob
+  // so HR Admin can view them from any device (runs once per session, trainer only)
+  useEffect(() => {
+    if (currentUser.role === 'Trainer') {
+      backfillReceiptsToBlob().catch(() => {});
+    }
+  }, [currentUser.role]);
 
   const handleMarkRead = (notifId: string) => {
     markNotificationRead(notifId);
