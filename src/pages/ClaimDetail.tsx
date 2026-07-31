@@ -535,6 +535,8 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [miscEditIdx, setMiscEditIdx] = useState<number | null>(null);
   const [miscEditValues, setMiscEditValues] = useState<{ currency: string; amount: number }>({ currency: 'INR', amount: 0 });
 
+  const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
+
   const [summaryOpen, setSummaryOpen] = useState<Record<string, boolean>>({
     assignment: true, leaves: false, da: false, flights: false, lodging: false, travel: true, misc: true,
   });
@@ -2655,16 +2657,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                               </td>
                                               <td className="px-3 py-2.5 whitespace-nowrap">
                                                 {li.receiptData ? (
-                                                  <a
-                                                    href={li.receiptData}
-                                                    download={li.receiptFileName || 'receipt'}
-                                                    target="_blank"
-                                                    rel="noopener noreferrer"
+                                                  <button
+                                                    onClick={() => setReceiptPreview({ url: li.receiptData!, name: li.receiptFileName || 'receipt' })}
                                                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold hover:bg-blue-100"
                                                     title={li.receiptFileName || 'View receipt'}
                                                   >
                                                     📎 {li.receiptFileName ? li.receiptFileName.length > 14 ? li.receiptFileName.slice(0, 12) + '…' : li.receiptFileName : 'View'}
-                                                  </a>
+                                                  </button>
                                                 ) : li.receiptFileName ? (
                                                   <span className="text-[10px] text-gray-500 truncate max-w-[80px] block" title={li.receiptFileName}>📄 {li.receiptFileName}</span>
                                                 ) : (
@@ -2844,16 +2843,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                             </td>
                                             <td className="px-3 py-2.5 whitespace-nowrap">
                                               {li.receiptData ? (
-                                                <a
-                                                  href={li.receiptData}
-                                                  download={li.receiptFileName || 'receipt'}
-                                                  target="_blank"
-                                                  rel="noopener noreferrer"
+                                                <button
+                                                  onClick={() => setReceiptPreview({ url: li.receiptData!, name: li.receiptFileName || 'receipt' })}
                                                   className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold hover:bg-blue-100"
                                                   title={li.receiptFileName || 'View receipt'}
                                                 >
                                                   📎 {li.receiptFileName ? li.receiptFileName.length > 14 ? li.receiptFileName.slice(0, 12) + '…' : li.receiptFileName : 'View'}
-                                                </a>
+                                                </button>
                                               ) : li.receiptFileName ? (
                                                 <span className="text-[10px] text-gray-500 truncate max-w-[80px] block" title={li.receiptFileName}>📄 {li.receiptFileName}</span>
                                               ) : (
@@ -3132,6 +3128,71 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       {toastMsg && (
         <div className="fixed top-5 right-5 z-50 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-xl max-w-sm animate-fade-in">
           {toastMsg}
+        </div>
+      )}
+
+      {/* ── Receipt Preview Modal ── */}
+      {receiptPreview && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setReceiptPreview(null)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl max-w-3xl w-full mx-4 max-h-[90vh] flex flex-col overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 bg-gray-50 rounded-t-2xl">
+              <span className="text-sm font-semibold text-gray-800 truncate max-w-[80%]" title={receiptPreview.name}>
+                📎 {receiptPreview.name}
+              </span>
+              <div className="flex items-center gap-2">
+                <a
+                  href={receiptPreview.url}
+                  download={receiptPreview.name}
+                  className="text-xs px-3 py-1 rounded-lg bg-indigo-600 text-white font-medium hover:bg-indigo-700"
+                  onClick={e => e.stopPropagation()}
+                >
+                  Download
+                </a>
+                <button
+                  onClick={() => setReceiptPreview(null)}
+                  className="text-gray-400 hover:text-gray-700 transition-colors p-1"
+                >
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+            {/* Content */}
+            <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-gray-100 min-h-[300px]">
+              {receiptPreview.url.startsWith('data:image/') || receiptPreview.url.startsWith('data:application/octet') && /\.(jpg|jpeg|png|gif|webp)$/i.test(receiptPreview.name) ? (
+                <img
+                  src={receiptPreview.url}
+                  alt={receiptPreview.name}
+                  className="max-w-full max-h-[70vh] object-contain rounded shadow"
+                />
+              ) : receiptPreview.url.startsWith('data:application/pdf') || receiptPreview.name.toLowerCase().endsWith('.pdf') ? (
+                <iframe
+                  src={receiptPreview.url}
+                  title={receiptPreview.name}
+                  className="w-full rounded shadow"
+                  style={{ height: '70vh' }}
+                />
+              ) : (
+                <img
+                  src={receiptPreview.url}
+                  alt={receiptPreview.name}
+                  className="max-w-full max-h-[70vh] object-contain rounded shadow"
+                  onError={e => {
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    (e.currentTarget.nextElementSibling as HTMLElement | null)?.removeAttribute('hidden');
+                  }}
+                />
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
