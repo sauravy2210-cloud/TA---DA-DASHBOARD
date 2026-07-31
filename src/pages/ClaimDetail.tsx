@@ -708,43 +708,60 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   }, [claim]);
 
   // ── Fetch flights from PMS, filter to claim date range ───────────────────
+  // Depends on resolvedTrainerEmail so it retries once the email is known —
+  // API 108 (email-based) is more reliable than API 256 (empCode) for some trainers.
   useEffect(() => {
     if (!claim) return;
     const trainerId = String((claim as unknown as { trainerId?: string }).trainerId ?? '');
     const empCode   = trainerId.replace(/^EMP-/i, '').trim();
-    if (!empCode) return;
-    setSummaryFlightsLoading(true);
+    // Need at least one of empCode or email to query
+    if (!empCode && !resolvedTrainerEmail) return;
 
-    // Email is now resolved by its own independent useEffect above.
-    // Flights fetch uses empCode directly; also passes resolvedTrainerEmail if already available.
-    const params = new URLSearchParams({ empCode });
-    if (resolvedTrainerEmail) params.set('email', resolvedTrainerEmail);
+    setSummaryFlightsLoading(true);
+    const params = new URLSearchParams();
+    if (empCode)              params.set('empCode', empCode);
+    if (resolvedTrainerEmail) params.set('email',   resolvedTrainerEmail);
+
     fetch(`/api/flights?${params}`)
       .then(r => r.json())
       .then(d => {
         const all: Record<string, unknown>[] = Array.isArray(d.flights) ? d.flights : [];
-        const start = (claim as unknown as { claimStartDate?: string }).claimStartDate ?? '';
-        const end   = (claim as unknown as { claimEndDate?: string }).claimEndDate ?? '';
-        // widen window by 7 days each side for long international itineraries
-        const from7 = start ? (() => { const x = new Date(start); x.setDate(x.getDate() - 7); return x.toISOString().slice(0, 10); })() : '';
-        const to7   = end   ? (() => { const x = new Date(end);   x.setDate(x.getDate() + 7); return x.toISOString().slice(0, 10); })() : '';
-        const filtered = (from7 || to7)
+
+        // Build date window: ±14 days around claim dates to catch connecting flights
+        const start = (claim as unknown as { claimStartDate?: string }).claimStartDate ??
+                      (claim as unknown as { fromDate?: string }).fromDate ?? '';
+        const end   = (claim as unknown as { claimEndDate?: string }).claimEndDate ??
+                      (claim as unknown as { toDate?: string }).toDate ?? '';
+        const shiftDays = (iso: string, days: number) => {
+          const x = new Date(iso); x.setDate(x.getDate() + days); return x.toISOString().slice(0, 10);
+        };
+        const from14 = start ? shiftDays(start, -14) : '';
+        const to14   = end   ? shiftDays(end,   +14) : '';
+
+        const filtered = (from14 || to14)
           ? all.filter(f => {
               const dep = parseDT(String(f.departure_date ?? ''));
-              if (from7 && dep && dep < from7) return false;
-              if (to7   && dep && dep > to7)   return false;
+              if (!dep) return true; // keep if no date to avoid hiding flights
+              if (from14 && dep < from14) return false;
+              if (to14   && dep > to14)   return false;
               return true;
             })
           : all;
-        setSummaryFlights(filtered.sort((a, b) => {
-          const da = parseDT(String(a.departure_date ?? ''));
-          const db = parseDT(String(b.departure_date ?? ''));
-          return da < db ? -1 : da > db ? 1 : 0;
-        }));
+
+        setSummaryFlights(prev => {
+          // Keep existing results if new fetch returned less (race condition guard)
+          if (filtered.length === 0 && prev.length > 0) return prev;
+          return filtered.sort((a, b) => {
+            const da = parseDT(String(a.departure_date ?? ''));
+            const db = parseDT(String(b.departure_date ?? ''));
+            return da < db ? -1 : da > db ? 1 : 0;
+          });
+        });
       })
-      .catch(() => setSummaryFlights([]))
+      .catch(() => {/* keep existing results on error */})
       .finally(() => setSummaryFlightsLoading(false));
-  }, [claim]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claim, resolvedTrainerEmail]);
 
   // ── Fetch accommodation from PMS, filter to claim date range ─────────────
   useEffect(() => {
