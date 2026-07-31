@@ -668,6 +668,24 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       .catch(() => {});
   }, [claimId, claim]);
 
+  // ── Resolve trainer email from PMS immediately on load (independent, fast) ──
+  // Runs as soon as claim loads — before flights/accommodation fetch — so
+  // resolvedTrainerEmail is ready when HR Admin clicks any action button.
+  useEffect(() => {
+    if (!claim) return;
+    const trainerId = String((claim as unknown as { trainerId?: string }).trainerId ?? '');
+    const empCode = trainerId.replace(/^EMP-/i, '').trim();
+    if (!empCode) return;
+    fetch(`/api/employee?empCode=${encodeURIComponent(empCode)}`)
+      .then(r => r.ok ? r.json() : {})
+      .then((d: Record<string, unknown>) => {
+        const emp = ((d.employee ?? {}) as Record<string, unknown>);
+        const email = String(emp.email_address ?? emp.EmailAddress ?? emp.Email ?? emp.email ?? '').trim();
+        if (email) setResolvedTrainerEmail(email);
+      })
+      .catch(() => {});
+  }, [claim]);
+
   // ── Fetch flights from PMS, filter to claim date range ───────────────────
   useEffect(() => {
     if (!claim) return;
@@ -676,23 +694,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     if (!empCode) return;
     setSummaryFlightsLoading(true);
 
-    // Step 1: resolve trainer email from /api/employee (mirrors Step 5 which uses currentUser.email)
-    const resolveEmail = (): Promise<string> =>
-      fetch(`/api/employee?empCode=${encodeURIComponent(empCode)}`)
-        .then(r => r.json())
-        .then(d => {
-          const emp = d.employee ?? {};
-          return String(emp.email_address ?? emp.EmailAddress ?? emp.Email ?? emp.email ?? '').trim();
-        })
-        .catch(() => '');
-
-    resolveEmail().then(resolvedEmail => {
-      // Store resolved email for use in action notifications
-      if (resolvedEmail) setResolvedTrainerEmail(resolvedEmail);
-      const params = new URLSearchParams({ empCode });
-      if (resolvedEmail) params.set('email', resolvedEmail);
-      return fetch(`/api/flights?${params}`).then(r => r.json());
-    })
+    // Email is now resolved by its own independent useEffect above.
+    // Flights fetch uses empCode directly; also passes resolvedTrainerEmail if already available.
+    const params = new URLSearchParams({ empCode });
+    if (resolvedTrainerEmail) params.set('email', resolvedTrainerEmail);
+    fetch(`/api/flights?${params}`)
+      .then(r => r.json())
       .then(d => {
         const all: Record<string, unknown>[] = Array.isArray(d.flights) ? d.flights : [];
         const start = (claim as unknown as { claimStartDate?: string }).claimStartDate ?? '';
