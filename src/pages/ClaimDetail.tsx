@@ -2,7 +2,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User, ClaimStatus, UserRole, ClaimAdvanceItem } from '../types';
 import { mockClaims, mockStatusHistory } from '../data/mockClaims';
-import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims } from '../services/storageService';
+import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims, getFromStorage } from '../services/storageService';
 import { sendActionEmail } from '../services/emailService';
 import { mapRawToAssignment, fmtAssignmentDate, normalizeLeave, isApprovedLeave, isPendingLeave, isCancelledLeave, parseDT, parseTM, inferCountryFromCity, type ParsedAssignment, type ParsedLeave } from '../lib/assignmentMapper';
 import { useLiveRates, convertToINR } from '../lib/currencyRates';
@@ -34,7 +34,8 @@ type TabId =
   | 'other'
   | 'documents'
   | 'timeline'
-  | 'audit';
+  | 'audit'
+  | 'payment';
 
 const TABS: { id: TabId; label: string }[] = [
   { id: 'overview',   label: 'Overview' },
@@ -536,6 +537,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [miscEditValues, setMiscEditValues] = useState<{ currency: string; amount: number }>({ currency: 'INR', amount: 0 });
 
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
+
+  // Payment record for this claim (loaded from localStorage)
+  const paymentRecord = useMemo(() => {
+    const all = getFromStorage<Array<{
+      paymentId: string; claimId: string; billNumber: string; trainerName: string;
+      paidAmount: number; paymentDate: string; utrReference: string; paymentMode: string;
+      financeRemarks: string; processedBy: string; processedAt: string;
+    }>>('tada_local_payments', []);
+    return all.find(p => p.claimId === claimId) ?? null;
+  }, [claimId]);
 
   const [summaryOpen, setSummaryOpen] = useState<Record<string, boolean>>({
     assignment: true, leaves: false, da: false, flights: false, lodging: false, travel: true, misc: true,
@@ -1297,7 +1308,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       {/* ── Tab navigation ── */}
       <div className="bg-white border-b border-gray-200 px-6">
         <nav className="flex gap-0 overflow-x-auto -mb-px" aria-label="Claim detail tabs">
-          {TABS.map((tab) => (
+          {[
+            ...TABS,
+            ...(claim.status === 'Paid' ? [{ id: 'payment' as TabId, label: '💳 Payment Record' }] : []),
+          ].map((tab) => (
             <button
               key={tab.id}
               type="button"
@@ -3086,6 +3100,125 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 performedAt: h.changedAt,
               }))}
             />
+          </div>
+        )}
+
+        {/* Payment Record */}
+        {activeTab === 'payment' && (
+          <div className="space-y-6">
+            {/* Payment summary card */}
+            <div className="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
+              <div className="flex items-center gap-3 px-6 py-4 bg-emerald-50 border-b border-emerald-100">
+                <span className="text-2xl">💳</span>
+                <div>
+                  <h3 className="text-base font-bold text-emerald-800">Payment Processed</h3>
+                  <p className="text-xs text-emerald-600">Bill {claim.billNo} — {claim.trainerName}</p>
+                </div>
+                <span className="ml-auto px-3 py-1 rounded-full bg-emerald-600 text-white text-xs font-bold">PAID</span>
+              </div>
+              {paymentRecord ? (
+                <div className="p-6">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-5">
+                    {[
+                      { label: 'Paid Amount',    value: `${claim.currency === 'AED' ? 'AED' : '₹'} ${paymentRecord.paidAmount.toLocaleString('en-IN')}`, highlight: true },
+                      { label: 'Payment Date',   value: new Date(paymentRecord.paymentDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) },
+                      { label: 'Payment Mode',   value: paymentRecord.paymentMode },
+                      { label: 'UTR / Reference',value: paymentRecord.utrReference, mono: true },
+                      { label: 'Processed By',   value: paymentRecord.processedBy },
+                      { label: 'Processed At',   value: new Date(paymentRecord.processedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) },
+                    ].map(f => (
+                      <div key={f.label} className={`rounded-lg px-4 py-3 ${f.highlight ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50 border border-gray-100'}`}>
+                        <p className="text-[11px] text-gray-500 font-medium mb-0.5">{f.label}</p>
+                        <p className={`font-bold text-sm ${f.highlight ? 'text-emerald-700 text-lg' : 'text-gray-800'} ${f.mono ? 'font-mono' : ''}`}>{f.value || '—'}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {paymentRecord.financeRemarks && (
+                    <div className="mt-4 rounded-lg bg-amber-50 border border-amber-100 px-4 py-3">
+                      <p className="text-xs font-semibold text-amber-700 mb-1">Finance Remarks</p>
+                      <p className="text-sm text-gray-700">{paymentRecord.financeRemarks}</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="px-6 py-8 text-center text-sm text-gray-400">
+                  <p>Payment record not available on this device.</p>
+                  <p className="text-xs mt-1 text-gray-300">Payment was processed from a different browser/device. Check the Payment Processing page for details.</p>
+                </div>
+              )}
+            </div>
+
+            {/* HR Actions taken on this claim */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 bg-gray-50 border-b border-gray-100">
+                <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">📋 HR Actions History</h3>
+                <p className="text-xs text-gray-400 mt-0.5">All actions taken by HR Admin on this bill</p>
+              </div>
+              <div className="p-5">
+                {claimHistory.length === 0 ? (
+                  <p className="text-sm text-gray-400 text-center py-4">No status history available.</p>
+                ) : (
+                  <ol className="relative border-l-2 border-gray-200 ml-3 space-y-6">
+                    {[...claimHistory].reverse().map((h, i) => {
+                      const isPayment = h.toStatus === 'Paid';
+                      const isApproved = h.toStatus === 'Approved' || h.toStatus === 'Partially Approved';
+                      const isReject = h.toStatus === 'Rejected';
+                      const color = isPayment ? 'bg-emerald-500' : isApproved ? 'bg-blue-500' : isReject ? 'bg-red-500' : 'bg-gray-400';
+                      return (
+                        <li key={i} className="ml-6">
+                          <span className={`absolute -left-[9px] flex h-4 w-4 items-center justify-center rounded-full ${color} ring-2 ring-white`} />
+                          <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
+                                isPayment ? 'bg-emerald-100 text-emerald-700' :
+                                isApproved ? 'bg-blue-100 text-blue-700' :
+                                isReject ? 'bg-red-100 text-red-700' :
+                                'bg-gray-100 text-gray-600'
+                              }`}>
+                                {h.fromStatus ? `${h.fromStatus} → ${h.toStatus}` : h.toStatus}
+                              </span>
+                              <span className="text-[11px] text-gray-400">
+                                {h.changedAt ? new Date(h.changedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}
+                              </span>
+                            </div>
+                            {h.changedBy && (
+                              <p className="mt-1.5 text-xs text-gray-600">
+                                <span className="font-medium">By:</span> {h.changedBy} {h.changedByRole ? `(${h.changedByRole})` : ''}
+                              </p>
+                            )}
+                            {h.remarks && (
+                              <p className="mt-1 text-xs text-gray-500 italic">"{h.remarks}"</p>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                )}
+              </div>
+            </div>
+
+            {/* Claim financial summary */}
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-6 py-4 bg-gray-50 border-b border-gray-100">
+                <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">💰 Financial Summary</h3>
+              </div>
+              <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
+                {[
+                  { label: 'Total Claimed',    value: claim.totalClaimedAmount ?? 0, color: 'text-gray-800' },
+                  { label: 'Approved Amount',  value: claim.approvedAmount ?? 0,     color: 'text-blue-700' },
+                  { label: 'Advance Adjusted', value: claim.advanceAdjusted ?? 0,    color: 'text-amber-600' },
+                  { label: 'Net Paid',         value: paymentRecord?.paidAmount ?? (claim.approvedAmount ?? 0) - (claim.advanceAdjusted ?? 0), color: 'text-emerald-700' },
+                ].map(f => (
+                  <div key={f.label} className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 text-center">
+                    <p className="text-[11px] text-gray-400 mb-1">{f.label}</p>
+                    <p className={`font-bold text-base ${f.color}`}>
+                      {claim.currency === 'AED' ? 'AED' : '₹'} {f.value.toLocaleString('en-IN')}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </div>

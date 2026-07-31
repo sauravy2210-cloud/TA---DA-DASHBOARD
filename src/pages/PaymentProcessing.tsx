@@ -1,4 +1,5 @@
 ﻿import { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import type { User, ClaimHeader } from '../types';
 import { exportPaymentSheet } from '../services/exportEngine';
 import { downloadKoenigFile, buildKoenigFileBase64 } from '../services/koenigExport';
@@ -122,6 +123,7 @@ const STATUS_COLORS: Record<string, string> = {
 };
 
 export default function PaymentProcessing({ currentUser }: PaymentProcessingProps) {
+  const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -529,7 +531,15 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                 const isEditingBank = bankEditId === claim.claimId;
                 return (
                   <tr key={claim.claimId} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3 font-mono text-xs font-medium text-indigo-700">{claim.billNo}</td>
+                    <td className="px-4 py-3">
+                      <button
+                        onClick={() => navigate(`/claims/${claim.claimId}`)}
+                        className="font-mono text-xs font-bold text-indigo-700 hover:text-indigo-900 hover:underline underline-offset-2 transition-colors"
+                        title="View full claim detail"
+                      >
+                        {claim.billNo}
+                      </button>
+                    </td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-900">{claim.trainerName}</div>
                     </td>
