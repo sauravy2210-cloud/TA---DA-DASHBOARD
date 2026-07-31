@@ -4280,7 +4280,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       saveLineItems(lineItemsWithUrls);
 
       // Write claim to Turso (required — abort if this fails).
-      const lineItemsForClaim = lineItemsForTurso.map(({ receiptData: _r, ...rest }) => rest);
+      // Cast needed because lineItemsForTurso is a union after conditional receiptData strip.
+      const lineItemsForClaim = (lineItemsForTurso as import('../types').ClaimLineItem[]).map(({ receiptData: _r, ...rest }) => rest);
       const claimRes = await fetch('/api/turso?type=claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
