@@ -4060,6 +4060,19 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   async function handleSubmit() {
     const stillUploading = travelBills.some(b => b.receiptData === '…uploading') || miscExpenses.some(m => m.receiptData === '…uploading');
     if (stillUploading) { setSubmitError('Please wait — file attachments are still uploading.'); return; }
+
+    // Strict receipt enforcement — block submission if ANY travel bill or misc expense is missing a receipt
+    const travelMissingReceipt = travelBills.filter(b => !b.receiptData || b.receiptData === '…uploading');
+    const miscMissingReceipt = miscExpenses.filter(m => !m.receiptData || m.receiptData === '…uploading');
+    if (travelMissingReceipt.length > 0) {
+      setSubmitError(`Receipt is mandatory: ${travelMissingReceipt.length} travel bill(s) are missing a receipt. Please remove them and re-add with a receipt attached.`);
+      return;
+    }
+    if (miscMissingReceipt.length > 0) {
+      setSubmitError(`Receipt is mandatory: ${miscMissingReceipt.length} miscellaneous expense(s) are missing a receipt. Please remove them and re-add with a receipt attached.`);
+      return;
+    }
+
     setIsSubmitting(true);
     setSubmitError('');
     const now = new Date().toISOString();
