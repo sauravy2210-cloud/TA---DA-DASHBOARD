@@ -617,7 +617,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
           <table className="min-w-full divide-y divide-gray-100 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {['Bill No', 'Trainer', 'Batch / Assignment', 'Client', 'Approved Amt', 'Advance', 'Misc', 'Recoverable', 'Net Payable', 'Currency', 'Status', 'Bank Name', 'Account No.', 'IFSC', 'Bank Edit', 'Pay', 'Payment Date', 'UTR', 'Payment Status', 'Action'].map((h) => (
+                {['Bill No', 'Trainer', 'Batch / Assignment', 'Client', 'Approved Amt', 'Advance', 'Misc', 'Recoverable', 'Net Payable', 'Currency', 'Status', 'Bank Name', 'Account No.', 'IFSC', 'Bank Edit', 'Payment Date', 'Payment Status'].map((h) => (
                   <th key={h} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                     {h}
                   </th>
@@ -752,31 +752,11 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                         </div>
                       )}
                     </td>
-                    <td className="px-4 py-3">
-                      {paid ? (
-                        <span className="text-xs text-green-600 font-medium">✓ Done</span>
-                      ) : (
-                        <button
-                          onClick={() => openModal(claim)}
-                          className="inline-flex items-center gap-1 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition-colors shadow-sm"
-                        >
-                          💳 Pay
-                        </button>
-                      )}
-                    </td>
+                    {/* Payment Date */}
                     <td className="px-4 py-3 text-xs text-gray-700">
                       {rec ? fmtDate(rec.paymentDate) : '—'}
                     </td>
-                    <td className="px-4 py-3">
-                      {rec ? (
-                        <span className="font-mono text-xs text-green-700 bg-green-50 rounded px-2 py-0.5 border border-green-200">
-                          {rec.utrReference}
-                        </span>
-                      ) : (
-                        <span className="text-xs text-gray-400">—</span>
-                      )}
-                    </td>
-                    {/* Payment Status column */}
+                    {/* Payment Status — HR Admin can update directly */}
                     <td className="px-4 py-3">
                       {paid ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-semibold text-green-700 border border-green-200">
@@ -788,31 +768,13 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                       ) : (
                         <button
                           onClick={() => openModal(claim)}
-                          title="Click to mark as Paid"
-                          className="inline-flex items-center gap-1 rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-600 border border-red-200 hover:bg-red-200 hover:border-red-400 transition-colors cursor-pointer"
+                          title="Click to update payment status to Paid"
+                          className="inline-flex items-center gap-1.5 rounded-full bg-orange-50 px-3 py-1 text-xs font-semibold text-orange-600 border border-orange-300 hover:bg-orange-100 hover:border-orange-400 transition-colors cursor-pointer"
                         >
                           <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
                             <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-11a1 1 0 10-2 0v4a1 1 0 102 0V7zm0 6a1 1 0 10-2 0 1 1 0 002 0z" clipRule="evenodd" />
                           </svg>
-                          Unpaid ↗
-                        </button>
-                      )}
-                    </td>
-                    {/* Action column */}
-                    <td className="px-4 py-3">
-                      {paid ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-3 py-1 text-xs font-medium text-green-700 border border-green-200">
-                          <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                          </svg>
-                          Paid
-                        </span>
-                      ) : (
-                        <button
-                          onClick={() => openModal(claim)}
-                          className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 transition-colors shadow-sm"
-                        >
-                          Mark as Paid
+                          Not Paid — Update
                         </button>
                       )}
                     </td>
