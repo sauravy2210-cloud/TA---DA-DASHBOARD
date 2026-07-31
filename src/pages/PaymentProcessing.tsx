@@ -320,7 +320,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
     setClaimsVersion(v => v + 1);
   }
 
-  function openModal(claim: ClaimHeader) {
+  function _openModal(claim: ClaimHeader) {
     setSelectedClaim(claim);
     setForm({ ...EMPTY_FORM, paidAmount: String(computeNetPayable(claim)) });
     setFormErrors({});
