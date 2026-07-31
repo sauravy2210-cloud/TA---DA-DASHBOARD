@@ -2997,22 +2997,25 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {claimAttachments.map(li => {
                   const fileName = li.receiptFileName || `${li.expenseType}-receipt`;
-                  const isImage = li.receiptData && (li.receiptData.startsWith('data:image') || /\.(jpg|jpeg|png|gif|webp)/i.test(fileName));
-                  const isPdf = li.receiptData && (li.receiptData.startsWith('data:application/pdf') || /\.pdf$/i.test(fileName));
+                  const src = li.receiptData; // may be blob URL or base64
+                  const isUrl = src && src.startsWith('http');
+                  const isPdf = src && (src.startsWith('data:application/pdf') || /\.pdf$/i.test(fileName));
+                  const isImage = src && !isPdf && (isUrl || src.startsWith('data:image') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(fileName));
                   const expLabel = li.expenseType === 'TA' ? 'Travel' : li.expenseType === 'Other' ? 'Misc' : li.expenseType;
                   return (
                     <div key={li.lineItemId} className="border border-gray-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow bg-white">
-                      {/* Preview area */}
-                      <div className="w-full h-44 bg-gray-50 flex items-center justify-center overflow-hidden border-b border-gray-100">
-                        {isImage && li.receiptData ? (
-                          <a href={li.receiptData} target="_blank" rel="noopener noreferrer" className="w-full h-full">
-                            <img src={li.receiptData} alt={fileName} className="w-full h-full object-contain" />
-                          </a>
-                        ) : isPdf && li.receiptData ? (
-                          <a href={li.receiptData} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center gap-2 text-red-500 hover:text-red-700">
+                      {/* Preview area — clicking opens the preview modal */}
+                      <div
+                        className={`w-full h-44 bg-gray-50 flex items-center justify-center overflow-hidden border-b border-gray-100 ${src ? 'cursor-pointer' : ''}`}
+                        onClick={() => src && setReceiptPreview({ url: src, name: fileName })}
+                      >
+                        {isImage && src ? (
+                          <img src={src} alt={fileName} className="w-full h-full object-contain" />
+                        ) : isPdf && src ? (
+                          <div className="flex flex-col items-center gap-2 text-red-500">
                             <svg xmlns="http://www.w3.org/2000/svg" className="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
-                            <span className="text-xs font-medium">View PDF</span>
-                          </a>
+                            <span className="text-xs font-medium">Click to view PDF</span>
+                          </div>
                         ) : li.receiptUploaded ? (
                           <div className="flex flex-col items-center gap-2 text-gray-400">
                             <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
@@ -3032,13 +3035,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                         <div className="flex items-center justify-between mt-2">
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-50 text-blue-700">{expLabel}</span>
                           <span className="text-[10px] text-gray-400">{li.date}</span>
-                          {li.receiptData && (
+                          {src && (
                             <a
-                              href={li.receiptData}
-                              download={fileName}
+                              href={src}
+                              download={isUrl ? undefined : fileName}
+                              target={isUrl ? '_blank' : undefined}
+                              rel="noopener noreferrer"
                               className="text-[10px] text-blue-600 hover:underline font-medium"
                             >
-                              Download
+                              {isUrl ? 'Open' : 'Download'}
                             </a>
                           )}
                         </div>
@@ -3175,30 +3180,23 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             </div>
             {/* Content */}
             <div className="flex-1 overflow-auto flex items-center justify-center p-4 bg-gray-100 min-h-[300px]">
-              {receiptPreview.url.startsWith('data:image/') || receiptPreview.url.startsWith('data:application/octet') && /\.(jpg|jpeg|png|gif|webp)$/i.test(receiptPreview.name) ? (
-                <img
-                  src={receiptPreview.url}
-                  alt={receiptPreview.name}
-                  className="max-w-full max-h-[70vh] object-contain rounded shadow"
-                />
-              ) : receiptPreview.url.startsWith('data:application/pdf') || receiptPreview.name.toLowerCase().endsWith('.pdf') ? (
-                <iframe
-                  src={receiptPreview.url}
-                  title={receiptPreview.name}
-                  className="w-full rounded shadow"
-                  style={{ height: '70vh' }}
-                />
-              ) : (
-                <img
-                  src={receiptPreview.url}
-                  alt={receiptPreview.name}
-                  className="max-w-full max-h-[70vh] object-contain rounded shadow"
-                  onError={e => {
-                    (e.currentTarget as HTMLImageElement).style.display = 'none';
-                    (e.currentTarget.nextElementSibling as HTMLElement | null)?.removeAttribute('hidden');
-                  }}
-                />
-              )}
+              {(() => {
+                const url = receiptPreview.url;
+                const name = receiptPreview.name.toLowerCase();
+                const isPdf = url.startsWith('data:application/pdf') || name.endsWith('.pdf');
+                const isImg = url.startsWith('data:image/') ||
+                  /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(name) ||
+                  (!isPdf && !url.startsWith('data:'));
+                if (isPdf) return (
+                  <iframe src={url} title={receiptPreview.name} className="w-full rounded shadow" style={{ height: '70vh' }} />
+                );
+                if (isImg) return (
+                  <img src={url} alt={receiptPreview.name} className="max-w-full max-h-[70vh] object-contain rounded shadow" />
+                );
+                return (
+                  <img src={url} alt={receiptPreview.name} className="max-w-full max-h-[70vh] object-contain rounded shadow" />
+                );
+              })()}
             </div>
           </div>
         </div>

@@ -4238,17 +4238,44 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     });
 
     try {
-      // Strip receiptData from the claim-embedded lineItems so the claims row stays small.
-      const lineItemsForClaim = lineItems.map(({ receiptData: _r, ...rest }) => rest);
-      // Stripped version (no receiptData) — used as Turso fallback if full write is too large.
-      const lineItemsStripped = lineItems.map(({ receiptData: _r, ...rest }) => rest);
+      // ── Upload each receipt to Vercel Blob for permanent cross-device access ──
+      // Replaces base64 receiptData with a public URL so HR Admin sees receipts on any device.
+      const lineItemsWithUrls = await Promise.all(
+        lineItems.map(async li => {
+          if (!li.receiptData || li.receiptData.startsWith('http')) return li;
+          try {
+            const contentType = li.receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
+            const res = await fetch('/api/upload-receipt', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                base64: li.receiptData,
+                filename: li.receiptFileName || `receipt_${li.lineItemId}`,
+                contentType,
+              }),
+            });
+            if (res.ok) {
+              const { url } = await res.json() as { url: string };
+              return { ...li, receiptData: url, receiptUrl: url };
+            }
+          } catch { /* silent — keep base64 as fallback */ }
+          return li;
+        })
+      );
 
-      // Always persist to localStorage immediately — guarantees same-device visibility
-      // regardless of network outcome.
-      saveClaim({ ...claim, lineItems });
-      saveLineItems(lineItems);
+      // Stripped version (no base64) — safe to store in Turso; URLs are tiny.
+      const lineItemsForTurso = lineItemsWithUrls.map(li => {
+        // If receiptData is still base64 (blob upload failed), strip it from Turso row.
+        const isBase64 = li.receiptData && !li.receiptData.startsWith('http');
+        return isBase64 ? (({ receiptData: _r, ...rest }) => rest)(li) : li;
+      });
+
+      // Always persist to localStorage immediately — guarantees same-device visibility.
+      saveClaim({ ...claim, lineItems: lineItemsWithUrls });
+      saveLineItems(lineItemsWithUrls);
 
       // Write claim to Turso (required — abort if this fails).
+      const lineItemsForClaim = lineItemsForTurso.map(({ receiptData: _r, ...rest }) => rest);
       const claimRes = await fetch('/api/turso?type=claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4256,23 +4283,13 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       });
       if (!claimRes.ok) throw new Error('Failed to save claim. Please try again.');
 
-      // Write line items to Turso with full receiptData so HR Admin sees attachments.
-      // If the payload is too large (e.g. PDF receipts), fall back to metadata-only write
-      // so bill details always reach HR Admin even if images can't be stored cross-device.
-      if (lineItems.length > 0) {
-        const liRes = await fetch('/api/turso?type=lineitems', {
+      // Write line items to Turso — receipts are now URLs so rows stay small.
+      if (lineItemsForTurso.length > 0) {
+        await fetch('/api/turso?type=lineitems', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lineItems }),
+          body: JSON.stringify({ lineItems: lineItemsForTurso }),
         });
-        if (!liRes.ok) {
-          // Fallback: retry without receiptData so bill metadata always reaches Turso.
-          await fetch('/api/turso?type=lineitems', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lineItems: lineItemsStripped }),
-          });
-        }
       }
 
       setSubmitSuccess(true);
