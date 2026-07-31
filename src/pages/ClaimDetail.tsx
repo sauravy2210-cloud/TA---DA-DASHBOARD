@@ -662,8 +662,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         if (!Array.isArray(d.lineItems)) return;
         setClaimLineItems(prev => {
           const map = new Map(prev.map((li: ClaimLineItem) => [li.lineItemId, li]));
-          // Turso unconditionally wins for same ID (full authoritative data)
-          d.lineItems.forEach((li: ClaimLineItem) => map.set(li.lineItemId, li));
+          // Turso wins for all fields except receiptData — if Turso stripped the
+          // receipt (fallback due to payload size), keep the locally-cached version.
+          d.lineItems.forEach((li: ClaimLineItem) => {
+            const existing = map.get(li.lineItemId);
+            map.set(li.lineItemId, {
+              ...li,
+              receiptData: li.receiptData || existing?.receiptData,
+              receiptFileName: li.receiptFileName || existing?.receiptFileName,
+            });
+          });
           return Array.from(map.values());
         });
       })
