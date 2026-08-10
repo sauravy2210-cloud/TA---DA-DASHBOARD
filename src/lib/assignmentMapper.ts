@@ -453,11 +453,24 @@ export function mapRawToAssignment(r: Record<string, unknown>): ParsedAssignment
     'DateTo', 'date_to', 'BatchTo', 'AssignmentTo',
   );
 
-  const rawTrainingDates = pickStr(r, 'training_dates', 'TrainingDates');
+  const rawTrainingDates = pickStr(r, 'training_dates', 'TrainingDates', 'BatchDates', 'batch_dates', 'AssignmentDates', 'assignment_dates');
   if (!startDate || !endDate) {
     const parsed = parseTrainingDates(rawTrainingDates || null);
     if (!startDate && parsed.startDate) startDate = parsed.startDate;
     if (!endDate   && parsed.endDate)   endDate   = parsed.endDate;
+  }
+
+  // Last-resort scan: look for any record field whose name contains start/from/end/to
+  // and whose value parses as a date in the 2020-2030 window.
+  if (!startDate || !endDate) {
+    for (const [key, val] of Object.entries(r)) {
+      if (!val || typeof val !== 'string') continue;
+      const parsed = parseApiDate(val);
+      if (!parsed || !/^20[2-3]\d-/.test(parsed)) continue;
+      const lk = key.toLowerCase();
+      if (!startDate && (lk.includes('start') || lk.includes('from') || lk === 'begindate' || lk === 'begin_date')) startDate = parsed;
+      if (!endDate   && (lk.includes('end')   || lk.includes('to')   || lk === 'finishdate' || lk === 'finish_date' || lk === 'close_date')) endDate = parsed;
+    }
   }
 
   const scid           = r.SCID != null ? String(r.SCID) : pickStr(r, 'scid', 'Scid');
@@ -472,7 +485,10 @@ export function mapRawToAssignment(r: Record<string, unknown>): ParsedAssignment
     city, country, trainingVenue,
     trainerName, trainerEmail, manager, totalPax,
     scid, noOfParticipants, startTime, endTime,
-    trainingDates: rawTrainingDates || null,
+    // trainingDates non-null = suppress "inferred" badge in UI.
+    // Use raw string if present; otherwise synthesize from parsed dates so badge
+    // only shows when ALL date sources failed and we truly fell back to claim range.
+    trainingDates: rawTrainingDates || (startDate ? `${startDate} to ${endDate || startDate}` : null),
   };
 }
 

@@ -61,7 +61,7 @@ export async function fetchLiveRates(): Promise<Record<string, number>> {
 export function convertToINR(amount: number, fromCurrency: string, rates: Record<string, number>): number {
   if (!amount || amount === 0) return 0;
   const cur = (fromCurrency ?? 'INR').toUpperCase();
-  if (cur === 'INR') return Math.round(amount);
+  if (cur === 'INR') return amount;
   const inrPerUsd = rates['INR'] ?? FALLBACK_RATES['INR'] ?? 84;
   const curPerUsd = rates[cur] ?? FALLBACK_RATES[cur] ?? 84;
   // amount / curPerUsd = USD; USD * inrPerUsd = INR

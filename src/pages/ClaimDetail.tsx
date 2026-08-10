@@ -2,7 +2,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User, ClaimStatus, UserRole, ClaimAdvanceItem } from '../types';
 import { mockClaims, mockStatusHistory } from '../data/mockClaims';
-import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims, getFromStorage } from '../services/storageService';
+import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims, getFromStorage, getPaidDADates } from '../services/storageService';
 import { sendActionEmail } from '../services/emailService';
 import { mapRawToAssignment, fmtAssignmentDate, normalizeLeave, isApprovedLeave, isPendingLeave, isCancelledLeave, parseDT, parseTM, inferCountryFromCity, type ParsedAssignment, type ParsedLeave } from '../lib/assignmentMapper';
 import { useLiveRates, convertToINR } from '../lib/currencyRates';
@@ -141,6 +141,14 @@ const FX_TO_INR: Record<string, number> = {
 };
 
 // FX_TO_INR kept as static fallback; live conversion done via useLiveRates() + convertToINR() inside the component
+
+// Delhi-NCR cities where DA is not applicable unless trainer stays in an apartment
+const DELHI_NCR_CITIES = new Set([
+  'delhi', 'new delhi', 'noida', 'greater noida', 'gurgaon', 'gurugram',
+  'faridabad', 'ghaziabad', 'manesar', 'bahadurgarh', 'sonipat', 'rohtak',
+  'dwarka', 'south delhi', 'north delhi', 'east delhi', 'west delhi',
+  'central delhi', 'delhi ncr', 'ncr', 'ncr delhi',
+]);
 
 function StatusBadge({ status }: { status: string }) {
   const cls = STATUS_COLORS[status.toUpperCase()] ?? 'bg-gray-100 text-gray-600';
@@ -510,6 +518,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [summaryLeaves, setSummaryLeaves] = useState<ParsedLeave[]>([]);
   const [summaryLeavesLoading, setSummaryLeavesLoading] = useState(false);
   const [summaryAssignments, setSummaryAssignments] = useState<ParsedAssignment[]>([]);
+  const [allNearbyAssignments, setAllNearbyAssignments] = useState<ParsedAssignment[]>([]); // full ±30-day window for DA adjacent-assignment logic
   const [summaryAssignmentsLoading, setSummaryAssignmentsLoading] = useState(false);
   const [summaryFlights, setSummaryFlights] = useState<Record<string, unknown>[]>([]);
   const [summaryFlightsLoading, setSummaryFlightsLoading] = useState(false);
@@ -848,6 +857,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       .then(r => r.json())
       .then(d => {
         const all: Record<string, unknown>[] = Array.isArray(d.assignments) ? d.assignments : [];
+        // All nearby assignments in the ±30-day window — used for prevAsgn/nextAsgn DA logic
+        setAllNearbyAssignments(all.map(a => mapRawToAssignment(a as Record<string, unknown>)));
+        // Only the current claim's assignments — used for display
         const matched = assignmentIds.length > 0
           ? all.filter(a => assignmentIds.includes(String((a as Record<string,unknown>).AssignmentId ?? '')))
           : all;
@@ -857,9 +869,93 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       .finally(() => setSummaryAssignmentsLoading(false));
   }, [claim]);
 
+  // ── Consecutive-assignment enrichment ────────────────────────────────────
+  // When a trainer has back-to-back assignments at the same international destination
+  // (e.g. Dubai batch 1 → Dubai batch 2) with no return flight in between,
+  // the 2nd assignment may have no city/country in PMS data. Inherit from previous.
+  const enrichedSummaryAssignments = useMemo<ParsedAssignment[]>(() => {
+    if (summaryAssignments.length === 0) return summaryAssignments;
+    const activeFlights = summaryFlights.filter(f => f.Is_cancelled !== 'Yes');
+    const addD = (iso: string, n: number) => { if (!iso) return ''; const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const parseDTLocal = (s: string | null | undefined): string => { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10); };
+    const sorted = summaryAssignments.slice().sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1);
+    return sorted.map((asgn, idx) => {
+      if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
+      if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+      if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India), never enrich
+      const prevIntl = sorted.slice(0, idx)
+        .filter(a => a.country && a.country !== 'India')
+        .sort((a, b) => (b.endDate || '') > (a.endDate || '') ? 1 : -1)[0] ?? null;
+      if (!prevIntl?.endDate) return asgn;
+      const curStart = asgn.startDate || addD(prevIntl.endDate, 1);
+      const returnToIndia = activeFlights.find(f => {
+        const fd = parseDTLocal(String(f.departure_date ?? ''));
+        if (!fd || fd < prevIntl.endDate! || fd > addD(curStart, 1)) return false;
+        const toC = inferCountryFromCity(String(f.to_city ?? '').trim());
+        return toC === 'India';
+      });
+      if (returnToIndia) return asgn;
+      return {
+        ...asgn,
+        city: asgn.city || prevIntl.city || '',
+        country: prevIntl.country,
+        trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
+      };
+    });
+  }, [summaryAssignments, summaryFlights]);
+
+  // ── Enriched nearby assignments — same two-pass logic applied to the full ±30-day window ──
+  // Needed so prevAsgn/nextAsgn country checks in correctedDaItems see the correct international country.
+  const enrichedNearbyAssignments = useMemo<ParsedAssignment[]>(() => {
+    if (allNearbyAssignments.length === 0) return allNearbyAssignments;
+    const activeFlights = summaryFlights.filter(f => f.Is_cancelled !== 'Yes');
+    const addD = (iso: string, n: number) => { if (!iso) return ''; const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+    const parseDTLocal = (s: string | null | undefined): string => { if (!s) return ''; const d = new Date(s); return isNaN(d.getTime()) ? '' : d.toISOString().slice(0, 10); };
+    // Pass 1: flight-based city/country enrichment (offline/field assignments only — ILO stays India)
+    const flight1Pass = allNearbyAssignments.map(asgn => {
+      if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
+      if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+      if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India), never enrich
+      const start = asgn.startDate || '';
+      const outFlight = activeFlights.find(f => {
+        const fd = parseDTLocal(String(f.departure_date ?? ''));
+        return fd ? fd >= addD(start, -2) && fd <= addD(start, 2) : false;
+      });
+      const toCity = outFlight ? String(outFlight.to_city ?? '').trim() : '';
+      const inferred = toCity ? inferCountryFromCity(toCity) : '';
+      if (!inferred || inferred === 'India') return asgn;
+      return { ...asgn, city: asgn.city || toCity, country: (asgn.country === 'India' || !asgn.country) ? inferred : asgn.country };
+    });
+    // Pass 2: consecutive-assignment enrichment (offline assignments only — ILO stays India)
+    const sorted = flight1Pass.slice().sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1);
+    return sorted.map((asgn, idx) => {
+      if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
+      if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+      if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India), never enrich
+      const prevIntl = sorted.slice(0, idx)
+        .filter(a => a.country && a.country !== 'India')
+        .sort((a, b) => (b.endDate || '') > (a.endDate || '') ? 1 : -1)[0] ?? null;
+      if (!prevIntl?.endDate) return asgn;
+      const curStart = asgn.startDate || addD(prevIntl.endDate, 1);
+      const returnToIndia = activeFlights.find(f => {
+        const fd = parseDTLocal(String(f.departure_date ?? ''));
+        if (!fd || fd < prevIntl.endDate! || fd > addD(curStart, 1)) return false;
+        const toC = inferCountryFromCity(String(f.to_city ?? '').trim());
+        return toC === 'India';
+      });
+      if (returnToIndia) return asgn;
+      return {
+        ...asgn,
+        city: asgn.city || prevIntl.city || '',
+        country: prevIntl.country,
+        trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
+      };
+    });
+  }, [allNearbyAssignments, summaryFlights]);
+
   const advanceAdjusted = useMemo(
-    () => liveAdvances.filter(i => checkedAdvances.has(i.key) && i.currency === 'INR').reduce((s, i) => s + i.amount, 0),
-    [liveAdvances, checkedAdvances]
+    () => liveAdvances.filter(i => checkedAdvances.has(i.key)).reduce((s, i) => s + toINR(i.amount, i.currency), 0),
+    [liveAdvances, checkedAdvances, liveRates]
   );
 
   // Net Payable = Total Claimed - Advance Adjusted
@@ -880,21 +976,168 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     const activeFlights = summaryFlights.filter(f => f.Is_cancelled !== 'Yes');
     const addD = (iso: string, n: number) => { if (!iso) return ''; const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 
-    // When no stored DA items but PMS assignments exist → auto-generate from PMS data.
-    // This ensures HR Admin always sees expected DA even if the trainer's submission didn't
-    // save line items correctly (cross-device gap, early submission, etc.).
+    // Apartment name detection helper
+    const isApartmentName = (name: string) => /apartment/i.test(name || '');
+    // Build apartmentDates Set from PMS accommodation records + lodging claimLineItems
+    const apartmentDates = new Set<string>();
+    summaryAccom.forEach(r => {
+      if (r.Is_caneclled === '1' || r.Is_caneclled === 1) return;
+      if (isApartmentName(String(r.AccommodationName ?? ''))) {
+        const from = parseDT(String(r.CheckInDate ?? ''));
+        const to   = parseDT(String(r.CheckOutDate ?? ''));
+        if (from && to && to >= from) {
+          const d = new Date(from); const end = new Date(to);
+          while (d <= end) { apartmentDates.add(d.toISOString().slice(0, 10)); d.setDate(d.getDate() + 1); }
+        }
+      }
+    });
+    claimLineItems.forEach(li => {
+      if ((li.expenseType as string) !== 'Lodging' && (li.expenseType as string) !== 'Hotel') return;
+      if (isApartmentName(li.description) && li.date) apartmentDates.add(li.date.slice(0, 10));
+    });
+    // Long-term stay (≥30 days) and OB/Bench assignment detection
+    const longTermAsgnIds = new Set<string>();
+    const obAsgnIds = new Set<string>();
+    enrichedSummaryAssignments.forEach(a => {
+      if (!a.startDate || !a.endDate || !a.assignmentId) return;
+      const span = Math.round((new Date(a.endDate).getTime() - new Date(a.startDate).getTime()) / 86400000) + 1;
+      if (span >= 30) longTermAsgnIds.add(a.assignmentId);
+      const bt = (a.batchType || '').toUpperCase();
+      const bc = ((a as unknown as { batchCategory?: string }).batchCategory || '').toUpperCase();
+      if (bt === 'OB' || bt.includes('BENCH') || bc.includes('OB') || bc.includes('BENCH')) obAsgnIds.add(a.assignmentId);
+    });
+    // Layover country detection: 4+ hr non-India layover on a travel day → use that country's DA rate
+    const getLayoverCountry = (travelDate: string): { country: string; layoverHours: number } | null => {
+      const dayFlights = activeFlights
+        .filter(f => parseDT(String(f.departure_date ?? '')) === travelDate)
+        .sort((a, b) => String(a.departure_time ?? '').localeCompare(String(b.departure_time ?? '')));
+      if (dayFlights.length < 2) return null;
+      let best: { country: string; layoverHours: number } | null = null;
+      for (let i = 0; i < dayFlights.length - 1; i++) {
+        const leg1 = dayFlights[i]; const leg2 = dayFlights[i + 1];
+        const arr1Date = parseDT(String(leg1.arrival_date ?? '')) || travelDate;
+        const arr1Time = String(leg1.arrival_time ?? '').substring(0, 5);
+        const dep2Date = parseDT(String(leg2.departure_date ?? '')) || travelDate;
+        const dep2Time = String(leg2.departure_time ?? '').substring(0, 5);
+        if (!arr1Time || !dep2Time) continue;
+        const toMins = (hhmm: string) => { const [h, m] = hhmm.split(':').map(Number); return (isNaN(h)?0:h)*60+(isNaN(m)?0:m); };
+        const arr1Mins = toMins(arr1Time) + (arr1Date > travelDate ? 1440 : 0);
+        const dep2Mins = toMins(dep2Time) + (dep2Date > travelDate ? 1440 : 0);
+        const layoverHours = (dep2Mins - arr1Mins) / 60;
+        if (layoverHours < 4) continue;
+        const layoverCountry = inferCountryFromCity((leg1.to_city as string || '').trim());
+        if (!layoverCountry || layoverCountry === 'India') continue;
+        if (!best || layoverHours > best.layoverHours) best = { country: layoverCountry, layoverHours };
+      }
+      return best;
+    };
+
+    // PRIMARY: when PMS assignments are available, ALWAYS generate DA from live PMS data.
+    // This matches what the trainer sees in Step 4 — DA is always computed from PMS, never from
+    // stored claim items (which may have wrong country from an earlier incorrect submission).
+    // Stored items (raw) are only used when PMS assignments are completely unavailable.
     let effectiveRaw = raw;
-    if (raw.length === 0 && summaryAssignments.length > 0) {
+    if (enrichedSummaryAssignments.length > 0) {
       const claimStart = (claim as unknown as { claimStartDate?: string }).claimStartDate ?? '';
       const claimEnd   = (claim as unknown as { claimEndDate?: string }).claimEndDate   ?? '';
+      // Build approved-leave date set (Step 3 → Step 4 integration: same as trainer's leaveDates)
+      const approvedLeaveDates = new Set<string>();
+      summaryLeaves.forEach(lr => {
+        if (!isApprovedLeave(lr.leave_status)) return;
+        const fd = lr.from_date ?? ''; const td = lr.to_date ?? '';
+        if (!fd) return;
+        const start = new Date(fd); const end = td ? new Date(td) : new Date(fd);
+        const cur2 = new Date(start);
+        while (cur2 <= end) { approvedLeaveDates.add(cur2.toISOString().slice(0, 10)); cur2.setDate(cur2.getDate() + 1); }
+      });
       if (claimStart && claimEnd) {
         const autoRaw: ClaimLineItem[] = [];
         const cur = new Date(claimStart);
         const fin = new Date(claimEnd);
         while (cur <= fin) {
           const iso = cur.toISOString().slice(0, 10);
-          const asgn = summaryAssignments.find(a => a.startDate && a.endDate && iso >= a.startDate && iso <= a.endDate);
+          // Approved leave day → India ₹950 only if trainer has a domestic India flight on this day;
+          // otherwise Not Eligible (0)
+          if (approvedLeaveDates.has(iso)) {
+            const hasDomesticIndiaFlight = activeFlights.some(f => {
+              const fd = parseDT(String(f.departure_date ?? ''));
+              if (fd !== iso) return false;
+              const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+              const toC   = inferCountryFromCity(String(f.to_city ?? '').trim());
+              return fromC === 'India' && toC === 'India';
+            });
+            if (hasDomesticIndiaFlight) {
+              const { rate: indiaRate, currency: indiaCurrency } = getHrDaInfo('India');
+              autoRaw.push({
+                lineItemId: `AUTO-DA-LV-${claimId}-${iso}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'India', date: iso,
+                description: 'Daily Allowance — India (Approved Leave, domestic travel)',
+                claimedAmount: indiaRate, policyLimit: indiaRate, eligibleAmount: indiaRate, approvedAmount: 0, deductionAmount: 0,
+                currency: indiaCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+            } else {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-LV-${claimId}-${iso}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'Leave', date: iso,
+                description: 'Daily Allowance — Not Eligible (Approved Leave)',
+                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+            }
+            cur.setDate(cur.getDate() + 1);
+            continue;
+          }
+          const asgn = enrichedSummaryAssignments.find(a => a.startDate && a.endDate && iso >= a.startDate && iso <= a.endDate);
           if (asgn) {
+            // ILO/Online batches: DA not applicable per policy
+            if (asgn.deliveryMode === 'Online' || asgn.batchType === 'ILO') {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-ILO-${claimId}-${iso}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'N/A', date: iso,
+                description: 'Daily Allowance — Not Applicable (ILO/Online Batch)',
+                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+              cur.setDate(cur.getDate() + 1);
+              continue;
+            }
+            // Delhi-NCR rule: DA not applicable if city is within Delhi-NCR and trainer is not in an apartment
+            const asgnCityNorm = (asgn.city || '').toLowerCase().trim();
+            if (DELHI_NCR_CITIES.has(asgnCityNorm) && !apartmentDates.has(iso)) {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-NCR-${claimId}-${iso}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'N/A', date: iso,
+                description: 'Daily Allowance — Not Applicable (Delhi-NCR, no apartment stay)',
+                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+              cur.setDate(cur.getDate() + 1);
+              continue;
+            }
+            // Long-term stay: assignment ≥30 days → DA not applicable
+            if (asgn.assignmentId && longTermAsgnIds.has(asgn.assignmentId)) {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-LT-${claimId}-${iso}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'N/A', date: iso,
+                description: 'Daily Allowance — Not Applicable (Long-term stay ≥30 days)',
+                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+              cur.setDate(cur.getDate() + 1);
+              continue;
+            }
+            // OB/Bench assignment: DA not applicable
+            if (asgn.assignmentId && obAsgnIds.has(asgn.assignmentId)) {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-OB-${claimId}-${iso}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'N/A', date: iso,
+                description: 'Daily Allowance — Not Applicable (OB/Bench assignment)',
+                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+              cur.setDate(cur.getDate() + 1);
+              continue;
+            }
             const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
             const destC = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
               ? cityCountry : (asgn.country || cityCountry || 'India');
@@ -902,26 +1145,320 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             if (rate > 0) {
               autoRaw.push({
                 lineItemId: `AUTO-DA-${claimId}-${iso}`,
-                claimId: claimId ?? '',
-                expenseType: 'DA',
-                expenseSubType: destC,
-                date: iso,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: iso,
                 description: `Daily Allowance — ${destC} (PMS auto-calculated)`,
-                claimedAmount: rate,
-                policyLimit: rate,
-                eligibleAmount: rate,
-                approvedAmount: 0,
-                deductionAmount: 0,
-                currency,
-                receiptRequired: false,
-                receiptUploaded: false,
-                exceptionRequired: false,
+                claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+                currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
               });
             }
           }
           cur.setDate(cur.getDate() + 1);
         }
+        // Return travel day supplement: flight AFTER assignment end.
+        // Policy (mirrors CreateTADABill.tsx isReturn branch): check the DEPARTURE time FROM the
+        // destination country, not the arrival time at some later leg/layover. If the trainer departs
+        // the destination country at/after 04:00 local, they spent most of the day there → full
+        // destination-country DA. If they depart before 04:00, they didn't spend meaningful time
+        // there on the return day → India DA instead.
+        enrichedSummaryAssignments.forEach(asgn => {
+          if (!asgn.startDate || !asgn.endDate) return;
+          if (asgn.deliveryMode === 'Online' || asgn.batchType === 'ILO') return;
+          const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
+          const destC = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
+            ? cityCountry : (asgn.country || cityCountry || 'India');
+          const { rate, currency: destCurrency } = getHrDaInfo(destC);
+          if (rate <= 0) return;
+          // Find return flight departing FROM the destination city/country after assignment ends
+          const retFlight = activeFlights.find(f => {
+            const fd = parseDT(String(f.departure_date ?? ''));
+            if (!fd || fd <= asgn.endDate! || fd > addD(asgn.endDate!, 5)) return false;
+            const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+            return fromC === destC;
+          });
+          if (!retFlight) return;
+          const fd = parseDT(String(retFlight.departure_date ?? ''));
+          if (!fd) return;
+          if (autoRaw.some(li => li.date === fd)) return;
+          const depHHMM = String(retFlight.departure_time ?? '').substring(0, 5);
+          if (destC !== 'India' && depHHMM && depHHMM >= '04:00') {
+            // Departs destination country at/after 04:00 — spent most of the day there
+            autoRaw.push({
+              lineItemId: `AUTO-DA-RET-${claimId}-${fd}`,
+              claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: fd,
+              description: `Daily Allowance — ${destC} (return travel day, dep ${depHHMM || '?'} >= 04:00)`,
+              claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+              currency: destCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+            });
+          } else {
+            // Departs before 04:00 (or destC already India) — India DA for the return travel day
+            const { rate: indiaRate, currency: indiaCurrency } = getHrDaInfo('India');
+            autoRaw.push({
+              lineItemId: `AUTO-DA-RET-${claimId}-${fd}`,
+              claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'India', date: fd,
+              description: `Daily Allowance — India (return travel day, dep ${depHHMM || '?'} < 04:00)`,
+              claimedAmount: indiaRate, policyLimit: indiaRate, eligibleAmount: indiaRate, approvedAmount: 0, deductionAmount: 0,
+              currency: indiaCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+            });
+          }
+        });
+
+        // Departure travel day supplement: flight BEFORE assignment start → DA if departure < 17:00.
+        // Window widened to -6 days (was -2) to catch trainers who arrive several days early and
+        // stay locally before the batch begins (e.g. Mayur Bhushan Kotoky EMP-2441 arrived in
+        // Bangalore 31 Jul for a 03 Aug batch start — a 3-day gap the old -2 window missed entirely).
+        enrichedSummaryAssignments.forEach(asgn => {
+          if (!asgn.startDate) return;
+          if (asgn.deliveryMode === 'Online' || asgn.batchType === 'ILO') return;
+          const depCandidates = activeFlights.filter(f => {
+            const fd = parseDT(String(f.departure_date ?? ''));
+            return fd ? fd >= addD(asgn.startDate!, -6) && fd < asgn.startDate! : false;
+          });
+          // Priority 1: the LATEST candidate whose to_city exactly matches the assignment's
+          // training city — the actual final leg that brought the trainer to the destination,
+          // regardless of how many days before start it departed.
+          const cityMatches = asgn.city
+            ? depCandidates.filter(f => String(f.to_city ?? '').trim().toLowerCase() === asgn.city!.trim().toLowerCase())
+            : [];
+          const cityMatchPick = cityMatches.length === 0 ? null
+            : cityMatches.reduce((latest, f) => {
+                const ld = parseDT(String(latest.departure_date ?? '')) || '';
+                const fd = parseDT(String(f.departure_date ?? '')) || '';
+                return fd > ld ? f : latest;
+              });
+          // Priority 2 (fallback): prefer the leg that actually departs FROM India to an
+          // international destination (avoids picking domestic connecting flights like
+          // Ranchi→Delhi before an international leg). Priority 3: EARLIEST-departing leg —
+          // not array order — so a later connecting leg (which may depart after 17:00)
+          // doesn't wrongly disqualify the whole travel day.
+          const depFlight = cityMatchPick ?? depCandidates.find(f => {
+            const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+            const toC   = inferCountryFromCity(String(f.to_city ?? '').trim());
+            return fromC === 'India' && toC !== 'India';
+          }) ?? depCandidates.reduce((earliest, f) => {
+            if (!earliest) return f;
+            const et = String(earliest.departure_time ?? '').substring(0, 5);
+            const ft = String(f.departure_time ?? '').substring(0, 5);
+            return ft < et ? f : earliest;
+          }, depCandidates[0]);
+          if (!depFlight) return;
+          const fd = parseDT(String(depFlight.departure_date ?? ''));
+          if (!fd) return;
+          if (autoRaw.some(li => li.date === fd)) return;
+          // Policy: departure travel day DA only if departure is before 17:00
+          const depHHMM = String(depFlight.departure_time ?? '').substring(0, 5);
+          if (depHHMM && depHHMM >= '17:00') return;
+          const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
+          const destC = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
+            ? cityCountry : (asgn.country || cityCountry || 'India');
+          const { rate, currency } = getHrDaInfo(destC);
+          if (rate <= 0) return;
+          autoRaw.push({
+            lineItemId: `AUTO-DA-DEP-${claimId}-${fd}`,
+            claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: fd,
+            description: `Daily Allowance — ${destC} (departure travel day, dep ${depHHMM || '?'} < 17:00)`,
+            claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+            currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+          });
+
+          // Pre-batch interim days: fill every day strictly between the travel day (fd) and
+          // assignment start with destination-country DA — the trainer is already in-country
+          // (e.g. 01 Aug and 02 Aug between a 31 Jul arrival and a 03 Aug batch start). Mirrors
+          // CreateTADABill.tsx's interimAsgn logic, which ClaimDetail.tsx previously had no
+          // equivalent for at all.
+          if (rate > 0) {
+            const cur = new Date(fd);
+            cur.setDate(cur.getDate() + 1);
+            const endExclusive = new Date(asgn.startDate!);
+            while (cur < endExclusive) {
+              const iso = cur.toISOString().slice(0, 10);
+              if (!autoRaw.some(li => li.date === iso)) {
+                autoRaw.push({
+                  lineItemId: `AUTO-DA-PREBATCH-${claimId}-${iso}`,
+                  claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: iso,
+                  description: `Daily Allowance — ${destC} (pre-batch, in-country)`,
+                  claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+                  currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+                });
+              }
+              cur.setDate(cur.getDate() + 1);
+            }
+          }
+        });
+
+        // Overnight outbound connecting-flight arrival: when the first outbound leg (e.g. Delhi→Bangkok)
+        // doesn't land in the assignment's destination country the same day, and a CONNECTING leg
+        // (e.g. Bangkok→Sydney, departs late night, arrives next calendar day) lands there instead,
+        // that arrival date must get full destination-country DA — the trainer is physically there
+        // for the whole day. Mirrors resolveArrDate/overnightDepArrAsgn from CreateTADABill.tsx.
+        enrichedSummaryAssignments.forEach(asgn => {
+          if (!asgn.startDate) return;
+          if (asgn.deliveryMode === 'Online' || asgn.batchType === 'ILO') return;
+          const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
+          const destC = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
+            ? cityCountry : (asgn.country || cityCountry || 'India');
+          if (destC === 'India') return;
+          const resolveArrDate = (f: typeof activeFlights[number]): string => {
+            const raw = String(f.arrival_date ?? '').trim();
+            if (raw) return parseDT(raw);
+            const depD    = parseDT(String(f.departure_date ?? ''));
+            const depTime = String(f.departure_time ?? '').substring(0, 5);
+            if (depD && depTime && depTime >= '18:00') return addD(depD, 1);
+            return '';
+          };
+          const windowStart = addD(asgn.startDate!, -5);
+          const windowEnd   = asgn.startDate!;
+          const found = activeFlights.find(f => {
+            const arrDate = resolveArrDate(f);
+            if (!arrDate) return false;
+            const depDate = parseDT(String(f.departure_date ?? ''));
+            if (!depDate || depDate >= arrDate) return false; // must be overnight (arrival later than departure)
+            if (depDate < windowStart || depDate > windowEnd) return false;
+            const toCountry = inferCountryFromCity(String(f.to_city ?? '').trim());
+            return toCountry === destC;
+          });
+          if (!found) return;
+          const arrIso = resolveArrDate(found);
+          if (!arrIso || autoRaw.some(li => li.date === arrIso)) return;
+          const { rate, currency } = getHrDaInfo(destC);
+          if (rate <= 0) return;
+          autoRaw.push({
+            lineItemId: `AUTO-DA-OVERNIGHT-${claimId}-${arrIso}`,
+            claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: arrIso,
+            description: `Daily Allowance — ${destC} (overnight connecting-flight arrival)`,
+            claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+            currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+          });
+        });
+
+        // Weekend/gap-fill: for each of THIS claim's assignments, find its immediately
+        // adjacent neighbor (from enrichedNearbyAssignments) at the same country with ≤ 7-day gap.
+        // We only pair a current-claim assignment with its nearest neighbor — never
+        // do all-pairs across the entire nearby list (that would pull in historical gaps).
+        {
+          const getDestC = (a: { country?: string; city?: string }) => {
+            const cc = a.city ? inferCountryFromCity(a.city) : '';
+            return (a.country === 'India' && cc && cc !== 'India') ? cc : (a.country || cc || 'India');
+          };
+          const nearbyFmat = enrichedNearbyAssignments
+            .filter(a => a.deliveryMode !== 'Online' && a.batchType !== 'ILO' && a.startDate && a.endDate);
+          const processedGaps = new Set<string>();
+
+          enrichedSummaryAssignments
+            .filter(sa => sa.deliveryMode !== 'Online' && sa.batchType !== 'ILO' && sa.startDate && sa.endDate)
+            .forEach(sa => {
+              const destA = getDestC(sa);
+
+              // Look FORWARD: find the immediately next assignment after this one
+              const nextAsgn = nearbyFmat
+                .filter(na => na.startDate! > sa.endDate!)
+                .sort((a, b) => (a.startDate! < b.startDate! ? -1 : 1))[0];
+              if (nextAsgn) {
+                const destB = getDestC(nextAsgn);
+                const gapStart = addD(sa.endDate!, 1);
+                const gapEnd   = addD(nextAsgn.startDate!, -1);
+                const key = `${gapStart}|${gapEnd}`;
+                if (gapStart <= gapEnd && !processedGaps.has(key)) {
+                  const gapDays = Math.round((new Date(gapEnd).getTime() - new Date(gapStart).getTime()) / 86400000) + 1;
+                  if (gapDays <= 7) {
+                    // Same-country gap: trainer stayed put the whole gap.
+                    // DIFFERENT-country gap (e.g. Ankur Kumar EMP-2485: Dubai batch ends 16 Jul,
+                    // Nairobi batch starts 20 Jul): trainer stayed in destA's country until a
+                    // connecting flight to destB departs. Only fill days up to (not including)
+                    // that flight's departure — the departure day itself is handled separately
+                    // by the normal departure-travel-day supplement logic.
+                    let fillEnd = gapEnd;
+                    let bridgeOk = destA === destB;
+                    if (!bridgeOk) {
+                      const bridgingFlight = activeFlights.find(f => {
+                        const fd = parseDT(String(f.departure_date ?? ''));
+                        if (!fd || fd < gapStart || fd > addD(gapEnd, 1)) return false;
+                        const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+                        const toC   = inferCountryFromCity(String(f.to_city ?? '').trim());
+                        return fromC === destA && toC === destB;
+                      });
+                      if (bridgingFlight) {
+                        const bridgeDepDate = parseDT(String(bridgingFlight.departure_date ?? ''));
+                        if (bridgeDepDate) {
+                          fillEnd = addD(bridgeDepDate, -1);
+                          bridgeOk = fillEnd >= gapStart;
+                        }
+                      }
+                    }
+                    if (bridgeOk) {
+                      processedGaps.add(key);
+                      const { rate, currency } = getHrDaInfo(destA);
+                      if (rate > 0) {
+                        let gc = new Date(gapStart); const gf = new Date(fillEnd);
+                        while (gc <= gf) {
+                          const iso = gc.toISOString().slice(0, 10);
+                          if (!autoRaw.some(li => li.date === iso) && !approvedLeaveDates.has(iso)) {
+                            autoRaw.push({
+                              lineItemId: `AUTO-DA-GAP-${claimId}-${iso}`,
+                              claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destA, date: iso,
+                              description: `Daily Allowance — ${destA} (between consecutive assignments)`,
+                              claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+                              currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+                            });
+                          }
+                          gc.setDate(gc.getDate() + 1);
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+
+              // NOTE: No backward look — gap days belong only to the earlier bill (the one
+              // whose assignment ends just before the gap). Looking backward would duplicate
+              // the gap into both bills and cause double-payment.
+            });
+        }
+
         if (autoRaw.length > 0) effectiveRaw = autoRaw;
+      }
+    }
+
+    // Third fallback: PMS unavailable AND no stored DA items at all.
+    // Only runs when both stored items AND PMS auto-generate produced nothing.
+    // Must NOT override PMS-generated items — those already have correct country from live data.
+    if (effectiveRaw.length === 0) {
+      const claimStart = (claim as unknown as { claimStartDate?: string }).claimStartDate ?? '';
+      const claimEnd   = (claim as unknown as { claimEndDate?: string }).claimEndDate   ?? '';
+      const trainingLoc = (claim as unknown as { trainingLocation?: string }).trainingLocation ?? '';
+      const destCities: string[] = (claim as unknown as { destinationCities?: string[] }).destinationCities ?? [];
+      if (claimStart && claimEnd) {
+        // Derive country: prefer first non-India city in destinationCities, else infer from trainingLocation
+        const destC = destCities.find(c => c && c !== 'India')
+          || (trainingLoc ? inferCountryFromCity(trainingLoc) : '')
+          || 'India';
+        const { rate, currency } = getHrDaInfo(destC);
+        if (rate > 0) {
+          const autoRaw: ClaimLineItem[] = [];
+          const cur = new Date(claimStart);
+          const fin = new Date(claimEnd);
+          while (cur <= fin) {
+            const iso = cur.toISOString().slice(0, 10);
+            autoRaw.push({
+              lineItemId: `AUTO-DA-CLAIM-${claimId}-${iso}`,
+              claimId: claimId ?? '',
+              expenseType: 'DA',
+              expenseSubType: destC,
+              date: iso,
+              description: `Daily Allowance — ${destC} (from submitted claim data)`,
+              claimedAmount: rate,
+              policyLimit: rate,
+              eligibleAmount: rate,
+              approvedAmount: 0,
+              deductionAmount: 0,
+              currency,
+              receiptRequired: false,
+              receiptUploaded: false,
+              exceptionRequired: false,
+            });
+            cur.setDate(cur.getDate() + 1);
+          }
+          if (autoRaw.length > 0) effectiveRaw = autoRaw;
+        }
       }
     }
 
@@ -929,30 +1466,67 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       const date = li.date ?? '';
       if (!date) return li;
 
+      // Approved-leave items are already correct — skip correction map entirely
+      if (li.expenseSubType === 'Leave' || li.lineItemId?.startsWith('AUTO-DA-LV-')) return li;
+
       // Find the assignment this DA day belongs to — check three cases:
       // 1. Date is within assignment range (regular on-site day)
       // 2. Date is the departure travel day (day before startDate — trainer flies to destination)
       // 3. Date is the return travel day (day after endDate — trainer flies back)
-      let asgn = summaryAssignments.find(a => a.startDate && a.endDate && date >= a.startDate && date <= a.endDate);
+      let asgn = enrichedSummaryAssignments.find(a => a.startDate && a.endDate && date >= a.startDate && date <= a.endDate);
       let isDepartureDay = false;
       let isReturnDay = false;
 
       if (!asgn) {
-        const byDep = summaryAssignments.find(a => a.startDate && addD(a.startDate, -1) === date);
+        // Check up to 6 days before startDate (matches the widened departure supplement range —
+        // catches trainers who arrive several days early and stay locally before batch start)
+        const byDep = enrichedSummaryAssignments.find(a => a.startDate && date >= addD(a.startDate, -6) && date < a.startDate);
         if (byDep) { asgn = byDep; isDepartureDay = true; }
       }
       if (!asgn) {
-        const byRet = summaryAssignments.find(a => a.endDate && addD(a.endDate, 1) === date);
+        const byRet = enrichedSummaryAssignments.find(a => a.endDate && addD(a.endDate, 1) === date);
         if (byRet) { asgn = byRet; isReturnDay = true; }
       }
-      if (!asgn) return li;
+      if (!asgn) {
+        // Overnight arrival check: date is 2-5 days after an assignment end,
+        // trainer arrived on overnight return flight — if arrival < 12:00, zero out DA.
+        const overnightAsgn = enrichedSummaryAssignments.find(a => a.endDate && date > addD(a.endDate, 1) && date <= addD(a.endDate, 5));
+        if (overnightAsgn) {
+          const arrFlight = activeFlights.find(f => {
+            const ad = parseDT(String(f.arrival_date ?? ''));
+            return ad === date;
+          });
+          if (arrFlight) {
+            const arrHHMM = String(arrFlight.arrival_time ?? '').substring(0, 5);
+            if (arrHHMM && arrHHMM < '12:00') {
+              return { ...li, claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0,
+                description: `Not Eligible — Arrived India at ${arrHHMM} (before 12:00); no DA for arrival day` };
+            }
+          }
+        }
+        // If trainer has only a domestic India-to-India flight on this date, override to India ₹950
+        const hasDomesticOnly = activeFlights.some(f => {
+          const fd = parseDT(String(f.departure_date ?? ''));
+          if (fd !== date) return false;
+          const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+          const toC   = inferCountryFromCity(String(f.to_city ?? '').trim());
+          return fromC === 'India' && toC === 'India';
+        });
+        if (hasDomesticOnly) {
+          const { rate: ir, currency: ic } = getHrDaInfo('India');
+          return { ...li, expenseSubType: 'India', currency: ic, policyLimit: ir, claimedAmount: ir,
+            description: 'Daily Allowance — India (domestic travel day)' };
+        }
+        return li;
+      }
 
       // City → country: city-inferred country wins over PMS-supplied "India"
       const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
       const destCountry = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
         ? cityCountry
         : (asgn.country || cityCountry || 'India');
-      if (!destCountry || destCountry === 'India') return li;
+      // NOTE: do NOT early-return for India here — stored item may have wrong international country
+      // and must be corrected to India below.
 
       let effectiveCountry = destCountry;
 
@@ -965,66 +1539,122 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       if (isDepartureDay) {
         // Before flight-time check: if previous assignment was in the same country, trainer was
         // already in-country (consecutive same-country assignments) — give full international DA.
-        const prevAsgn = summaryAssignments
+        const prevAsgn = enrichedNearbyAssignments
           .filter(a => a !== asgn && a.endDate && a.endDate < asgn!.startDate)
           .sort((a, b) => (b.endDate! > a.endDate! ? 1 : -1))[0] ?? null;
         if (getAdjacentCountry(prevAsgn) === destCountry) {
           // already in-country, no departure flight — full intl DA
         } else {
-          // Trainer flies from India to destination — apply arrival-time cutoff
-          const outbound = activeFlights.find(f => {
+          // Trainer flies to destination.
+          // Eligibility (dep < 17:00) is already guaranteed by the departure supplement.
+          // Rate: arrival at destination ≤ 18:00 → destination country DA; else India DA.
+          // Prefer the leg actually departing FROM India to international (not domestic connections).
+          const outboundCandidates = activeFlights.filter(f => {
             const fd = parseDT(String(f.departure_date ?? ''));
-            return fd ? fd >= addD(asgn!.startDate, -2) && fd <= asgn!.startDate : false;
+            return fd ? fd >= addD(asgn!.startDate, -6) && fd < asgn!.startDate : false;
           });
-          const arrLocal = outbound ? String(outbound.arrival_time ?? '').substring(0, 5) : '';
-          if (!arrLocal || arrLocal > '18:00') effectiveCountry = 'India';
+          // Priority 1: latest candidate whose to_city matches the assignment's training city
+          // (the actual final arrival leg, however many days before start it departed).
+          const cityMatches = asgn!.city
+            ? outboundCandidates.filter(f => String(f.to_city ?? '').trim().toLowerCase() === asgn!.city!.trim().toLowerCase())
+            : [];
+          const cityMatchPick = cityMatches.length === 0 ? null
+            : cityMatches.reduce((latest, f) => {
+                const ld = parseDT(String(latest.departure_date ?? '')) || '';
+                const fd = parseDT(String(f.departure_date ?? '')) || '';
+                return fd > ld ? f : latest;
+              });
+          const outbound = cityMatchPick ?? outboundCandidates.find(f => {
+            const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+            const toC   = inferCountryFromCity(String(f.to_city ?? '').trim());
+            return fromC === 'India' && toC !== 'India';
+          }) ?? outboundCandidates[0];
+          const arrAtDest = outbound ? String(outbound.arrival_time ?? '').substring(0, 5) : '';
+          if (!arrAtDest || arrAtDest > '18:00') effectiveCountry = 'India';
         }
 
       } else if (isReturnDay) {
         // Before flight-time check: if next assignment is in the same country, trainer stays
         // in-country (consecutive same-country assignments) — give full international DA.
-        const nextAsgn = summaryAssignments
+        const nextAsgn = enrichedNearbyAssignments
           .filter(a => a !== asgn && a.startDate && a.startDate > asgn!.endDate)
           .sort((a, b) => (a.startDate! < b.startDate! ? -1 : 1))[0] ?? null;
         if (getAdjacentCountry(nextAsgn) === destCountry) {
           // stays in-country, no return flight — full intl DA
         } else {
-          // Trainer flies back to India — apply departure-time cutoff
-          const retFlight = activeFlights.find(f => {
+          // Apply departure-time cutoff: check the DEPARTURE time FROM the destination country
+          // (not the arrival time at some later leg/layover). Departs at/after 04:00 local →
+          // trainer spent most of the day in destCountry → full destCountry DA. Departs before
+          // 04:00 → India DA instead. Mirrors CreateTADABill.tsx's isReturn branch.
+          // Prefer the leg departing FROM the destination country (not a transit or domestic leg).
+          const retFlightFromDest = activeFlights.find(f => {
             const fd = parseDT(String(f.departure_date ?? ''));
-            return fd ? fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 2) : false;
+            if (!fd || !(fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 5))) return false;
+            const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+            return fromC === destCountry;
           });
-          const depLocal = retFlight ? String(retFlight.departure_time ?? '').substring(0, 5) : '';
-          if (depLocal && depLocal < '04:00') effectiveCountry = 'India';
+          const retFlight = retFlightFromDest ?? activeFlights.find(f => {
+            const fd = parseDT(String(f.departure_date ?? ''));
+            return fd ? fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 5) : false;
+          });
+          const retDepTime = retFlight ? String(retFlight.departure_time ?? '').substring(0, 5) : '';
+          if (!retDepTime || retDepTime < '04:00') effectiveCountry = 'India';
+          // else: departs at/after 04:00 — keep destCountry (effectiveCountry already = destCountry)
         }
 
       } else if (date === asgn.startDate) {
-        // First day of assignment — international DA only if arrives before 18:00
+        // First day of assignment — only reduce DA if trainer flew IN on this exact date
+        // (departed from India on startDate itself and arrived late). If they flew in the day
+        // before, they are already at destination → full destC DA, no adjustment.
         const outbound = activeFlights.find(f => {
           const fd = parseDT(String(f.departure_date ?? ''));
-          return fd ? fd >= addD(asgn!.startDate, -2) && fd <= asgn!.startDate : false;
+          return fd === asgn!.startDate; // only same-day departure counts
         });
-        const arrLocal = outbound ? String(outbound.arrival_time ?? '').substring(0, 5) : '';
-        if (arrLocal && arrLocal > '18:00') effectiveCountry = 'India';
+        if (outbound) {
+          const depTimeOut2 = String(outbound.departure_time ?? '').substring(0, 5);
+          if (depTimeOut2 && depTimeOut2 >= '17:00') effectiveCountry = 'India';
+        }
 
       } else if (date === asgn.endDate) {
-        // Last day of assignment — international DA only if departs at/after 04:00
+        // Last day of assignment — only reduce DA if return flight departs on this exact date
+        // and trainer arrives home early. If flight is after endDate → full destC DA.
         const retFlight = activeFlights.find(f => {
           const fd = parseDT(String(f.departure_date ?? ''));
-          return fd ? fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 2) : false;
+          return fd === asgn!.endDate; // only same-day departure counts
         });
-        const depLocal = retFlight ? String(retFlight.departure_time ?? '').substring(0, 5) : '';
-        if (depLocal && depLocal < '04:00') effectiveCountry = 'India';
+        if (retFlight) {
+          const retDepTime2 = String(retFlight.departure_time ?? '').substring(0, 5);
+          const retArrTime2 = String(retFlight.arrival_time ?? '').substring(0, 5);
+          // If departure is after 17:00, trainer was in destination country all day → full destC DA
+          // Only downgrade to India if departure is early (≤ 17:00) AND arrives home before noon
+          if (retDepTime2 && retDepTime2 <= '17:00' && retArrTime2 && retArrTime2 <= '12:00') effectiveCountry = 'India';
+        }
       }
       // Mid-assignment days: full destCountry DA, no flight-time adjustment
 
-      if (effectiveCountry === li.expenseSubType) return li;
-      if (effectiveCountry === 'India' && (!li.expenseSubType || li.expenseSubType === 'India')) return li;
-      if (effectiveCountry === 'India') return li; // never downgrade submitted international claim
+      // Layover rule: on departure/return travel days, if there is a 4+ hr non-India layover → use that country's DA
+      if (isDepartureDay || isReturnDay) {
+        const layoverInfo = getLayoverCountry(date);
+        if (layoverInfo) effectiveCountry = layoverInfo.country;
+      }
+
+      if (effectiveCountry === li.expenseSubType) return li; // already correct, no change
+      if (effectiveCountry === 'India') {
+        // PMS confirms India — correct any wrong international DA stored in claim
+        const { rate, currency } = getHrDaInfo('India');
+        return { ...li, expenseSubType: 'India', currency, policyLimit: rate, claimedAmount: rate,
+          description: `Daily Allowance — India (auto-corrected from PMS data)` };
+      }
       const { rate, currency } = getHrDaInfo(effectiveCountry);
       return { ...li, expenseSubType: effectiveCountry, currency, policyLimit: rate, claimedAmount: rate, description: li.description.replace(/India/gi, effectiveCountry) };
     });
-  }, [claimLineItems, summaryAssignments, summaryFlights, claim, claimId]);
+  }, [claimLineItems, enrichedSummaryAssignments, enrichedNearbyAssignments, summaryFlights, summaryLeaves, summaryAccom, claim, claimId]);
+
+  // Dates already paid in other approved/paid claims for the same trainer
+  const paidDaDates = useMemo(() => {
+    if (!claim?.trainerId) return new Map<string, string>();
+    return getPaidDADates(claim.trainerId, claimId ?? '');
+  }, [claim, claimId]);
 
   // Apply HR Admin overrides on top of auto-corrected DA items
   const effectiveDaItemsFinal = useMemo(() =>
@@ -1036,42 +1666,57 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   [correctedDaItems, daHrOverrides]);
 
   // Apply HR travel overrides (sorted order matches render order)
+  // approvedAmount is also overridden so bestAmt() always picks the HR-edited value,
+  // not a stale stored approvedAmount from a previous action.
   const effectiveTravelItemsFinal = useMemo(() => {
     const raw = claimLineItems.filter(li => li.expenseType === 'TA' || li.expenseType === 'Cab');
     const sorted = raw.slice().sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
     return sorted.map((li, idx) => {
       const ov = taHrOverrides[idx];
       if (!ov) return li;
-      return { ...li, currency: ov.currency, claimedAmount: ov.amount, eligibleAmount: ov.amount };
+      return { ...li, currency: ov.currency, claimedAmount: ov.amount, eligibleAmount: ov.amount, approvedAmount: ov.amount };
     });
   }, [claimLineItems, taHrOverrides]);
 
   // Apply HR misc overrides (sorted order matches render order)
+  // approvedAmount is also overridden so bestAmt() always picks the HR-edited value.
   const effectiveMiscItemsFinal = useMemo(() => {
     const raw = claimLineItems.filter(li => li.expenseType === 'Other');
     const sorted = raw.slice().sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
     return sorted.map((li, idx) => {
       const ov = miscHrOverrides[idx];
       if (!ov) return li;
-      return { ...li, currency: ov.currency, claimedAmount: ov.amount, eligibleAmount: ov.amount };
+      return { ...li, currency: ov.currency, claimedAmount: ov.amount, eligibleAmount: ov.amount, approvedAmount: ov.amount };
     });
   }, [claimLineItems, miscHrOverrides]);
 
   // Best available amount for a line item (some stored claims have claimedAmount=0, eligibleAmount=actual)
   const bestAmt = (li: ClaimLineItem) => Math.max(li.claimedAmount ?? 0, li.eligibleAmount ?? 0, li.approvedAmount ?? 0);
 
+  // Derive TA/Misc totals directly from the effective arrays (which already have
+  // HR overrides applied as claimedAmount). This is the single source of truth —
+  // no separate idx-remapping that could fall out of sync.
+  const liveTATotalINR = effectiveTravelItemsFinal.reduce(
+    (s, li) => s + toINR(li.claimedAmount ?? 0, li.currency ?? 'INR'), 0
+  );
+
+  const liveMiscTotalINR = effectiveMiscItemsFinal.reduce(
+    (s, li) => s + toINR(li.claimedAmount ?? 0, li.currency ?? 'INR'), 0
+  );
+
   // Grand total in INR — DA (multi-currency) + TA/Cab + Lodging + Misc, all converted to INR
-  const liveGrandTotalINR = useMemo(() => {
-    const daINR = effectiveDaItemsFinal.reduce((s, li) => s + toINR(li.claimedAmount, li.currency), 0);
-    const taINR = effectiveTravelItemsFinal.reduce((s, li) => s + toINR(bestAmt(li), li.currency ?? 'INR'), 0);
-    const miscINR = effectiveMiscItemsFinal.reduce((s, li) => s + toINR(bestAmt(li), li.currency ?? 'INR'), 0);
+  // Already-paid DA dates (greyed out) are excluded from the DA total so they don't inflate Net Payable.
+  const liveGrandTotalINR = (() => {
+    const unpaidDaItemsFinal = effectiveDaItemsFinal.filter(li => !paidDaDates.has(li.date ?? ''));
+    const daINR = unpaidDaItemsFinal.reduce((s, li) => s + toINR(li.claimedAmount, li.currency), 0);
     const lodgingINR = claimLineItems
       .filter(li => (li.expenseType as string) === 'Lodging' || (li.expenseType as string) === 'Hotel')
       .reduce((s, li) => s + toINR(bestAmt(li), li.currency ?? 'INR'), 0);
-    return daINR + taINR + miscINR + lodgingINR;
-  }, [effectiveDaItemsFinal, effectiveTravelItemsFinal, effectiveMiscItemsFinal, claimLineItems, liveRates]);
+    return daINR + liveTATotalINR + liveMiscTotalINR + lodgingINR;
+  })();
 
-  const liveNetPayableINR = useMemo(() => Math.max(0, liveGrandTotalINR - advanceAdjusted), [liveGrandTotalINR, advanceAdjusted]);
+  const liveNetPayableINR = Math.max(0, liveGrandTotalINR - advanceAdjusted);
+  const liveRecoverableINR = Math.max(0, advanceAdjusted - liveGrandTotalINR);
 
   const claimAttachments = useMemo(
     () => claimLineItems.filter(li => li.receiptData || li.receiptUploaded),
@@ -1196,7 +1841,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       claimId: claim.claimId,
       billNo: claim.billNo,
       remarks: remarks || undefined,
-      hrName: currentUser.name,
+      hrName: 'HR Admin',
       netPayable: overrideNetPayable ?? (liveGrandTotalINR > 0 ? liveNetPayableINR : computedFinalSettlement),
       currency: 'INR',
     });
@@ -1438,18 +2083,22 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 deductionAmount={claim.deductionAmount ?? 0}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
-                recoverableAmount={claim.recoverableAmount ?? 0}
+                recoverableAmount={liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)}
                 netPayable={liveGrandTotalINR > 0 ? liveNetPayableINR : computedFinalSettlement}
                 currency="INR"
               />
               {/* Live net payable banner — shown when live computation differs from stored */}
               {liveGrandTotalINR > 0 && (
-                <div className="mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-700 to-teal-700 shadow-sm">
+                <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${liveRecoverableINR > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
                   <div>
-                    <p className="text-xs font-semibold text-emerald-100 uppercase tracking-wide">✅ Net Payable to Trainer (Final)</p>
-                    <p className="text-[10px] text-emerald-200 mt-0.5">All currencies converted to INR · includes HR overrides</p>
+                    <p className="text-xs font-semibold text-white uppercase tracking-wide">
+                      {liveRecoverableINR > 0 ? '⚠️ Recoverable from Trainer (Final)' : '✅ Net Payable to Trainer (Final)'}
+                    </p>
+                    <p className="text-[10px] text-white/70 mt-0.5">
+                      {liveRecoverableINR > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
+                    </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{liveNetPayableINR.toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{(liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR).toLocaleString('en-IN')}</span>
                 </div>
               )}
 
@@ -1575,7 +2224,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   {/* DA breakdown by currency */}
                   {(() => {
                     const daGroups: Record<string, { amount: number; inr: number }> = {};
-                    effectiveDaItemsFinal.forEach(li => {
+                    effectiveDaItemsFinal.filter(li => !paidDaDates.has(li.date ?? '')).forEach(li => {
                       const cur = li.currency;
                       if (!daGroups[cur]) daGroups[cur] = { amount: 0, inr: 0 };
                       daGroups[cur].amount += li.claimedAmount;
@@ -1596,21 +2245,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                     ));
                   })()}
                   {/* TA / Cab */}
-                  {(() => {
-                    const taItems = effectiveTravelItemsFinal;
-                    if (taItems.length === 0) return null;
-                    const taTotal = taItems.reduce((s, li) => s + toINR(bestAmt(li), li.currency ?? 'INR'), 0);
-                    return (
-                      <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-sky-50 border border-sky-100">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-sky-500" />
-                          <span className="text-xs font-medium text-gray-700">Cab / Travel Allowance</span>
-                          <span className="text-[11px] text-gray-500">{taItems.length} bill{taItems.length !== 1 ? 's' : ''}</span>
-                        </div>
-                        <span className="text-sm font-bold text-sky-700">₹{taTotal.toLocaleString('en-IN')}</span>
+                  {effectiveTravelItemsFinal.length > 0 && (
+                    <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-sky-50 border border-sky-100">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-sky-500" />
+                        <span className="text-xs font-medium text-gray-700">Cab / Travel Allowance</span>
+                        <span className="text-[11px] text-gray-500">{effectiveTravelItemsFinal.length} bill{effectiveTravelItemsFinal.length !== 1 ? 's' : ''}</span>
                       </div>
-                    );
-                  })()}
+                      <span className="text-sm font-bold text-sky-700">₹{liveTATotalINR.toLocaleString('en-IN')}</span>
+                    </div>
+                  )}
                   {/* Lodging */}
                   {(() => {
                     const lodItems = claimLineItems.filter(li => (li.expenseType as string) === 'Lodging' || (li.expenseType as string) === 'Hotel');
@@ -1627,20 +2271,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                     );
                   })()}
                   {/* Misc */}
-                  {(() => {
-                    const miscIt = effectiveMiscItemsFinal;
-                    if (miscIt.length === 0) return null;
-                    const miscTotal = miscIt.reduce((s, li) => s + toINR(bestAmt(li), li.currency ?? 'INR'), 0);
-                    return (
-                      <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-rose-50 border border-rose-100">
-                        <div className="flex items-center gap-2">
-                          <span className="w-2 h-2 rounded-full bg-rose-500" />
-                          <span className="text-xs font-medium text-gray-700">Miscellaneous</span>
-                        </div>
-                        <span className="text-sm font-bold text-rose-700">₹{miscTotal.toLocaleString('en-IN')}</span>
+                  {effectiveMiscItemsFinal.length > 0 && (
+                    <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-rose-50 border border-rose-100">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-rose-500" />
+                        <span className="text-xs font-medium text-gray-700">Miscellaneous</span>
                       </div>
-                    );
-                  })()}
+                      <span className="text-sm font-bold text-rose-700">₹{liveMiscTotalINR.toLocaleString('en-IN')}</span>
+                    </div>
+                  )}
                   {/* Advance deduction */}
                   {advanceAdjusted > 0 && (
                     <div className="flex items-center justify-between px-4 py-2.5 rounded-lg bg-violet-50 border border-violet-100">
@@ -1953,14 +2592,17 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   // Totals
                   // Use component-level effectiveDaItemsFinal (corrected + HR overrides)
                   const effectiveDaItems = effectiveDaItemsFinal;
-                  const inrTotal = effectiveDaItems.filter(li => li.currency === 'INR').reduce((s, li) => s + li.claimedAmount, 0);
+                  // Exclude already-paid dates from totals (they're shown greyed in the table)
+                  const unpaidDaItems = effectiveDaItems.filter(li => !paidDaDates.has(li.date ?? ''));
+                  const inrTotal = unpaidDaItems.filter(li => li.currency === 'INR').reduce((s, li) => s + li.claimedAmount, 0);
                   const foreignMap: Record<string, number> = {};
-                  effectiveDaItems.filter(li => li.currency !== 'INR').forEach(li => {
+                  unpaidDaItems.filter(li => li.currency !== 'INR').forEach(li => {
                     foreignMap[li.currency] = (foreignMap[li.currency] ?? 0) + li.claimedAmount;
                   });
-                  // Country rate summary from unique expenseSubType values
+                  const paidDaCount = effectiveDaItems.filter(li => paidDaDates.has(li.date ?? '')).length;
+                  // Country rate summary from unique expenseSubType values (unpaid only)
                   const countryRates: Record<string, { rate: number; currency: string }> = {};
-                  effectiveDaItems.forEach(li => {
+                  unpaidDaItems.forEach(li => {
                     const c = li.expenseSubType ?? '';
                     if (c && !countryRates[c]) countryRates[c] = { rate: li.policyLimit, currency: li.currency };
                   });
@@ -1981,10 +2623,20 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                             <p className="px-4 py-3 text-gray-400 text-xs">No DA line items found for this bill.</p>
                           ) : (
                             <>
+                              {/* Already-paid DA warning banner */}
+                              {paidDaCount > 0 && (
+                                <div className="mx-4 mt-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3">
+                                  <span className="text-red-500 text-base mt-0.5">⚠️</span>
+                                  <div>
+                                    <p className="text-xs font-semibold text-red-700">DA Already Paid — {paidDaCount} day{paidDaCount !== 1 ? 's' : ''} greyed out</p>
+                                    <p className="text-xs text-red-600 mt-0.5">These dates were already covered in another approved/paid claim for this trainer. They are excluded from the totals below.</p>
+                                  </div>
+                                </div>
+                              )}
                               {/* Summary cards */}
                               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 px-4 pt-4 pb-3">
                                 {[
-                                  { label: 'Eligible Days',  value: daItems.length,   color: 'bg-green-50 text-green-700 border border-green-100' },
+                                  { label: 'Eligible Days',  value: `${unpaidDaItems.length}${paidDaCount > 0 ? ` (${paidDaCount} already paid)` : ''}`,   color: 'bg-green-50 text-green-700 border border-green-100' },
                                   { label: 'INR DA Total',   value: `₹${inrTotal.toLocaleString('en-IN')}`, color: 'bg-blue-50 text-blue-700 border border-blue-100' },
                                   ...Object.entries(foreignMap).map(([c, a]) => ({
                                     label: `${c} DA Total`, value: `${c} ${a.toLocaleString('en-IN')}`, color: 'bg-indigo-50 text-indigo-700 border border-indigo-100',
@@ -2029,6 +2681,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                       const status  = statusFrom(li.description);
                                       const sc      = statusClassFor(li.description);
                                       const isEditing = daEditIdx === i;
+                                      const alreadyPaidBill = paidDaDates.get(li.date ?? '');
 
                                       if (isEditing && currentUser.role === 'HRAdmin') {
                                         return (
@@ -2099,21 +2752,30 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                       }
 
                                       return (
-                                        <tr key={i} className={`hover:bg-blue-50/30 ${override ? 'bg-amber-50/40' : ''}`}>
-                                          <td className="px-4 py-3 font-medium text-gray-700 whitespace-nowrap">{fmtD(li.date ?? '')}</td>
-                                          <td className="px-4 py-3 text-gray-600">{li.date ? dayName(li.date) : '—'}</td>
-                                          <td className="px-4 py-3 text-gray-600">
+                                        <tr key={i} className={`${alreadyPaidBill ? 'bg-gray-100 opacity-60' : override ? 'bg-amber-50/40' : 'hover:bg-blue-50/30'}`}>
+                                          <td className="px-4 py-3 font-medium whitespace-nowrap">
+                                            <div className={alreadyPaidBill ? 'text-gray-400 line-through' : 'text-gray-700'}>{fmtD(li.date ?? '')}</div>
+                                          </td>
+                                          <td className={`px-4 py-3 ${alreadyPaidBill ? 'text-gray-400' : 'text-gray-600'}`}>{li.date ? dayName(li.date) : '—'}</td>
+                                          <td className={`px-4 py-3 ${alreadyPaidBill ? 'text-gray-400' : 'text-gray-600'}`}>
                                             {dispCountry}
-                                            {override && <span className="ml-1 text-[10px] text-amber-600 font-semibold">(HR)</span>}
+                                            {override && !alreadyPaidBill && <span className="ml-1 text-[10px] text-amber-600 font-semibold">(HR)</span>}
                                           </td>
                                           <td className="px-4 py-3">
-                                            <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${sc}`}>{status}</span>
+                                            {alreadyPaidBill ? (
+                                              <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-600 border border-red-200">
+                                                Already Paid — {alreadyPaidBill}
+                                              </span>
+                                            ) : (
+                                              <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${sc}`}>{status}</span>
+                                            )}
                                           </td>
-                                          <td className="px-4 py-3 text-gray-700">{dispRate > 0 ? fmtDA(dispRate, dispCurrency) : '—'}</td>
-                                          <td className="px-4 py-3 font-semibold text-gray-800">{dispAmount > 0 ? fmtDA(dispAmount, dispCurrency) : '—'}</td>
+                                          <td className={`px-4 py-3 ${alreadyPaidBill ? 'text-gray-400' : 'text-gray-700'}`}>{dispRate > 0 ? fmtDA(dispRate, dispCurrency) : '—'}</td>
+                                          <td className={`px-4 py-3 font-semibold ${alreadyPaidBill ? 'text-gray-400 line-through' : 'text-gray-800'}`}>{dispAmount > 0 ? fmtDA(dispAmount, dispCurrency) : '—'}</td>
                                           <td className="px-4 py-3 text-gray-500 max-w-[220px] truncate" title={li.description}>{li.description}</td>
                                           {currentUser.role === 'HRAdmin' && (
                                             <td className="px-3 py-3">
+                                              {!alreadyPaidBill && (
                                               <button
                                                 onClick={() => {
                                                   setDaEditIdx(i);
@@ -2128,6 +2790,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                               >
                                                 ✏️ Edit
                                               </button>
+                                              )}
                                             </td>
                                           )}
                                         </tr>
@@ -2695,19 +3358,26 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                   : <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold text-[10px]">Pending</span>}
                                               </td>
                                               <td className="px-3 py-2.5 whitespace-nowrap">
-                                                {li.receiptData ? (
-                                                  <button
-                                                    onClick={() => setReceiptPreview({ url: li.receiptData!, name: li.receiptFileName || 'receipt' })}
-                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold hover:bg-blue-100"
-                                                    title={li.receiptFileName || 'View receipt'}
-                                                  >
-                                                    📎 {li.receiptFileName ? li.receiptFileName.length > 14 ? li.receiptFileName.slice(0, 12) + '…' : li.receiptFileName : 'View'}
-                                                  </button>
-                                                ) : li.receiptFileName ? (
-                                                  <span className="text-[10px] text-gray-500 truncate max-w-[80px] block" title={li.receiptFileName}>📄 {li.receiptFileName}</span>
-                                                ) : (
-                                                  <span className="text-gray-300 text-[10px]">—</span>
-                                                )}
+                                                {(() => {
+                                                  const src = li.receiptData || li.receiptUrl;
+                                                  const fname = li.receiptFileName || 'receipt';
+                                                  const label = fname.length > 14 ? fname.slice(0, 12) + '…' : fname;
+                                                  if (src) return (
+                                                    <button onClick={() => setReceiptPreview({ url: src, name: fname })}
+                                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold hover:bg-blue-100"
+                                                      title={fname}>
+                                                      📎 {label}
+                                                    </button>
+                                                  );
+                                                  if (fname && fname !== 'receipt') return (
+                                                    <button onClick={() => alert(`Receipt "${fname}" was uploaded by the trainer but is not yet synced to the server.\n\nAsk the trainer to open their dashboard once to sync all receipts.`)}
+                                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-50 border border-gray-300 text-gray-500 text-[10px] font-semibold hover:bg-gray-100"
+                                                      title="Click for info">
+                                                      📄 {label}
+                                                    </button>
+                                                  );
+                                                  return <span className="text-gray-300 text-[10px]">—</span>;
+                                                })()}
                                               </td>
                                               {currentUser.role === 'HRAdmin' && (
                                                 <td className="px-3 py-2.5">
@@ -2881,19 +3551,26 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                 : <span className="px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 font-semibold text-[10px]">Pending</span>}
                                             </td>
                                             <td className="px-3 py-2.5 whitespace-nowrap">
-                                              {li.receiptData ? (
-                                                <button
-                                                  onClick={() => setReceiptPreview({ url: li.receiptData!, name: li.receiptFileName || 'receipt' })}
-                                                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold hover:bg-blue-100"
-                                                  title={li.receiptFileName || 'View receipt'}
-                                                >
-                                                  📎 {li.receiptFileName ? li.receiptFileName.length > 14 ? li.receiptFileName.slice(0, 12) + '…' : li.receiptFileName : 'View'}
-                                                </button>
-                                              ) : li.receiptFileName ? (
-                                                <span className="text-[10px] text-gray-500 truncate max-w-[80px] block" title={li.receiptFileName}>📄 {li.receiptFileName}</span>
-                                              ) : (
-                                                <span className="text-gray-300 text-[10px]">—</span>
-                                              )}
+                                              {(() => {
+                                                const src = li.receiptData || li.receiptUrl;
+                                                const fname = li.receiptFileName || 'receipt';
+                                                const label = fname.length > 14 ? fname.slice(0, 12) + '…' : fname;
+                                                if (src) return (
+                                                  <button onClick={() => setReceiptPreview({ url: src, name: fname })}
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold hover:bg-blue-100"
+                                                    title={fname}>
+                                                    📎 {label}
+                                                  </button>
+                                                );
+                                                if (fname && fname !== 'receipt') return (
+                                                  <button onClick={() => alert(`Receipt "${fname}" was uploaded by the trainer but is not yet synced to the server.\n\nAsk the trainer to open their dashboard once to sync all receipts.`)}
+                                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-gray-50 border border-gray-300 text-gray-500 text-[10px] font-semibold hover:bg-gray-100"
+                                                    title="Click for info">
+                                                    📄 {label}
+                                                  </button>
+                                                );
+                                                return <span className="text-gray-300 text-[10px]">—</span>;
+                                              })()}
                                             </td>
                                             {currentUser.role === 'HRAdmin' && (
                                               <td className="px-3 py-2.5 whitespace-nowrap">
@@ -2942,6 +3619,40 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                     </div>
                   );
                 })()}
+
+                {/* ── Live Final Summary strip — visible to HR without scrolling up ── */}
+                {currentUser.role === 'HRAdmin' && liveGrandTotalINR > 0 && (
+                  <div className="mt-4 rounded-xl border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 px-5 py-4">
+                    <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-widest mb-3">📊 Live Final Summary (reflects your edits above)</p>
+                    <div className="flex flex-wrap gap-3">
+                      {liveTATotalINR > 0 && (
+                        <div className="flex items-center gap-2 bg-sky-100 border border-sky-200 rounded-lg px-3 py-2">
+                          <span className="w-2 h-2 rounded-full bg-sky-500 shrink-0" />
+                          <span className="text-xs text-gray-600">Cab / Travel</span>
+                          <span className="text-sm font-bold text-sky-700">₹{liveTATotalINR.toLocaleString('en-IN')}</span>
+                        </div>
+                      )}
+                      {liveMiscTotalINR > 0 && (
+                        <div className="flex items-center gap-2 bg-rose-100 border border-rose-200 rounded-lg px-3 py-2">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                          <span className="text-xs text-gray-600">Miscellaneous</span>
+                          <span className="text-sm font-bold text-rose-700">₹{liveMiscTotalINR.toLocaleString('en-IN')}</span>
+                        </div>
+                      )}
+                      {liveRecoverableINR > 0 ? (
+                        <div className="flex items-center gap-2 bg-red-600 rounded-lg px-3 py-2">
+                          <span className="text-xs font-semibold text-red-100">RECOVERABLE FROM TRAINER</span>
+                          <span className="text-base font-extrabold text-white">₹{liveRecoverableINR.toLocaleString('en-IN')}</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 bg-emerald-600 rounded-lg px-3 py-2">
+                          <span className="text-xs font-semibold text-emerald-100">NET PAYABLE</span>
+                          <span className="text-base font-extrabold text-white">₹{liveNetPayableINR.toLocaleString('en-IN')}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -3028,7 +3739,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 {claimAttachments.map(li => {
                   const fileName = li.receiptFileName || `${li.expenseType}-receipt`;
-                  const src = li.receiptData; // may be blob URL or base64
+                  const src = li.receiptData || li.receiptUrl; // blob URL, base64, or permanent URL
                   const isUrl = src && src.startsWith('http');
                   const isPdf = src && (src.startsWith('data:application/pdf') || /\.pdf$/i.test(fileName));
                   const isImage = src && !isPdf && (isUrl || src.startsWith('data:image') || /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i.test(fileName));
@@ -3220,12 +3931,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="px-6 py-4 bg-gray-50 border-b border-gray-100">
                 <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">💰 Financial Summary</h3>
               </div>
-              <div className="p-5 grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <div className="p-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
                 {[
                   { label: 'Total Claimed',    value: claim.totalClaimedAmount ?? 0, color: 'text-gray-800' },
                   { label: 'Approved Amount',  value: claim.approvedAmount ?? 0,     color: 'text-blue-700' },
-                  { label: 'Advance Adjusted', value: claim.advanceAdjusted ?? 0,    color: 'text-amber-600' },
-                  { label: 'Net Paid',         value: paymentRecord?.paidAmount ?? (claim.approvedAmount ?? 0) - (claim.advanceAdjusted ?? 0), color: 'text-emerald-700' },
+                  { label: 'Advance Adjusted', value: advanceAdjusted,    color: 'text-amber-600' },
+                  { label: 'Recoverable Amount', value: liveRecoverableINR, color: liveRecoverableINR > 0 ? 'text-red-600' : 'text-gray-400' },
+                  { label: 'Net Paid',         value: paymentRecord?.paidAmount ?? liveNetPayableINR, color: 'text-emerald-700' },
                 ].map(f => (
                   <div key={f.label} className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 text-center">
                     <p className="text-[11px] text-gray-400 mb-1">{f.label}</p>

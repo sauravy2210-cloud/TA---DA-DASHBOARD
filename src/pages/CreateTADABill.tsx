@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { saveClaim, saveLineItems } from '../services/storageService';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { saveClaim, saveLineItems, saveDraftClaim, deleteDraftClaim, getDraftClaims, getClaims } from '../services/storageService';
 import type { ClaimHeader, ClaimLineItem, ClaimAdvanceItem } from '../types';
 import {
   Calendar, MapPin, Hotel, Building2, Ruler, Info,
@@ -133,6 +133,42 @@ interface RawTrainerAssignment {
   country_name?:         string | null;
   training_venue:        string | null;
   TrainingVenue?:        string | null;
+  Venue?:                string | null;
+  venue?:                string | null;
+  VenueName?:            string | null;
+  venue_name?:           string | null;
+  training_location?:    string | null;
+  TrainingLocation?:     string | null;
+  Location?:             string | null;
+  location?:             string | null;
+  // SCID / Participants / Time variants
+  SCID?:                 number | string | null;
+  scid?:                 number | string | null;
+  Scid?:                 number | string | null;
+  SCID_No?:              number | string | null;
+  scid_no?:              number | string | null;
+  NoOfParticipants?:     number | string | null;
+  no_of_participants?:   number | string | null;
+  participants?:         number | string | null;
+  Participants?:         number | string | null;
+  participant_count?:    number | string | null;
+  ParticipantCount?:     number | string | null;
+  Start_time?:           string | null;
+  start_time?:           string | null;
+  StartTime?:            string | null;
+  Start_Time?:           string | null;
+  batch_start_time?:     string | null;
+  session_start_time?:   string | null;
+  training_start_time?:  string | null;
+  time_from?:            string | null;
+  end_time?:             string | null;
+  End_time?:             string | null;
+  EndTime?:              string | null;
+  End_Time?:             string | null;
+  batch_end_time?:       string | null;
+  session_end_time?:     string | null;
+  training_end_time?:    string | null;
+  time_to?:              string | null;
   [key: string]: unknown;
 }
 
@@ -1934,7 +1970,11 @@ function mapRawToAssignment(r: RawTrainerAssignment, fallbackFromDate = '', fall
     ? cityInferred                          // city is clearly international → override PMS India default
     : (rawCountry?.trim() || cityInferred); // PMS has a real non-India country, or city infers India → trust it
 
-  const trainingVenue = pickStr(r, 'training_venue', 'TrainingVenue');
+  const trainingVenue = pickStr(r,
+    'training_venue', 'TrainingVenue', 'Venue', 'venue', 'VenueName', 'venue_name',
+    'training_location', 'TrainingLocation', 'Location', 'location',
+    'batch_venue', 'BatchVenue', 'training_place', 'TrainingPlace',
+  );
 
   // ── Dates ────────────────────────────────────────────────────────────────────
   // Priority 1: separate start/end date fields (exhaustive Koenig API variant list)
@@ -1978,10 +2018,27 @@ function mapRawToAssignment(r: RawTrainerAssignment, fallbackFromDate = '', fall
   const trainingDates: string | null = rawTrainingDates || null;
 
   // ── New fields from apikey=258 ────────────────────────────────────────────────
-  const scid           = r.SCID != null ? String(r.SCID) : undefined;
-  const noOfParticipants = r.NoOfParticipants != null ? Number(r.NoOfParticipants) : undefined;
-  const startTime      = pickStr(r, 'Start_time', 'start_time', 'StartTime') || undefined;
-  const endTime        = pickStr(r, 'end_time', 'End_time', 'EndTime') || undefined;
+  // Try every known field name variant the Koenig PMS may return
+  const scidRaw = r.SCID ?? r.scid ?? r.Scid ?? r.batch_scid ?? r.BatchScid ??
+                  r.SCID_No ?? r.scid_no ?? r.ScidNo ?? null;
+  const scid = scidRaw != null ? String(scidRaw) : undefined;
+
+  const paxRaw = r.NoOfParticipants ?? r.no_of_participants ?? r.participants ??
+                 r.Participants ?? r.TotalPax ?? r.total_pax ?? r.pax ?? r.Pax ??
+                 r.participant_count ?? r.ParticipantCount ?? null;
+  const noOfParticipants = paxRaw != null ? Number(paxRaw) : undefined;
+
+  const startTime = pickStr(r,
+    'Start_time', 'start_time', 'StartTime', 'Start_Time',
+    'batch_start_time', 'BatchStartTime', 'session_start_time', 'SessionStartTime',
+    'training_start_time', 'TrainingStartTime', 'time_from', 'TimeFrom',
+  ) || undefined;
+
+  const endTime = pickStr(r,
+    'end_time', 'End_time', 'EndTime', 'End_Time',
+    'batch_end_time', 'BatchEndTime', 'session_end_time', 'SessionEndTime',
+    'training_end_time', 'TrainingEndTime', 'time_to', 'TimeTo',
+  ) || undefined;
 
   return {
     id:            uid(),
@@ -2617,12 +2674,18 @@ const JOURNEY_TYPES = [
 ];
 
 // Valid journey types per date position in an assignment
+const ALL_JOURNEY_TYPES = [
+  'Home → Venue', 'Venue → Home', 'Home → Airport', 'Airport → Home',
+  'Home → Accommodation', 'Accommodation → Home', 'Airport → Venue', 'Venue → Airport',
+  'Airport → Accommodation', 'Accommodation → Airport', 'Venue → Accommodation', 'Accommodation → Venue',
+];
 const VALID_JOURNEY_BY_POSITION: Record<string, string[]> = {
-  departure:  ['Home → Venue', 'Home → Airport', 'Home → Accommodation', 'Accommodation → Airport', 'Venue → Airport', 'Airport → Accommodation', 'Airport → Venue'],
-  first:      ['Airport → Accommodation', 'Airport → Venue', 'Home → Venue', 'Home → Accommodation', 'Venue → Accommodation', 'Accommodation → Venue'],
-  mid:        ['Venue → Accommodation', 'Accommodation → Venue'],
-  last:       ['Venue → Airport', 'Accommodation → Airport', 'Venue → Accommodation', 'Accommodation → Venue'],
-  returnDay:  ['Venue → Home', 'Accommodation → Home', 'Airport → Home', 'Accommodation → Airport', 'Airport → Accommodation', 'Venue → Airport'],
+  departure:  ALL_JOURNEY_TYPES,
+  first:      ALL_JOURNEY_TYPES,
+  mid:        ALL_JOURNEY_TYPES,
+  last:       ALL_JOURNEY_TYPES,
+  returnDay:  ALL_JOURNEY_TYPES,
+  singleDay:  ALL_JOURNEY_TYPES,
 };
 
 // ── Auto-fill From/To based on journey type ───────────────────────────────────
@@ -2756,16 +2819,19 @@ function validateJourneyType(
   const coreAsgn = assignments.find(
     a => a.startDate && a.endDate && date >= a.startDate && date <= a.endDate,
   );
-  // Allow up to 2 days before assignment start (multi-leg international travel)
-  // and up to 2 days after assignment end (return journey connections)
+  // Allow up to 5 days before assignment start (multi-leg international travel, or a trainer
+  // arriving several days early and staying locally) and up to 5 days after assignment end
+  // (return journey connections, or post-batch holding in the same country before the next
+  // leg/assignment — e.g. Ankur Kumar EMP-2485 stayed in Dubai until 19 Jul, 3 days after his
+  // 16 Jul batch ended, before an overnight flight to Nairobi).
   const depAsgn = !coreAsgn
     ? assignments
-        .filter(a => a.startDate && (addDays(a.startDate, -1) === date || addDays(a.startDate, -2) === date))
+        .filter(a => a.startDate && date >= addDays(a.startDate, -5) && date < a.startDate)
         .sort((a, b) => (a.startDate! < b.startDate! ? -1 : 1))[0] ?? null
     : null;
   const retAsgn = !coreAsgn && !depAsgn
     ? assignments
-        .filter(a => a.endDate && (addDays(a.endDate, 1) === date || addDays(a.endDate, 2) === date))
+        .filter(a => a.endDate && date > a.endDate && date <= addDays(a.endDate, 5))
         .sort((a, b) => (b.endDate! > a.endDate! ? 1 : -1))[0] ?? null
     : null;
 
@@ -2779,11 +2845,12 @@ function validateJourneyType(
   }
 
   let position = '';
-  if (depAsgn)                                                        position = 'departure';
-  else if (retAsgn)                                                   position = 'returnDay';
-  else if (coreAsgn && date === coreAsgn.startDate)                  position = 'first';
-  else if (coreAsgn && date === coreAsgn.endDate)                    position = 'last';
-  else                                                                position = 'mid';
+  if (depAsgn)                                                                          position = 'departure';
+  else if (retAsgn)                                                                     position = 'returnDay';
+  else if (coreAsgn && coreAsgn.startDate === coreAsgn.endDate)                        position = 'singleDay';
+  else if (coreAsgn && date === coreAsgn.startDate)                                    position = 'first';
+  else if (coreAsgn && date === coreAsgn.endDate)                                      position = 'last';
+  else                                                                                  position = 'mid';
 
   const dateLabels: Record<string, string> = {
     departure:  'departure day (day before assignment starts)',
@@ -2791,6 +2858,7 @@ function validateJourneyType(
     mid:        'mid-assignment day',
     last:       'last day of assignment (departure)',
     returnDay:  'return day (day after assignment ends)',
+    singleDay:  'single-day assignment',
   };
   const dateContext = dateLabels[position] ?? position;
 
@@ -3036,9 +3104,18 @@ function AssignmentModal({ open, initial, fromDate, toDate, koenigCountries, cou
 
 export default function CreateTADABill({ currentUser }: { currentUser?: User }) {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // HR Admin Check Details proxy — hide submit-related UI
   const isProxyMode = !!(currentUser?.originalRole && currentUser.originalRole !== currentUser.role);
+
+  // Stable draft ID for this wizard session — generated once on mount
+  const draftClaimIdRef = useRef(`CLAIM-DRAFT-${Date.now()}`);
+  const draftRestoredRef = useRef(false);
+
+  // Edit mode — set when ?edit=claimId is in the URL
+  const editClaimIdRef = useRef('');
+  const editBillNoRef = useRef('');
 
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
@@ -3067,6 +3144,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const [fetchError, setFetchError] = useState('');
   const [fetchStatus, setFetchStatus] = useState<'idle' | 'success' | 'empty' | 'error'>('idle');
   const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [allNearbyAssignments, setAllNearbyAssignments] = useState<Assignment[]>([]);
   const [filterBatchType, setFilterBatchType] = useState('');
   const [filterMode, setFilterMode] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -3247,6 +3325,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     setFetched(false);
     setFetchStatus('idle');
     setAssignments([]);
+    setAllNearbyAssignments([]);
     setPmsFlights([]);    setFlightsError('');    setImportedTripIds(new Set());
     setPmsAccom([]);      setAccomError('');      setImportedAccom(new Set());
     setPmsLeaves([]);     setLeavesError('');
@@ -3257,13 +3336,20 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     setLeavesLoading(true);
     setAdvancesLoading(true);
 
-    // Launch five API calls simultaneously
-    const [assignResult, flightResult, accomResult, leavesResult, advancesResult] = await Promise.allSettled([
+    // Wider window dates for adjacent-assignment DA country detection (±30 days)
+    const wideFrom = new Date(fromDate); wideFrom.setDate(wideFrom.getDate() - 30);
+    const wideTo   = new Date(toDate);   wideTo.setDate(wideTo.getDate() + 30);
+    const wideFromStr = wideFrom.toISOString().slice(0, 10);
+    const wideToStr   = wideTo.toISOString().slice(0, 10);
+
+    // Launch five API calls simultaneously (plus one wider-window fetch for adjacent-assignment context)
+    const [assignResult, flightResult, accomResult, leavesResult, advancesResult, nearbyResult] = await Promise.allSettled([
       fetchTrainerAssignments(fromDate, toDate, empCode),
       empCode ? fetchTrainerFlights(empCode, currentUser?.email) : Promise.resolve<FlightRecord[]>([]),
       empCode ? fetchTrainerAccommodation(empCode) : Promise.resolve<AccommodationRecord[]>([]),
       empCode ? fetchEmployeeLeaves(empCode, fromDate, toDate) : Promise.resolve<LeaveRecord[]>([]),
       empCode ? fetchEmployeeAdvances(empCode) : Promise.resolve<RawAdvanceRecord[]>([]),
+      empCode ? fetchTrainerAssignments(wideFromStr, wideToStr, empCode) : Promise.resolve<RawTrainerAssignment[]>([]),
     ]);
 
     // ── Assignments ───────────────────────────────────────────────────────────
@@ -3352,12 +3438,162 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
 
       // Map AFTER filtering — fallback dates only used for display, not for filtering
       const mapped = validBatch.map(r => mapRawToAssignment(r, fromDate, toDate));
-      setAssignments(mapped);
-      setFetchStatus(mapped.length > 0 ? 'success' : 'empty');
+
+      // Cross-reference flights to fill in missing city/country for assignments.
+      // If an assignment has no city (blank PMS field), check for an outbound flight
+      // departing within startDate-2 to startDate+2. Use its destination city/country.
+      const allFlights: FlightRecord[] =
+        flightResult.status === 'fulfilled' ? flightResult.value : [];
+
+      const enriched = mapped.map(asgn => {
+        // City is present and resolves to India — confirmed domestic assignment, never override.
+        if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+        const asgnStart = asgn.startDate || fromDate;
+
+        // Find OUTBOUND international flights: departing up to 4 days BEFORE assignment start
+        // and AT MOST on the assignment start day. Using asgnStart as the upper bound excludes
+        // return flights (e.g. TG 472 Sydney→Bangkok departs AFTER start, so it's excluded).
+        const candidateOutFlights = allFlights.filter(f => {
+          if (f.Is_cancelled === 'Yes' || f.Is_cancelled === '1' || String(f.Is_cancelled) === '1') return false;
+          const fd = parseDT(f.departure_date);
+          if (!fd || !(fd >= addDays(asgnStart, -4) && fd <= asgnStart)) return false;
+          const destCity = (f.to_city || '').trim();
+          const destCountryCheck = destCity ? inferCountryFromCity(destCity) : '';
+          return destCountryCheck !== '' && destCountryCheck !== 'India';
+        });
+        // Pick the FINAL destination leg: a flight whose destination is NOT a departure city
+        // of another candidate (i.e. not a stopover/transit city).
+        // Example: Delhi→Bangkok→Sydney — Bangkok is a departure city for the Sydney leg,
+        // so Sydney is the final leg. PMS might store Bangkok (transit), but Sydney is correct.
+        const departureCities = new Set(candidateOutFlights.map(f => (f.from_city || '').trim().toLowerCase()));
+        const finalLeg = candidateOutFlights.find(f => !departureCities.has((f.to_city || '').trim().toLowerCase()));
+        const outFlight = finalLeg ?? candidateOutFlights[candidateOutFlights.length - 1] ?? null;
+
+        // If PMS already has correct international city/country AND it matches the final flight leg,
+        // keep it. But if flights show the trainer transits THROUGH the PMS city to a further
+        // destination, force-override with the actual final destination.
+        let pmsIsTransit = false;
+        if (asgn.city && asgn.country && asgn.country !== 'India') {
+          const pmsCityNorm = asgn.city.trim().toLowerCase();
+          pmsIsTransit = candidateOutFlights.some(f => (f.from_city || '').trim().toLowerCase() === pmsCityNorm);
+          if (!pmsIsTransit) return asgn; // PMS city is the real final destination — keep it
+        }
+        if (!outFlight) return asgn;
+        const toCity    = (outFlight.to_city || '').trim();
+        const inferred  = toCity ? inferCountryFromCity(toCity) : '';
+        if (!inferred || inferred === 'India') return asgn;
+        // When PMS city is a transit stop, force both city and country to the final destination.
+        const enrichedCity    = pmsIsTransit ? toCity : (asgn.city || toCity);
+        const enrichedCountry = pmsIsTransit ? inferred : ((asgn.country === 'India' || !asgn.country) ? inferred : asgn.country);
+        return { ...asgn, city: enrichedCity, country: enrichedCountry };
+      });
+
+      // ── Consecutive-assignment enrichment ─────────────────────────────────
+      // When a trainer has 2-3 back-to-back assignments at the same destination
+      // (e.g. Dubai batch 1 → Dubai batch 2) with no return flight in between,
+      // the 2nd/3rd assignment may lack city/country in PMS. Inherit from the
+      // previous international assignment if no active return-to-India flight
+      // exists between the two assignments.
+      const sortedForEnrich = enriched.slice().sort((a, b) =>
+        (a.startDate || '') < (b.startDate || '') ? -1 : 1
+      );
+      const consecutiveEnriched = sortedForEnrich.map((asgn, idx) => {
+        // Already resolved to a confirmed international destination → skip
+        if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
+        // Confirmed domestic (India city) → skip
+        if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+        // ILO (online) assignments — trainer is at home in India, never inherit international country
+        if (asgn.deliveryMode === 'Online') return asgn;
+
+        // Find the closest previous assignment that IS international
+        const prevIntl = sortedForEnrich
+          .slice(0, idx)
+          .filter(a => a.country && a.country !== 'India')
+          .sort((a, b) => (b.endDate || '') > (a.endDate || '') ? 1 : -1)[0] ?? null;
+        if (!prevIntl?.endDate) return asgn;
+
+        // Check: is there any active return-to-India flight between prevIntl.endDate and this assignment's start?
+        const curStart = asgn.startDate || addDays(prevIntl.endDate, 1);
+        const returnToIndia = allFlights.find(f => {
+          if (f.Is_cancelled === 'Yes' || f.Is_cancelled === '1' || String(f.Is_cancelled) === '1') return false;
+          const fd = parseDT(f.departure_date);
+          if (!fd) return false;
+          if (fd < prevIntl.endDate! || fd > addDays(curStart, 1)) return false;
+          const toC = inferCountryFromCity((f.to_city || '').trim());
+          return toC === 'India';
+        });
+        if (returnToIndia) return asgn; // trainer did return — don't inherit
+
+        // No return flight between the two assignments — trainer stayed at same destination
+        return {
+          ...asgn,
+          city: asgn.city || prevIntl.city || '',
+          country: prevIntl.country,
+          trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
+        };
+      });
+
+      setAssignments(consecutiveEnriched);
+      setFetchStatus(enriched.length > 0 ? 'success' : 'empty');
     } else {
       const msg = (assignResult.reason as Error)?.message || 'Assignment fetch failed';
       setFetchError(msg);
       setFetchStatus('error');
+    }
+
+    // ── Nearby Assignments (wider window for adjacent-assignment DA context) ──
+    // Apply the SAME consecutive enrichment so prevAsgn/nextAsgn checks on travel days
+    // correctly see the inherited country for assignments without PMS city data.
+    if (nearbyResult.status === 'fulfilled') {
+      const nearbyMapped = nearbyResult.value.map(r => mapRawToAssignment(r, wideFromStr, wideToStr));
+      const availableFlights = flightResult.status === 'fulfilled' ? flightResult.value : [];
+      const activeAvailableFlights = availableFlights.filter(f => f.Is_cancelled !== 'Yes' && f.Is_cancelled !== '1' && String(f.Is_cancelled) !== '1');
+      const nearbyFlight1Pass = nearbyMapped.map(asgn => {
+        if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+        if (asgn.deliveryMode === 'Online') return asgn;
+        const asgnStart = asgn.startDate || fromDate;
+        const candidateNearby = activeAvailableFlights.filter(f => {
+          const fd = parseDT(f.departure_date);
+          if (!fd || !(fd >= addDays(asgnStart, -4) && fd <= asgnStart)) return false;
+          const dc = inferCountryFromCity((f.to_city || '').trim());
+          return dc !== '' && dc !== 'India';
+        });
+        const nearbyDepCities = new Set(candidateNearby.map(f => (f.from_city || '').trim().toLowerCase()));
+        const nearbyFinalLeg = candidateNearby.find(f => !nearbyDepCities.has((f.to_city || '').trim().toLowerCase()));
+        const outFlight = nearbyFinalLeg ?? candidateNearby[candidateNearby.length - 1] ?? null;
+        let nearbyIsTransit = false;
+        if (asgn.city && asgn.country && asgn.country !== 'India') {
+          const pmsCityNorm = asgn.city.trim().toLowerCase();
+          nearbyIsTransit = candidateNearby.some(f => (f.from_city || '').trim().toLowerCase() === pmsCityNorm);
+          if (!nearbyIsTransit) return asgn;
+        }
+        if (!outFlight) return asgn;
+        const toCity = (outFlight.to_city || '').trim();
+        const inferred = toCity ? inferCountryFromCity(toCity) : '';
+        if (!inferred || inferred === 'India') return asgn;
+        const nCity    = nearbyIsTransit ? toCity : (asgn.city || toCity);
+        const nCountry = nearbyIsTransit ? inferred : ((asgn.country === 'India' || !asgn.country) ? inferred : asgn.country);
+        return { ...asgn, city: nCity, country: nCountry };
+      });
+      const nearbyByDate = nearbyFlight1Pass.slice().sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1);
+      const nearbyEnriched = nearbyByDate.map((asgn, idx) => {
+        if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
+        if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+        if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India)
+        const prevIntl = nearbyByDate.slice(0, idx).filter(a => a.country && a.country !== 'India')
+          .sort((a, b) => (b.endDate || '') > (a.endDate || '') ? 1 : -1)[0] ?? null;
+        if (!prevIntl?.endDate) return asgn;
+        const curStart = asgn.startDate || addDays(prevIntl.endDate, 1);
+        const returnToIndia = activeAvailableFlights.find(f => {
+          const fd = parseDT(f.departure_date);
+          if (!fd || fd < prevIntl.endDate! || fd > addDays(curStart, 1)) return false;
+          return inferCountryFromCity((f.to_city || '').trim()) === 'India';
+        });
+        if (returnToIndia) return asgn;
+        return { ...asgn, city: asgn.city || prevIntl.city || '', country: prevIntl.country,
+          trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null) };
+      });
+      setAllNearbyAssignments(nearbyEnriched);
     }
 
     // ── Flights ───────────────────────────────────────────────────────────────
@@ -3556,6 +3792,18 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     // Only consider active (non-cancelled) flights for all DA calculations
     const activeFlights = pmsFlights.filter(f => f.Is_cancelled !== 'Yes');
 
+    // Resolve effective arrival date for a flight: use arrival_date when present; otherwise
+    // infer next-day arrival for late-evening departures (≥ 18:00) where arrival_date is null.
+    // This covers TG 471-style overnight legs where the PMS stores null arrival_date.
+    const resolveArrDate = (f: typeof activeFlights[0]): string => {
+      const raw = (f.arrival_date || '').trim();
+      if (raw) return parseDT(raw);
+      const depD    = parseDT((f.departure_date || '').trim());
+      const depTime = (f.departure_time  || '').substring(0, 5);
+      if (depD && depTime && depTime >= '18:00') return addDays(depD, 1);
+      return '';
+    };
+
     // ── Flight-aware departure / return day resolution ──────────────────────────
     // Rule: use the actual flight departure_date as the travel day.
     // • If the outbound flight departs the day BEFORE assignment start → that day gets Departure DA
@@ -3572,6 +3820,10 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     const flightRetEligible = new Map<string, boolean>(); // endDate   → arrival after 12:00?
     const flightDepTime     = new Map<string, string>();  // startDate → "HH:MM" for remarks
     const flightArrTime     = new Map<string, string>();  // endDate   → "HH:MM" for remarks
+    // For overnight return flights: arrival date is different from departure date → add as India DA day
+    const flightRetArrDay   = new Map<string, string>(); // endDate → arrival ISO date (if overnight)
+    // For overnight outbound connecting flights: final leg arrives at destination the next day → add as destCountry DA day
+    const flightDepArrDay   = new Map<string, string>(); // startDate → arrival ISO date at destination (if overnight final leg)
 
     // IST-based travel-day DA: store arrival/departure times + country for timezone conversion
     const outboundArrTimeLocal = new Map<string, string>(); // startDate → outbound arrival HH:MM (destination local)
@@ -3599,14 +3851,48 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         obAsgnIds.add(a.assignmentId);
       }
 
-      // Outbound: find active flight departing within 2 days before assignment start.
-      const outbound = activeFlights.find(f => {
+      // Outbound: find active flight departing within a window before assignment start.
+      // Window widened to -6 days (was -2) to catch trainers who arrive several days early
+      // and stay locally before the batch begins (e.g. multi-day domestic pre-batch stay,
+      // or a connecting return-from-a-previous-trip leg landing a few days before start).
+      const outboundCandidates = activeFlights.filter(f => {
         const fd = parseDT(f.departure_date);
-        return fd ? fd >= addDays(start, -2) && fd <= start : false;
-      }) ?? null;
+        return fd ? fd >= addDays(start, -6) && fd <= addDays(start, 1) : false;
+      });
+      // Priority 1: the LATEST candidate whose to_city exactly matches the assignment's
+      // training city — this is the actual final leg that brought the trainer to the
+      // training destination, regardless of how many days before start it departed.
+      const cityMatches = a.city
+        ? outboundCandidates.filter(f => (f.to_city || '').trim().toLowerCase() === a.city!.trim().toLowerCase())
+        : [];
+      const cityMatchPick = cityMatches.length === 0 ? null
+        : cityMatches.reduce((latest, f) => {
+            const ld = parseDT(latest.departure_date) || '';
+            const fd = parseDT(f.departure_date) || '';
+            return fd > ld ? f : latest;
+          });
+      // Priority 2 (fallback): pick the leg with the EARLIEST departure time so the actual
+      // first leg determines depEligible, not a connecting leg that departs later the same
+      // day (which could be after 17:00). Used when no exact-city match is found (e.g.
+      // assignment has no city set, or international assignments matched by country instead).
+      const outbound = cityMatchPick ?? (outboundCandidates.length === 0 ? null
+        : outboundCandidates.reduce((earliest, f) => {
+            const ed = parseDT(earliest.departure_date) || '';
+            const fd = parseDT(f.departure_date) || '';
+            if (fd < ed) return f;
+            if (fd > ed) return earliest;
+            // Same departure date: pick the one with the earlier departure time
+            const et = (earliest.departure_time || '').substring(0, 5);
+            const ft = (f.departure_time || '').substring(0, 5);
+            return ft < et ? f : earliest;
+          }));
       if (outbound) {
         const fd = parseDT(outbound.departure_date);
-        if (fd && fd < start) {
+        if (fd && fd > start) {
+          // Flight departs AFTER assignment start (e.g. day 2) — that date is the actual travel day;
+          // startDate itself is a pre-travel India day
+          flightDepDay.set(start, fd);
+        } else if (fd && fd < start) {
           // Flight departs before the assignment starts → that date is the travel day
           flightDepDay.set(start, fd);
         }
@@ -3623,6 +3909,35 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         const outArrCountry = inferCountryFromCity(outToCity);
         outboundArrTimeLocal.set(start, outArrHHMM);
         outboundArrCountry.set(start, outArrCountry);
+
+        // Overnight outbound connecting flight: if the first outbound leg doesn't land at the
+        // assignment destination country (e.g. Delhi→Bangkok only), look for a connecting leg
+        // that arrives at the assignment destination on a LATER date.
+        // Example: TG 324 Delhi→Bangkok (02 Aug), TG 471 Bangkok→Sydney (02 Aug dep, 03 Aug arr)
+        // → 03 Aug should get Australia DA (trainer physically in Sydney).
+        const asgnDestCountryForDep = a.country && a.country !== 'India'
+          ? a.country
+          : (a.city ? inferCountryFromCity(a.city) : '');
+        if (asgnDestCountryForDep && asgnDestCountryForDep !== 'India' && outArrCountry !== asgnDestCountryForDep) {
+          // First outbound leg didn't reach the destination — look for connecting leg TO destination
+          const connectingLeg = activeFlights.find(f => {
+            const fd = parseDT(f.departure_date);
+            if (!fd) return false;
+            // Connecting leg departs on same day or day after the first outbound leg
+            const outDepDate = parseDT(outbound.departure_date);
+            if (!outDepDate || fd < outDepDate || fd > addDays(outDepDate, 2)) return false;
+            const toCountry = inferCountryFromCity((f.to_city || '').trim());
+            return toCountry === asgnDestCountryForDep;
+          });
+          if (connectingLeg) {
+            const connArrDate = resolveArrDate(connectingLeg) || null;
+            const connDepDate = parseDT(connectingLeg.departure_date);
+            if (connArrDate && connDepDate && connArrDate > connDepDate) {
+              // Final leg is overnight — trainer arrives at destination on connArrDate
+              flightDepArrDay.set(start, connArrDate);
+            }
+          }
+        }
       } else {
         // No flight data → standard: day before start; default eligible
         flightDepDay.set(start, addDays(start, -1));
@@ -3630,10 +3945,26 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       }
 
       // Return: find active flight departing on or within 2 days after assignment end.
-      const returnFlight = activeFlights.find(f => {
-        const fd = parseDT(f.departure_date);
-        return fd ? fd >= end && fd <= addDays(end, 2) : false;
-      }) ?? null;
+      // For international assignments, prefer the leg departing FROM the assignment country (the actual return leg),
+      // not a domestic connection (e.g. Mumbai→Bangalore after landing in India).
+      const candidateRetFlights = activeFlights
+        .filter(f => { const fd = parseDT(f.departure_date); return fd ? fd >= end && fd <= addDays(end, 2) : false; })
+        .sort((a, b) => {
+          const da = parseDT(a.departure_date);
+          const db = parseDT(b.departure_date);
+          return da && db ? (da < db ? -1 : da > db ? 1 : 0) : 0;
+        });
+      // Prefer the earliest leg departing from the assignment country (the actual international return leg)
+      const asgnRawCountry = a.country || '';
+      const asgnCityCountry = a.city ? inferCountryFromCity(a.city) : '';
+      const asgnDestCountry = (asgnRawCountry === 'India' && asgnCityCountry && asgnCityCountry !== 'India')
+        ? asgnCityCountry : (asgnRawCountry || asgnCityCountry);
+      const returnFlight = (asgnDestCountry && asgnDestCountry !== 'India'
+        ? (candidateRetFlights.find(f => {
+            const fromCountry = inferCountryFromCity((f.from_city || '').trim());
+            return fromCountry !== 'India';
+          }) ?? candidateRetFlights[0])
+        : candidateRetFlights[0]) ?? null;
       if (returnFlight) {
         const fd = parseDT(returnFlight.departure_date);
         if (fd && fd > end) {
@@ -3641,6 +3972,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           flightRetDay.set(end, fd);
         }
         // If fd === end: trainer departs on last day of assignment — no extra return day
+        // Overnight return flight: arrival_date > departure_date → add arrival date as India DA day
+        const rawArrDate = (returnFlight.arrival_date || '').trim();
+        const arrDate = rawArrDate ? parseDT(rawArrDate) : null;
+        if (arrDate && fd && arrDate > fd) {
+          flightRetArrDay.set(end, arrDate);
+        }
         // Time eligibility for return: arrival at base must be after 12:00
         const rawArrTime = (returnFlight.arrival_time || '').trim();
         const arrHHMM    = rawArrTime.substring(0, 5);
@@ -3657,6 +3994,44 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         // No flight data → standard: day after end; default eligible
         flightRetDay.set(end, addDays(end, 1));
         flightRetEligible.set(end, true);
+      }
+    });
+
+    // ── Flight-based return day supplement ─────────────────────────────────────
+    // For any assignment where the return flight was not detected (or detected incorrectly),
+    // scan all active flights for a departure FROM the destination country after assignment end.
+    // This ensures the return travel day always gets included in the DA table even when
+    // the candidateRetFlights logic misses it (e.g. connecting multi-leg journeys).
+    assignments.forEach(a => {
+      const aEnd = a.endDate || toDate;
+      const asgnRawC = a.country || '';
+      const asgnCityC = a.city ? inferCountryFromCity(a.city) : '';
+      const asgnDestC = (asgnRawC === 'India' && asgnCityC && asgnCityC !== 'India')
+        ? asgnCityC : (asgnRawC || asgnCityC);
+      if (!asgnDestC || asgnDestC === 'India') return;
+      // Find the earliest flight departing FROM the destination country after assignment end
+      const retFltFromDest = activeFlights.find(f => {
+        const fd = parseDT(f.departure_date);
+        if (!fd || fd <= aEnd || fd > addDays(aEnd, 5)) return false;
+        const fromC = inferCountryFromCity((f.from_city || '').trim());
+        return fromC === asgnDestC;
+      });
+      if (retFltFromDest) {
+        const fd = parseDT(retFltFromDest.departure_date);
+        if (fd && (!flightRetDay.has(aEnd) || flightRetDay.get(aEnd) !== fd)) {
+          // Only override if not already set to the correct (destination-departing) date
+          if (!flightRetDay.has(aEnd)) {
+            flightRetDay.set(aEnd, fd);
+            const depHHMM = (retFltFromDest.departure_time || '').substring(0, 5);
+            flightRetEligible.set(aEnd, !depHHMM || depHHMM >= '04:00');
+            flightArrTime.set(aEnd, (retFltFromDest.arrival_time || '').substring(0, 5));
+            const rawArrD = (retFltFromDest.arrival_date || '').trim();
+            const arrD = rawArrD ? parseDT(rawArrD) : null;
+            if (arrD && arrD > fd) flightRetArrDay.set(aEnd, arrD);
+            returnDepTimeLocal.set(aEnd, depHHMM);
+            returnDepCountry.set(aEnd, asgnDestC);
+          }
+        }
       }
     });
 
@@ -3680,7 +4055,87 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         // Include ALL days from departure to return — covers departure day,
         // pre-batch transit days, core assignment days, post-batch holding days, and return day.
         isoRange(dep, ret).forEach(d => dateSet.add(d));
+        // For overnight return flights, the arrival date (next day) must also be shown as India DA
+        const arrDay = flightRetArrDay.get(end);
+        if (arrDay) dateSet.add(arrDay);
+        // For overnight outbound connecting flights, the arrival date at destination gets destination DA
+        const depArrDay = flightDepArrDay.get(start);
+        if (depArrDay) dateSet.add(depArrDay);
+        // Direct scan: any active flight arriving at the assignment destination country,
+        // departing within the 5 days before assignment start and arriving on a LATER date,
+        // must also appear in the DA table (covers cases where flightDepArrDay detection misses).
+        const asgnCountryForScan = (a.country && a.country !== 'India')
+          ? a.country
+          : (a.city ? inferCountryFromCity(a.city) : '');
+        if (asgnCountryForScan && asgnCountryForScan !== 'India') {
+          activeFlights.forEach(f => {
+            const depD = parseDT((f.departure_date || '').trim());
+            const arrD = resolveArrDate(f);
+            if (!depD || !arrD || arrD <= depD) return;
+            if (depD < addDays(start, -5) || depD > start) return;
+            const toC = inferCountryFromCity((f.to_city || '').trim());
+            if (toC === asgnCountryForScan) dateSet.add(arrD);
+          });
+        }
       });
+    }
+
+    // Weekend/gap-fill: consecutive same-country FMAT assignments ≤ 7 days apart →
+    // trainer stayed at location; add Sat/Sun (and any other gap days) to dateSet
+    // and map each gap date → its associated assignment for DA calculation.
+    const gapDateMap = new Map<string, typeof assignments[0]>();
+    {
+      const getAsgnDestC = (a: typeof assignments[0]) => {
+        const cc = a.city ? inferCountryFromCity(a.city) : '';
+        return (a.country === 'India' && cc && cc !== 'India') ? cc : (a.country || cc || '');
+      };
+      const sortedForGap = [...assignments]
+        .filter(a => a.deliveryMode !== 'Online' && a.batchType !== 'ILO' && a.startDate && a.endDate)
+        .sort((a, b) => (a.startDate! < b.startDate! ? -1 : 1));
+      for (let i = 0; i < sortedForGap.length - 1; i++) {
+        const asgnA = sortedForGap[i];
+        const asgnB = sortedForGap[i + 1];
+        const destA = getAsgnDestC(asgnA);
+        const destB = getAsgnDestC(asgnB);
+        if (!destA || !destB) continue;
+        const gapStart = addDays(asgnA.endDate!, 1);
+        const gapEnd   = addDays(asgnB.startDate!, -1);
+        if (gapStart > gapEnd) continue;
+        const gapDays = Math.round((new Date(gapEnd).getTime() - new Date(gapStart).getTime()) / 86400000) + 1;
+        if (gapDays > 7) continue;
+
+        if (destA === destB) {
+          // Same-country gap (e.g. weekend between two batches at the same destination) —
+          // trainer stayed put; fill every gap day with that country's DA.
+          isoRange(gapStart, gapEnd).forEach(d => {
+            dateSet.add(d);
+            if (!gapDateMap.has(d)) gapDateMap.set(d, asgnA);
+          });
+        } else {
+          // DIFFERENT-country gap (e.g. Ankur Kumar EMP-2485: Dubai batch ends 16 Jul, Nairobi
+          // batch starts 20 Jul) — trainer stayed in destA's country until a connecting flight
+          // to destB departs. Find that bridging flight; fill days from gapStart up to (but not
+          // including) its departure date with destA's DA. The departure date itself is handled
+          // separately by the normal depAsgn/travel-day logic (already resolves to destB or
+          // India depending on arrival time — do not duplicate that here).
+          const bridgingFlight = activeFlights.find(f => {
+            const fd = parseDT((f.departure_date || '').trim());
+            if (!fd || fd < gapStart || fd > addDays(gapEnd, 1)) return false;
+            const fromC = inferCountryFromCity((f.from_city || '').trim());
+            const toC   = inferCountryFromCity((f.to_city || '').trim());
+            return fromC === destA && toC === destB;
+          });
+          if (!bridgingFlight) continue;
+          const bridgeDepDate = parseDT((bridgingFlight.departure_date || '').trim());
+          if (!bridgeDepDate) continue;
+          const stayEnd = addDays(bridgeDepDate, -1);
+          if (stayEnd < gapStart) continue;
+          isoRange(gapStart, stayEnd).forEach(d => {
+            dateSet.add(d);
+            if (!gapDateMap.has(d)) gapDateMap.set(d, asgnA);
+          });
+        }
+      }
     }
 
     const sortedDates = Array.from(dateSet).sort();
@@ -3716,13 +4171,48 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     });
 
     return sortedDates.map(iso => {
+      // ── Highest priority: overnight outbound connecting flight arrival ──────────
+      // When a multi-leg outbound journey (e.g. Delhi→Bangkok→Sydney) has its FINAL leg
+      // arriving at the assignment destination on the NEXT calendar day (overnight flight),
+      // that arrival date must get destination-country DA regardless of any other assignment
+      // (including online/ILO batches that may overlap).
+      // Detection: any active flight that (a) arrives ON this date, (b) departs on an EARLIER
+      // date, and (c) arrives at the assignment destination country.
+      const overnightDepArrAsgn = (() => {
+        for (const a of assignments) {
+          const asgnStart = a.startDate || fromDate;
+          // Only consider flights departing in the 3 days before assignment start
+          const windowStart = addDays(asgnStart, -5);
+          const windowEnd   = asgnStart;
+          // Determine assignment destination country
+          const asgnCountry = (a.country && a.country !== 'India')
+            ? a.country
+            : (a.city ? inferCountryFromCity(a.city) : '');
+          if (!asgnCountry || asgnCountry === 'India') continue;
+          // Find any flight arriving on this date at the destination country
+          const found = activeFlights.find(f => {
+            const arrDate = resolveArrDate(f);
+            if (arrDate !== iso) return false;
+            const depDate = parseDT((f.departure_date || '').trim());
+            if (!depDate || depDate >= iso) return false; // same-day arrivals handled by depAsgn
+            if (depDate < windowStart || depDate > windowEnd) return false;
+            const toCountry = inferCountryFromCity((f.to_city || '').trim());
+            return toCountry === asgnCountry;
+          });
+          if (found) return a;
+        }
+        return null;
+      })();
+
       // Find the assignment whose core range (startDate..endDate) covers this date
-      const coreAsgn = assignments.find(a =>
-        a.startDate && a.endDate && iso >= a.startDate && iso <= a.endDate,
-      );
+      const coreAsgn = !overnightDepArrAsgn
+        ? assignments.find(a =>
+            a.startDate && a.endDate && iso >= a.startDate && iso <= a.endDate,
+          )
+        : null;
 
       // Check if this is a departure travel day (actual flight date before assignment start)
-      const depAsgn = !coreAsgn
+      const depAsgn = !overnightDepArrAsgn && !coreAsgn
         ? assignments.find(a => {
             const depDay = flightDepDay.get(a.startDate || fromDate);
             return depDay === iso;
@@ -3730,7 +4220,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         : null;
 
       // Check if this is a return travel day (actual flight date after assignment end)
-      const retAsgn = !coreAsgn && !depAsgn
+      const retAsgn = !overnightDepArrAsgn && !coreAsgn && !depAsgn
         ? assignments.find(a => {
             const retDay = flightRetDay.get(a.endDate || toDate);
             return retDay === iso;
@@ -3740,7 +4230,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       // Policy: days between the departure flight and assignment start (pre-batch transit),
       // or between assignment end and return flight (post-batch holding), are eligible for DA
       // at the destination country rate — the trainer is abroad during these days.
-      const interimAsgn = !coreAsgn && !depAsgn && !retAsgn
+      const interimAsgn = !overnightDepArrAsgn && !coreAsgn && !depAsgn && !retAsgn
         ? assignments.find(a => {
             const aStart  = a.startDate || fromDate;
             const aEnd    = a.endDate   || toDate;
@@ -3750,10 +4240,22 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           })
         : null;
 
-      const asgn = coreAsgn ?? depAsgn ?? retAsgn ?? interimAsgn ?? null;
-      const isDeparture = !!depAsgn;
-      const isReturn    = !!retAsgn;
-      const isInterim   = !!interimAsgn;
+      // Overnight return flight: arrival date is the day AFTER departure — trainer has landed in India
+      const overnightArrAsgn = !overnightDepArrAsgn && !coreAsgn && !depAsgn && !retAsgn && !interimAsgn
+        ? assignments.find(a => flightRetArrDay.get(a.endDate || toDate) === iso)
+        : null;
+
+      // Gap day between consecutive same-country assignments (weekends, holidays)
+      const gapAsgn = !overnightDepArrAsgn && !coreAsgn && !depAsgn && !retAsgn && !interimAsgn && !overnightArrAsgn
+        ? (gapDateMap.get(iso) ?? null)
+        : null;
+
+      const asgn = overnightDepArrAsgn ?? coreAsgn ?? depAsgn ?? retAsgn ?? interimAsgn ?? overnightArrAsgn ?? gapAsgn ?? null;
+      const isDeparture        = !!depAsgn;
+      const isReturn           = !!retAsgn;
+      const isInterim          = !!interimAsgn;
+      const isOvernightArrival = !!overnightArrAsgn;
+      const isOvernightDepArrival = !!overnightDepArrAsgn;
 
       // PMS sometimes stores country='India' even for international assignments.
       // Override using city when country='India' but city resolves to a different country.
@@ -3782,7 +4284,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         const asgnStart = asgn?.startDate || fromDate;
         // If the previous assignment was in the same country, trainer was already in-country —
         // no departure flight needed, so give full international DA.
-        const prevAsgn = assignments
+        const prevAsgn = allNearbyAssignments
           .filter(a => a !== asgn && a.endDate && a.endDate < asgnStart)
           .sort((a, b) => (b.endDate! > a.endDate! ? 1 : -1))[0] ?? null;
         const prevCountry = prevAsgn
@@ -3794,7 +4296,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           // Apply outbound flight arrival-time cutoff
           const outboundFlight = activeFlights.find(f => {
             const fd = parseDT(f.departure_date);
-            return fd ? fd >= addDays(asgnStart, -2) && fd <= asgnStart : false;
+            return fd ? fd >= addDays(asgnStart, -2) && fd <= addDays(asgnStart, 1) : false;
           });
           const arrLocal = outboundFlight ? (outboundFlight.arrival_time || '').substring(0, 5) : '';
           if (arrLocal) {
@@ -3809,11 +4311,17 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             isInternationalTravelDay = true;
           }
         }
+      } else if (isOvernightArrival) {
+        // Trainer has landed back in India after an overnight return flight — India DA
+        travelDayCountry = 'India';
+      } else if (isOvernightDepArrival) {
+        // Trainer arrived at the international destination via overnight connecting flight — destination DA
+        travelDayCountry = destCountry;
       } else if (isReturn && destCountry !== 'India' && destCountry !== '') {
         const asgnEnd = asgn?.endDate || toDate;
         // If the next assignment is in the same country, trainer stays in-country —
         // no return flight, so give full international DA.
-        const nextAsgn = assignments
+        const nextAsgn = allNearbyAssignments
           .filter(a => a !== asgn && a.startDate && a.startDate > asgnEnd)
           .sort((a, b) => (a.startDate! < b.startDate! ? -1 : 1))[0] ?? null;
         const nextCountry = nextAsgn
@@ -3822,10 +4330,18 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         if (nextCountry === destCountry) {
           travelDayCountry = destCountry; // stays in-country (consecutive same-country assignments)
         } else {
-          // Apply return flight departure-time cutoff
-          const returnFlight2 = activeFlights.find(f => {
+          // Apply return flight departure-time cutoff.
+          // Prefer the leg departing FROM the destination country (the actual return leg),
+          // not a domestic connection or transit leg — ensures correct DA for multi-leg journeys.
+          const retFlightFromDest = activeFlights.find(f => {
             const fd = parseDT(f.departure_date);
-            return fd ? fd >= asgnEnd && fd <= addDays(asgnEnd, 2) : false;
+            if (!fd || !(fd >= asgnEnd && fd <= addDays(asgnEnd, 5))) return false;
+            const fromC = inferCountryFromCity((f.from_city || '').trim());
+            return fromC === destCountry;
+          });
+          const returnFlight2 = retFlightFromDest ?? activeFlights.find(f => {
+            const fd = parseDT(f.departure_date);
+            return fd ? fd >= asgnEnd && fd <= addDays(asgnEnd, 5) : false;
           });
           const depLocal = returnFlight2 ? (returnFlight2.departure_time || '').substring(0, 5) : '';
           if (depLocal) {
@@ -3940,8 +4456,9 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         statusClass = 'bg-amber-50 text-amber-700 border border-amber-200';
         amount      = 0;
         remarks     = `${asgnTag} — flight departs at ${depTimeStr || '?'} (after 17:00); travel day DA not applicable per policy`;
-      } else if (isReturn && !retEligible) {
+      } else if (isReturn && !retEligible && !flightRetArrDay.has(asgn?.endDate || '')) {
         // Arrival before 12:00 → return day DA not applicable per policy
+        // (Skip this check for overnight flights — arrival is on the next day, handled separately)
         status      = 'Not Eligible — Return Arrival Before 12:00';
         statusClass = 'bg-amber-50 text-amber-700 border border-amber-200';
         amount      = 0;
@@ -3978,6 +4495,43 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             : destCountry !== 'India'
               ? `${asgnTag} — return from ${destCountry}; ${retDepNote}; 4+ hrs in ${destCountry} (departed at/after 04:00 local), ${destCountry} DA applied${arrNote}`
               : `${asgnTag} — return day${arrNote}`;
+      } else if (isOvernightArrival) {
+        // Overnight return flight: trainer landed in India on this day
+        const asgnTag2 = asgn?.assignmentId ? `Asgn #${asgn.assignmentId}` : (asgn?.courseName || '—');
+        const retFltArr = activeFlights.find(f => {
+          const ad = parseDT(f.arrival_date);
+          return ad ? ad === iso : false;
+        });
+        const overnightArrHHMM = retFltArr
+          ? (retFltArr.arrival_time || '').substring(0, 5)
+          : (flightArrTime.get(asgn?.endDate || '') || '');
+        const arrNote3 = overnightArrHHMM ? `, arrived ${overnightArrHHMM}` : '';
+        if (overnightArrHHMM && overnightArrHHMM < '12:00') {
+          // Arrived before working hours — no DA for this day
+          status      = 'Not Eligible — Early Arrival (Before 12:00)';
+          statusClass = 'bg-gray-100 text-gray-500';
+          amount      = 0;
+          remarks = `${asgnTag2} — arrived back in India at ${overnightArrHHMM} (before 12:00); no DA for arrival day`;
+        } else {
+          status      = 'Allowed (Arrived in India)';
+          statusClass = 'bg-green-100 text-green-700';
+          amount      = rate;
+          remarks = `${asgnTag2} — arrived back in India after overnight flight${arrNote3}; India DA applied`;
+        }
+      } else if (isOvernightDepArrival) {
+        // Overnight outbound connecting flight: trainer arrived at destination on this day
+        // (e.g. Bangkok → Sydney departs 02 Aug, arrives Sydney 03 Aug → 03 Aug = Australia DA)
+        const asgnTagDep = asgn?.assignmentId ? `Asgn #${asgn.assignmentId}` : (asgn?.courseName || '—');
+        const connFlt = activeFlights.find(f => {
+          const ad = parseDT(f.arrival_date);
+          return ad ? ad === iso : false;
+        });
+        const depArrHHMM = connFlt ? (connFlt.arrival_time || '').substring(0, 5) : '';
+        const depArrNote = depArrHHMM ? `, arrived ${depArrHHMM}` : '';
+        status      = `Allowed (Arrived in ${destCountry})`;
+        statusClass = 'bg-green-100 text-green-700';
+        amount      = rate;
+        remarks     = `${asgnTagDep} — arrived in ${destCountry} via overnight connecting flight${depArrNote}; ${destCountry} DA applied`;
       } else if (isInterim) {
         // Policy: days between departure flight and batch start (pre-batch transit),
         // or between batch end and return flight (post-batch holding), are eligible for DA.
@@ -4057,6 +4611,180 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
   const [submitError, setSubmitError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  // ── Draft / Edit: restore from URL param on mount ───────────────────────
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+
+    // ── Edit mode: ?edit=claimId ─────────────────────────────────────────
+    const editId = params.get('edit');
+    if (editId) {
+      editClaimIdRef.current = editId;
+      // Fetch claim header from memory
+      const claimHeader = getClaims().find(c => c.claimId === editId);
+      if (claimHeader) {
+        editBillNoRef.current = claimHeader.billNo ?? '';
+        if (claimHeader.claimStartDate) setFromDate(claimHeader.claimStartDate);
+        if (claimHeader.claimEndDate) setToDate(claimHeader.claimEndDate);
+        if (claimHeader.adminRemark) setEmployeeRemarks(claimHeader.adminRemark);
+      }
+      // Fetch line items from Turso for this claim, then map back to wizard state
+      fetch(`/api/turso?type=lineitems&claimId=${editId}`)
+        .then(r => r.json())
+        .then((data: { lineItems?: ClaimLineItem[] }) => {
+          const items: ClaimLineItem[] = data.lineItems ?? [];
+          const restoredTravel: TravelBill[] = [];
+          const restoredMisc: MiscExpense[] = [];
+          const restoredLodging: LodgingEntry[] = [];
+          items.forEach(li => {
+            if (li.expenseType === 'TA') {
+              const rawId = li.lineItemId?.replace('LI-TA-', '') || uid();
+              restoredTravel.push({
+                id: rawId,
+                date: li.date ?? '',
+                journeyType: li.expenseSubType ?? '',
+                travelType: li.expenseSubType ?? 'Cab',
+                from: li.fromLocation ?? '',
+                to: li.toLocation ?? '',
+                distance: '',
+                amount: li.claimedAmount ?? 0,
+                currency: li.currency ?? 'INR',
+                receipt: li.receiptFileName ?? '',
+                receiptData: li.receiptData ?? '',
+              });
+            } else if (li.expenseType === 'Other') {
+              const rawId = li.lineItemId?.replace('LI-MI-', '') || uid();
+              const desc = li.description ?? '';
+              const colonIdx = desc.indexOf(':');
+              const remarks = colonIdx >= 0 ? desc.slice(colonIdx + 1).trim() : '';
+              restoredMisc.push({
+                id: rawId,
+                expenseType: li.expenseSubType ?? 'Other',
+                date: li.date ?? '',
+                amount: li.claimedAmount ?? 0,
+                currency: li.currency ?? 'INR',
+                remarks,
+                receipt: li.receiptFileName ?? '',
+                receiptData: li.receiptData ?? '',
+              });
+            } else if (li.expenseType === 'Lodging') {
+              const rawId = li.lineItemId?.replace('LI-LO-', '') || uid();
+              // Parse "Hotel: Name, City (N night(s))" from description
+              const descMatch = (li.description ?? '').match(/^Hotel:\s*([^,]+),\s*([^(]+)\((\d+)\s*night/);
+              const hotelName = descMatch ? descMatch[1].trim() : '';
+              const city = descMatch ? descMatch[2].trim() : (li.toLocation ?? '');
+              const nights = descMatch ? parseInt(descMatch[3], 10) : 1;
+              const rate = nights > 0 ? Math.round((li.claimedAmount ?? 0) / nights) : (li.claimedAmount ?? 0);
+              restoredLodging.push({
+                id: rawId,
+                hotelName,
+                city,
+                roomNo: '',
+                checkIn: li.date ?? '',
+                checkOut: '',
+                nights,
+                ratePerNight: rate,
+                receipt: li.receiptFileName ?? '',
+                source: 'manual',
+                stayType: 'Hotel' as LodgingStayType,
+              });
+            }
+          });
+          if (restoredTravel.length) setTravelBills(restoredTravel);
+          if (restoredMisc.length) setMiscExpenses(restoredMisc);
+          if (restoredLodging.length) setLodgingEntries(restoredLodging);
+        })
+        .catch(() => { /* silently ignore — trainer can re-add items */ });
+      return; // skip draft restore when in edit mode
+    }
+
+    // ── Draft mode: ?draft=claimId ───────────────────────────────────────
+    const draftId = params.get('draft');
+    if (!draftId) return;
+    try {
+      const drafts = getDraftClaims();
+      const draft = drafts.find(d => d.claimId === draftId);
+      if (!draft?.draftWizardData) return;
+      const wz = JSON.parse(draft.draftWizardData) as {
+        fromDate?: string; toDate?: string;
+        assignments?: Assignment[]; leaveDates?: string[];
+        travelBills?: TravelBill[]; lodgingEntries?: LodgingEntry[];
+        miscExpenses?: MiscExpense[]; advances?: AdvanceTaken[];
+        employeeRemarks?: string;
+      };
+      draftClaimIdRef.current = draftId;
+      draftRestoredRef.current = true;
+      if (wz.fromDate) setFromDate(wz.fromDate);
+      if (wz.toDate) setToDate(wz.toDate);
+      if (wz.assignments?.length) { setAssignments(wz.assignments); setFetched(true); }
+      if (wz.leaveDates?.length) setLeaveDates(new Set(wz.leaveDates));
+      if (wz.travelBills?.length) setTravelBills(wz.travelBills);
+      if (wz.lodgingEntries?.length) setLodgingEntries(wz.lodgingEntries);
+      if (wz.miscExpenses?.length) setMiscExpenses(wz.miscExpenses);
+      if (wz.advances?.length) setAdvances(wz.advances);
+      if (wz.employeeRemarks) setEmployeeRemarks(wz.employeeRemarks);
+    } catch { /* corrupt draft — ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── Draft: auto-save every time meaningful state changes ─────────────────
+  useEffect(() => {
+    // Only save if trainer has started the form (at minimum selected dates)
+    if (!fromDate || isProxyMode) return;
+    const timer = setTimeout(() => {
+      try {
+        const wizardData = JSON.stringify({
+          fromDate, toDate,
+          assignments,
+          leaveDates: Array.from(leaveDates),
+          travelBills,
+          lodgingEntries,
+          miscExpenses,
+          advances,
+          employeeRemarks,
+        });
+        const now = new Date().toISOString();
+        const draft: import('../types').ClaimHeader = {
+          claimId: draftClaimIdRef.current,
+          billNo: `DRAFT-${draftClaimIdRef.current.slice(-6)}`,
+          trainerId: currentUser?.trainerId || currentUser?.id || '',
+          trainerName: currentUser?.name || '',
+          trainerEmail: currentUser?.email || undefined,
+          assignmentIds: assignments.map(a => a.assignmentId).filter(Boolean),
+          batchIds: [],
+          clientName: assignments[0]?.clientName || '',
+          courseName: assignments[0]?.courseName || '',
+          trainingLocation: assignments.map(a => a.city || a.country).filter(Boolean).join(', '),
+          claimStartDate: fromDate,
+          claimEndDate: toDate || fromDate,
+          baseCity: 'India',
+          destinationCities: [...new Set(assignments.map(a => a.country).filter(Boolean))],
+          status: 'Draft',
+          pendingWith: 'Trainer',
+          lastActionAt: now,
+          totalClaimedAmount: 0,
+          eligibleAmount: 0,
+          approvedAmount: 0,
+          deductionAmount: 0,
+          advanceAdjusted: 0,
+          miscAdjustments: 0,
+          recoverableAmount: 0,
+          netPayable: 0,
+          currency: 'INR',
+          exceptionFlag: false,
+          missingDocumentFlag: false,
+          duplicateFlag: false,
+          ledgerMismatchFlag: false,
+          slaBreached: false,
+          paymentStatus: 'Unpaid',
+          agingDays: 0,
+          draftWizardData: wizardData,
+        };
+        saveDraftClaim(draft);
+      } catch { /* storage full — silent */ }
+    }, 2000); // 2-second debounce
+    return () => clearTimeout(timer);
+  }, [fromDate, toDate, assignments, leaveDates, travelBills, lodgingEntries, miscExpenses, advances, employeeRemarks, currentUser, isProxyMode]);
+
   async function handleSubmit() {
     const stillUploading = travelBills.some(b => b.receiptData === '…uploading') || miscExpenses.some(m => m.receiptData === '…uploading');
     if (stillUploading) { setSubmitError('Please wait — file attachments are still uploading.'); return; }
@@ -4076,8 +4804,9 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     setIsSubmitting(true);
     setSubmitError('');
     const now = new Date().toISOString();
-    const claimId = `CLAIM-${Date.now()}`;
-    const billNo = `TADA-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+    const isEditMode = !!editClaimIdRef.current;
+    const claimId = isEditMode ? editClaimIdRef.current : `CLAIM-${Date.now()}`;
+    const billNo = isEditMode ? editBillNoRef.current : `TADA-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
 
     // Build advanceItems: all PMS advances in range + manually added advances
     const advanceItems: ClaimAdvanceItem[] = [
@@ -4120,7 +4849,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       claimEndDate: toDate,
       baseCity: 'India',
       destinationCities: [...new Set(assignments.map(a => a.country).filter(Boolean))],
-      status: 'Submitted',
+      status: isEditMode ? 'Resubmitted' : 'Submitted',
       pendingWith: 'HR/Admin',
       submittedAt: now,
       lastActionAt: now,
@@ -4238,50 +4967,19 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     });
 
     try {
-      // ── Upload each receipt to Vercel Blob for permanent cross-device access ──
-      // Replaces base64 receiptData with a public URL so HR Admin sees receipts on any device.
-      const lineItemsWithUrls = await Promise.all(
-        lineItems.map(async li => {
-          if (!li.receiptData || li.receiptData.startsWith('http')) return li;
-          try {
-            const contentType = li.receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
-            const res = await fetch('/api/turso?type=upload-receipt', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                base64: li.receiptData,
-                filename: li.receiptFileName || `receipt_${li.lineItemId}`,
-                contentType,
-              }),
-            });
-            if (res.ok) {
-              const { url } = await res.json() as { url: string };
-              return { ...li, receiptData: url, receiptUrl: url };
-            }
-          } catch { /* silent — keep base64 as fallback */ }
-          return li;
-        })
-      );
+      // In edit mode: delete old line items from Turso before inserting the updated set
+      if (isEditMode) {
+        await fetch(`/api/turso?type=lineitems&claimId=${claimId}`, { method: 'DELETE' });
+      }
 
-      // Stripped version (no base64) — safe to store in Turso; URLs are tiny.
-      const lineItemsForTurso = lineItemsWithUrls.map(li => {
-        // If receiptData is still base64 (blob upload failed), strip it from Turso row.
-        const rd = li.receiptData;
-        const isBase64 = rd && !rd.startsWith('http');
-        if (isBase64) {
-          const { receiptData: _r, ...rest } = li;
-          return rest;
-        }
-        return li;
-      });
+      const lineItemsWithUrls = lineItems; // base64 kept as-is
 
       // Always persist to localStorage immediately — guarantees same-device visibility.
       saveClaim({ ...claim, lineItems: lineItemsWithUrls });
       saveLineItems(lineItemsWithUrls);
 
-      // Write claim to Turso (required — abort if this fails).
-      // Cast needed because lineItemsForTurso is a union after conditional receiptData strip.
-      const lineItemsForClaim = (lineItemsForTurso as import('../types').ClaimLineItem[]).map(({ receiptData: _r, ...rest }) => rest);
+      // Write claim to Turso (stripped of base64 to keep the claims row small).
+      const lineItemsForClaim = lineItemsWithUrls.map(({ receiptData: _r, ...rest }) => rest);
       const claimRes = await fetch('/api/turso?type=claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4289,15 +4987,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       });
       if (!claimRes.ok) throw new Error('Failed to save claim. Please try again.');
 
-      // Write line items to Turso — receipts are now URLs so rows stay small.
-      if (lineItemsForTurso.length > 0) {
+      // Write line items WITH base64 receiptData to Turso — each row is one item so sizes stay manageable.
+      if (lineItemsWithUrls.length > 0) {
         await fetch('/api/turso?type=lineitems', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lineItems: lineItemsForTurso }),
+          body: JSON.stringify({ lineItems: lineItemsWithUrls }),
         });
       }
 
+      deleteDraftClaim(draftClaimIdRef.current);
       setSubmitSuccess(true);
       setTimeout(() => { navigate('/claims'); }, 1800);
     } catch (err) {
@@ -4462,6 +5161,19 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       />
 
       <div className="max-w-6xl mx-auto px-4 py-6 space-y-5">
+
+        {/* Edit mode banner */}
+        {editClaimIdRef.current && (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-amber-50 border border-amber-200">
+            <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-amber-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+            </svg>
+            <div>
+              <p className="text-sm font-semibold text-amber-800">Editing Existing Bill — {editBillNoRef.current}</p>
+              <p className="text-xs text-amber-600">Your changes will overwrite the existing submission. On submit, the bill status will change to Resubmitted.</p>
+            </div>
+          </div>
+        )}
 
         {/* Header */}
         <div className="flex items-start justify-between flex-wrap gap-3">
@@ -6011,7 +6723,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                         <label className="block text-xs text-gray-500 mb-1">Travel Type</label>
                         <select className={selectCls} value={travelDraft.travelType}
                           onChange={e => setTravelDraft(p => ({ ...p, travelType: e.target.value }))}>
-                          {['Cab', 'Flight', 'Train', 'Bus', 'Own Vehicle', 'Metro'].map(t => (
+                          {['Cab', 'Flight', 'Train', 'Bus', 'Own Vehicle', 'Metro', 'Other'].map(t => (
                             <option key={t}>{t}</option>
                           ))}
                         </select>

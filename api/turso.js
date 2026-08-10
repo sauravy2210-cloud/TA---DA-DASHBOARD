@@ -300,5 +300,43 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── Server-side receipt backfill ────────────────────────────────────────────
+  // Scans all line_items in Turso, finds any with base64 receiptData,
+  // uploads each to Vercel Blob, and updates the Turso row with the blob URL.
+  if (type === 'backfill-receipts' && req.method === 'POST') {
+    try {
+      const db = getDb();
+      await ensureTablesOnce(db);
+      const result = await db.execute('SELECT id, claim_id, data FROM line_items');
+      const toUpdate = [];
+      for (const row of result.rows) {
+        let li;
+        try { li = JSON.parse(row.data); } catch { continue; }
+        const rd = li.receiptData;
+        if (!rd || rd.startsWith('http')) continue; // already a URL or missing
+        // Has base64 — upload to Vercel Blob
+        try {
+          const contentType = rd.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
+          const raw = rd.replace(/^data:[^;]+;base64,/, '');
+          const buffer = Buffer.from(raw, 'base64');
+          const safeName = (li.receiptFileName || `receipt_${li.lineItemId}`).replace(/[^a-zA-Z0-9._-]/g, '_');
+          const blobPath = `receipts/${Date.now()}_${safeName}`;
+          const blob = await put(blobPath, buffer, { access: 'public', contentType, addRandomSuffix: false });
+          const updated = { ...li, receiptData: blob.url, receiptUrl: blob.url };
+          await db.execute({
+            sql: 'INSERT INTO line_items (id, claim_id, data) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data',
+            args: [li.lineItemId, li.claimId, JSON.stringify(updated)],
+          });
+          toUpdate.push({ lineItemId: li.lineItemId, url: blob.url });
+        } catch (uploadErr) {
+          toUpdate.push({ lineItemId: li.lineItemId, error: String(uploadErr?.message ?? uploadErr) });
+        }
+      }
+      return res.status(200).json({ processed: result.rows.length, updated: toUpdate });
+    } catch (err) {
+      return res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  }
+
   return res.status(400).json({ error: 'Missing or unknown type param' });
 }

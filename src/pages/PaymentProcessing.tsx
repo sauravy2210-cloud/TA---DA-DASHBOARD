@@ -4,7 +4,7 @@ import type { User, ClaimHeader } from '../types';
 import { exportPaymentSheet } from '../services/exportEngine';
 import { downloadKoenigFile, buildKoenigFileBase64 } from '../services/koenigExport';
 import { logAction, ACTION_TYPES } from '../services/auditEngine';
-import { saveToStorage, getFromStorage, getClaims, saveClaim, refreshClaims } from '../services/storageService';
+import { saveToStorage, getFromStorage, getClaims, saveClaim, refreshClaims, hasDaOverlap } from '../services/storageService';
 
 interface PaymentProcessingProps {
   currentUser: User;
@@ -509,7 +509,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
           <table className="min-w-full divide-y divide-gray-100 text-sm">
             <thead className="bg-gray-50">
               <tr>
-                {['Bill No', 'Trainer', 'Batch / Assignment', 'Client', 'Approved Amt', 'Advance', 'Misc', 'Recoverable', 'Net Payable', 'Currency', 'Status', 'Bank Name', 'Account No.', 'IFSC', 'Bank Edit', 'Payment Date', 'Payment Status'].map((h) => (
+                {['Bill No', 'Trainer', 'Batch / Assignment', 'Client', 'Approved Amt', 'Advance', 'Misc', 'Recoverable', 'Net Payable', 'Currency', 'Status', 'HR Remarks', 'Bank Name', 'Account No.', 'IFSC', 'Bank Edit', 'Payment Date', 'Payment Status'].map((h) => (
                   <th key={h} className="whitespace-nowrap px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-gray-500">
                     {h}
                   </th>
@@ -519,7 +519,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
             <tbody className="divide-y divide-gray-50">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={17} className="px-4 py-12 text-center text-sm text-gray-400">
+                  <td colSpan={18} className="px-4 py-12 text-center text-sm text-gray-400">
                     No payment records match the selected filters.
                   </td>
                 </tr>
@@ -539,6 +539,11 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                       >
                         {claim.billNo}
                       </button>
+                      {hasDaOverlap(claim) && (
+                        <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-600 border border-red-200" title="Some DA dates in this claim were already paid in another approved/paid claim">
+                          ⚠ DA Overlap
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium text-gray-900">{claim.trainerName}</div>
@@ -582,6 +587,16 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[claim.status] ?? 'bg-gray-100 text-gray-600'}`}>
                         {claim.status}
                       </span>
+                    </td>
+                    {/* HR Remarks */}
+                    <td className="px-4 py-3 max-w-[200px]">
+                      {claim.adminRemark ? (
+                        <span className="block text-xs text-gray-700 italic truncate" title={claim.adminRemark}>
+                          {claim.adminRemark}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-xs">—</span>
+                      )}
                     </td>
                     {/* Bank Name */}
                     <td className="px-4 py-3 text-xs text-gray-700 min-w-[140px]">

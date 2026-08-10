@@ -173,10 +173,12 @@ export const config = { api: { bodyParser: false } };
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST,GET,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,x-filename');
   if (req.method === 'OPTIONS') { res.status(200).end(); return; }
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  // GET is allowed ONLY for the Vercel Cron-triggered weekly report; everything else stays POST-only.
+  if (req.method === 'GET' && req.query.type !== 'weekly_report') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'GET' && req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   // File upload — streams raw body, must be handled before JSON parsing
   if (req.query.type === 'upload') return handleUpload(req, res);
@@ -319,15 +321,17 @@ export default async function handler(req, res) {
   const gmailPass    = (process.env.GMAIL_APP_PASSWORD || '').trim();
 
   async function sendHrEmail({ to, subject, html }) {
+    // `to` may be a single email string or an array of emails
+    const toList = Array.isArray(to) ? to : [to];
     // 1. Resend
     if (resendApiKey) {
       try {
         const r = await fetch('https://api.resend.com/emails', {
           method: 'POST',
           headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ from: 'Koenig TA/DA Portal <noreply@koenig-solutions.com>', to: [to], subject, html }),
+          body: JSON.stringify({ from: 'Koenig TA/DA Portal <noreply@koenig-solutions.com>', to: toList, subject, html }),
         });
-        if (r.ok) { const d = await r.json(); console.log(`Action email sent via Resend to ${to}`); return { sent: true, id: d.id }; }
+        if (r.ok) { const d = await r.json(); console.log(`Action email sent via Resend to ${toList.join(', ')}`); return { sent: true, id: d.id }; }
         const errText = await r.text();
         console.error(`Resend error ${r.status}: ${errText}`);
       } catch (e) { console.error('Resend fetch error:', e && e.message); }
@@ -338,9 +342,9 @@ export default async function handler(req, res) {
         const r = await fetch('https://api.brevo.com/v3/smtp/email', {
           method: 'POST',
           headers: { 'api-key': brevoApiKey, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sender: { name: 'Koenig TA/DA Portal', email: brevoUser }, to: [{ email: to }], subject, htmlContent: html }),
+          body: JSON.stringify({ sender: { name: 'Koenig TA/DA Portal', email: brevoUser }, to: toList.map(email => ({ email })), subject, htmlContent: html }),
         });
-        if (r.ok) { console.log(`Action email sent via Brevo to ${to}`); return { sent: true, provider: 'brevo' }; }
+        if (r.ok) { console.log(`Action email sent via Brevo to ${toList.join(', ')}`); return { sent: true, provider: 'brevo' }; }
         const errText = await r.text();
         console.error(`Brevo error ${r.status}: ${errText}`);
       } catch (e) { console.error('Brevo fetch error:', e && e.message); }
@@ -351,16 +355,134 @@ export default async function handler(req, res) {
       for (const cfg of [{ port: 587, secure: false }, { port: 465, secure: true }]) {
         try {
           const t = createTransport({ host: 'smtp.gmail.com', ...cfg, auth: { user: gmailUser, pass: gmailPass }, connectionTimeout: 8000, socketTimeout: 10000 });
-          await t.sendMail({ from: `"Koenig TA/DA Portal" <${gmailUser}>`, to, subject, html });
-          console.log(`Action email sent via Gmail (${cfg.port}) to ${to}`); return { sent: true, provider: 'gmail' };
+          await t.sendMail({ from: `"Koenig TA/DA Portal" <${gmailUser}>`, to: toList.join(','), subject, html });
+          console.log(`Action email sent via Gmail (${cfg.port}) to ${toList.join(', ')}`); return { sent: true, provider: 'gmail' };
         } catch (e) { console.error(`Gmail (${cfg.port}) error:`, e && e.message); }
       }
     }
     if (!resendApiKey && !brevoApiKey && !gmailUser) {
-      console.log(`[DEV] Action email to ${to} — subject: ${subject}`);
+      console.log(`[DEV] Action email to ${toList.join(', ')} — subject: ${subject}`);
       return { sent: true, provider: 'dev-log' };
     }
     throw new Error('All email providers failed');
+  }
+
+  // Shared builder + sender for the Bills Summary Report — used by both the
+  // manual "Email Bills Report" button and the automated weekly cron trigger.
+  async function sendBillsReportEmail({ claims, sentBy, reportTo, periodLabel, excludeEmails }) {
+    const defaultRecipients = [
+      reportTo || 'saurav.yadav@koenig-solutions.com',
+      'Sakshi.Pandey@koenig-solutions.com',
+      'Rashi.Oberoi@koenig-solutions.com',
+      'sakshi.dhawan@koenig-solutions.com',
+    ];
+    const excludeSet = new Set((Array.isArray(excludeEmails) ? excludeEmails : []).map(e => String(e).toLowerCase()));
+    const recipient = defaultRecipients.filter(e => !excludeSet.has(e.toLowerCase()));
+    if (recipient.length === 0) {
+      const err = new Error('All recipients excluded — nobody to send to');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const statusColor = { Submitted: '#3b82f6', Approved: '#10b981', 'Partially Approved': '#14b8a6', Paid: '#8b5cf6', 'Payment Pending': '#7c3aed' };
+    const rowsHtml = claims.map((c, i) => `
+      <tr style="background:${i % 2 === 0 ? '#ffffff' : '#f9fafb'};">
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${c.billNo ?? '—'}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${c.trainerName ?? '—'}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;">
+          <span style="display:inline-block;padding:2px 8px;border-radius:9999px;font-size:11px;font-weight:600;background:${statusColor[c.status] ? statusColor[c.status] + '22' : '#f3f4f6'};color:${statusColor[c.status] ?? '#6b7280'};">${c.status}</span>
+        </td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;text-align:right;">₹${(c.totalClaimedAmount ?? 0).toLocaleString('en-IN')}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#059669;text-align:right;font-weight:600;">₹${(c.approvedAmount ?? 0).toLocaleString('en-IN')}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${c.claimStartDate ?? ''}${c.claimEndDate && c.claimEndDate !== c.claimStartDate ? ' → ' + c.claimEndDate : ''}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${c.trainingLocation ?? '—'}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${c.submittedAt ? new Date(c.submittedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td>
+      </tr>`).join('');
+
+    const reportHtml = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#111827;margin:0;padding:0;">
+      <div style="max-width:900px;margin:24px auto;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+        <div style="background:linear-gradient(135deg,#1e40af,#0ea5e9);padding:24px 32px;">
+          <h1 style="margin:0;color:#fff;font-size:22px;">📋 TA/DA Bills Summary Report</h1>
+          <p style="margin:6px 0 0;color:#bfdbfe;font-size:13px;">Generated ${today} · Sent by ${sentBy || 'HR Admin'}${periodLabel ? ' · Period: ' + periodLabel : ''}</p>
+        </div>
+        <div style="padding:20px 32px;overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;">
+            <thead>
+              <tr style="background:#1e40af;">
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;white-space:nowrap;">Bill No</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Trainer</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Status</th>
+                <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Claimed</th>
+                <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Approved</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Period</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Location</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Submitted</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+        <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#9ca3af;">
+          Koenig TA/DA Portal · This is an automated report
+        </div>
+      </div>
+    </body></html>`;
+
+    return sendHrEmail({ to: recipient, subject: `TA/DA Bills Report — ${claims.length} bills (${today})`, html: reportHtml });
+  }
+
+  // ── Automated weekly report (Vercel Cron, GET request) ──────────────────────
+  // Triggers every Monday at 08:00 IST (02:30 UTC) via vercel.json cron config.
+  // Sends the previous calendar week's Monday–Friday Submitted/Approved/Paid bills
+  // to the same 4 recipients as the manual "Email Bills Report" button.
+  if (req.method === 'GET' && req.query.type === 'weekly_report') {
+    try {
+      const db = await getDb();
+      const result = await db.execute('SELECT data FROM claims');
+      const allStoredClaims = result.rows.map(r => { try { return JSON.parse(r.data); } catch { return null; } }).filter(Boolean);
+
+      const now = new Date();
+      const dow = now.getUTCDay(); // 0=Sun..6=Sat
+      const daysSinceMonday = (dow + 6) % 7;
+      const thisMonday = new Date(now);
+      thisMonday.setUTCDate(now.getUTCDate() - daysSinceMonday);
+      const lastMonday = new Date(thisMonday);
+      lastMonday.setUTCDate(thisMonday.getUTCDate() - 7);
+      const lastFriday = new Date(lastMonday);
+      lastFriday.setUTCDate(lastMonday.getUTCDate() + 4);
+      const isoDate = d => d.toISOString().slice(0, 10);
+      const from = isoDate(lastMonday);
+      const to = isoDate(lastFriday);
+
+      const REPORT_STATUSES = new Set(['Submitted', 'Approved', 'Partially Approved', 'Paid', 'Payment Pending']);
+      const weekClaims = allStoredClaims
+        .filter(c => REPORT_STATUSES.has(c.status))
+        .filter(c => {
+          const submittedDate = (c.submittedAt || '').slice(0, 10);
+          return submittedDate && submittedDate >= from && submittedDate <= to;
+        })
+        .map(c => ({
+          billNo: c.billNo, trainerName: c.trainerName, status: c.status,
+          totalClaimedAmount: c.totalClaimedAmount ?? 0, approvedAmount: c.approvedAmount ?? 0,
+          claimStartDate: c.claimStartDate ?? '', claimEndDate: c.claimEndDate ?? '',
+          trainingLocation: c.trainingLocation ?? '', submittedAt: c.submittedAt ?? '',
+        }));
+
+      if (weekClaims.length === 0) {
+        return res.status(200).json({ sent: false, reason: 'No bills submitted in the previous week', period: `${from} to ${to}` });
+      }
+
+      const sendResult = await sendBillsReportEmail({
+        claims: weekClaims,
+        sentBy: 'HR Admin (Automated Weekly Report)',
+        periodLabel: `${from} to ${to}`,
+      });
+      return res.status(200).json({ ...sendResult, period: `${from} to ${to}`, billCount: weekClaims.length });
+    } catch (err) {
+      console.error('Weekly report cron error:', err && err.message);
+      return res.status(500).json({ error: (err && err.message) || 'Weekly report failed' });
+    }
   }
 
   const apiKey = resendApiKey; // kept for backward compat check below
@@ -399,6 +521,19 @@ export default async function handler(req, res) {
       return res.status(200).json(result);
     } catch (err) {
       return res.status(500).json({ error: 'Internal error sending email' });
+    }
+  }
+
+  // ── Bills summary report email ────────────────────────────────────────────
+  if (type === 'bills_report') {
+    const { claims, sentBy, toEmail: reportTo, periodLabel, excludeEmails } = body;
+    if (!Array.isArray(claims) || claims.length === 0)
+      return res.status(400).json({ error: 'No claims data provided' });
+    try {
+      const result = await sendBillsReportEmail({ claims, sentBy, reportTo, periodLabel, excludeEmails });
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(err && err.statusCode === 400 ? 400 : 502).json({ error: (err && err.message) || 'Failed to send report email' });
     }
   }
 

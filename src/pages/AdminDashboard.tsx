@@ -28,6 +28,9 @@ import {
   Inbox,
   Trash2,
   RotateCcw,
+  SendHorizontal,
+  XCircle,
+  BadgeCheck,
 } from 'lucide-react';
 import type { User, ClaimHeader } from '../types';
 import KpiCard from '../components/KpiCard';
@@ -625,6 +628,9 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
     const paymentPending = liveClaims
       .filter((c) => c.status === 'Payment Pending')
       .reduce((s, c) => s + c.netPayable, 0);
+    const submitted = liveClaims.filter((c) => c.status === 'Submitted' || c.status === 'Resubmitted').length;
+    const rejected = liveClaims.filter((c) => c.status === 'Rejected').length;
+    const paid = liveClaims.filter((c) => c.status === 'Paid').length;
     const missingDocs = liveClaims.filter((c) => c.missingDocumentFlag).length;
     const exceptions = liveClaims.filter((c) => c.exceptionFlag).length;
     const slaBreached = liveClaims.filter((c) => c.slaBreached).length;
@@ -633,7 +639,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
     const totalApproved = liveClaims.reduce((s, c) => s + c.approvedAmount, 0);
     const recoverable = liveClaims.reduce((s, c) => s + c.recoverableAmount, 0);
     const advanceAdjusted = liveClaims.reduce((s, c) => s + (c.advanceAdjusted || 0), 0);
-    return { newBills, underReview, clarification, approved, paymentPending, missingDocs, exceptions, slaBreached, ledgerMismatch, totalClaimed, totalApproved, recoverable, advanceAdjusted };
+    return { newBills, underReview, clarification, approved, paymentPending, submitted, rejected, paid, missingDocs, exceptions, slaBreached, ledgerMismatch, totalClaimed, totalApproved, recoverable, advanceAdjusted };
   }, [liveClaims]);
 
   // ── Pie chart data ───────────────────────────────────────────────────────
@@ -709,8 +715,8 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
-  function goToQueue(_filter?: string) {
-    navigate('/claims');
+  function goToQueue(filter?: string) {
+    navigate(filter ? `/claims?status=${encodeURIComponent(filter)}` : '/claims');
   }
 
   function handleExport() {
@@ -783,7 +789,15 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
       <div className="px-4 py-6 md:px-8 md:py-8 space-y-6">
 
         {/* ── KPI Row 1 ─────────────────────────────────────────────────── */}
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-7">
+          <KpiCard
+            title="Submitted"
+            value={kpis.submitted}
+            subtitle="New & resubmitted bills"
+            icon={SendHorizontal}
+            accentColor="blue"
+            onClick={() => goToQueue('Submitted')}
+          />
           <KpiCard
             title="New Bills"
             value={kpis.newBills}
@@ -815,6 +829,22 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
             icon={CheckCircle2}
             accentColor="green"
             onClick={() => goToQueue('Approved')}
+          />
+          <KpiCard
+            title="Rejected"
+            value={kpis.rejected}
+            subtitle="Bills rejected by HR"
+            icon={XCircle}
+            accentColor="red"
+            onClick={() => goToQueue('Rejected')}
+          />
+          <KpiCard
+            title="Paid"
+            value={kpis.paid}
+            subtitle="Disbursed to trainer"
+            icon={BadgeCheck}
+            accentColor="purple"
+            onClick={() => goToQueue('Paid')}
           />
         </div>
 

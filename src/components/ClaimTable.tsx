@@ -1,5 +1,6 @@
 ﻿import React, { useState, useMemo } from 'react';
 import type { ClaimHeader, UserRole, ClaimStatus, PendingWith } from '../types';
+import { hasDaOverlap } from '../services/storageService';
 
 // ── Badge helpers ────────────────────────────────────────────────────────────
 
@@ -173,6 +174,7 @@ function fmtDate(iso: string) {
 // ── Main component ────────────────────────────────────────────────────────────
 
 const DELETABLE_STATUSES = new Set(['Draft', 'Submitted', 'Pending']);
+const EDITABLE_STATUSES = new Set(['Submitted', 'Clarification Required', 'Resubmitted']);
 
 interface ClaimTableProps {
   claims: ClaimHeader[];
@@ -183,6 +185,7 @@ interface ClaimTableProps {
   onToggleSelect?: (id: string) => void;
   onSelectAll?: () => void;
   onDeleteClaim?: (claimId: string) => void;
+  onEditClaim?: (claimId: string) => void;
   loading?: boolean;
   emptyMessage?: string;
 }
@@ -196,6 +199,7 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
   onToggleSelect,
   onSelectAll,
   onDeleteClaim,
+  onEditClaim,
   loading = false,
   emptyMessage = 'No claims found.',
 }) => {
@@ -219,7 +223,7 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
   // Count visible columns for skeleton
   const colCount =
     (canBulk ? 1 : 0) +
-    14 + // fixed columns
+    15 + // fixed columns (includes HR Remarks for all roles)
     (isPrivileged ? 1 : 0); // Trainer Name/ID
 
   return (
@@ -254,6 +258,9 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
             <ColHeader label="Approved ₹" sortKey="approvedAmount" sort={sort} onSort={handleSort} />
             <ColHeader label="Deduction ₹" sortKey="deductionAmount" sort={sort} onSort={handleSort} />
             <ColHeader label="Status" sortKey="status" sort={sort} onSort={handleSort} />
+            <th scope="col" className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap max-w-[180px]">
+              HR Remarks
+            </th>
             <ColHeader label="Pending With" sortKey="pendingWith" sort={sort} onSort={handleSort} />
             <ColHeader label="Aging" sortKey="agingDays" sort={sort} onSort={handleSort} />
             <th scope="col" className="px-3 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">
@@ -374,6 +381,17 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
                     <StatusBadge status={claim.status} />
                   </td>
 
+                  {/* HR Remarks — visible to all roles */}
+                  <td className="px-3 py-3 max-w-[180px]">
+                    {claim.adminRemark ? (
+                      <span className="block text-xs text-gray-700 italic truncate" title={claim.adminRemark}>
+                        {claim.adminRemark}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300 text-xs">—</span>
+                    )}
+                  </td>
+
                   {/* Pending With */}
                   <td className="px-3 py-3 whitespace-nowrap">
                     <PendingWithBadge pendingWith={claim.pendingWith} />
@@ -391,7 +409,14 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
 
                   {/* Risk Flags */}
                   <td className="px-3 py-3 whitespace-nowrap">
-                    <RiskFlagBadge claim={claim} />
+                    <div className="flex flex-col gap-1">
+                      <RiskFlagBadge claim={claim} />
+                      {isPrivileged && hasDaOverlap(claim) && (
+                        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-600 border border-red-200" title="Some DA dates already paid in another claim">
+                          ⚠ DA Overlap
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Last Action */}
@@ -414,6 +439,24 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
                       >
                         View
                       </button>
+                      {onEditClaim && EDITABLE_STATUSES.has(claim.status) && (
+                        <button
+                          type="button"
+                          title="Edit bill"
+                          onClick={() => onEditClaim(claim.claimId)}
+                          className="
+                            inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium
+                            text-amber-700 bg-amber-50 border border-amber-200
+                            rounded hover:bg-amber-100 transition-colors duration-100
+                            focus:outline-none focus:ring-2 focus:ring-amber-400
+                          "
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                          Edit
+                        </button>
+                      )}
                       {onDeleteClaim && DELETABLE_STATUSES.has(claim.status) && (
                         <button
                           type="button"

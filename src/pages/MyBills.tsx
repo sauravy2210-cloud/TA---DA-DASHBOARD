@@ -5,7 +5,7 @@ import { FilterBar } from '../components/FilterBar';
 import type { FilterConfig } from '../components/FilterBar';
 import { SearchInput } from '../components/SearchInput';
 import { ClaimTable } from '../components/ClaimTable';
-import { getClaims, deleteClaim, refreshClaims } from '../services/storageService';
+import { getClaims, deleteClaim, refreshClaims, getDraftClaims, deleteDraftClaim } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
 import type { ClaimHeader } from '../types';
 
@@ -99,9 +99,16 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Always pull fresh from Turso on mount (cross-device accuracy)
+  // Always pull fresh from Turso on mount; merge local drafts at end
   useEffect(() => {
-    refreshClaims().then(() => setAllClaims(getClaims()));
+    refreshClaims().then(() => {
+      const submitted = getClaims();
+      const drafts = getDraftClaims();
+      // Merge: submitted claims take priority over any draft with same ID
+      const submittedIds = new Set(submitted.map(c => c.claimId));
+      const pendingDrafts = drafts.filter(d => !submittedIds.has(d.claimId));
+      setAllClaims([...submitted, ...pendingDrafts]);
+    });
   }, []);
 
   // Filter claims to current trainer (for Trainer role) or all for others
@@ -206,9 +213,19 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
     setDeleteLoading(true);
     setDeleteError(null);
     try {
-      await deleteClaim(deleteConfirmId);
-      await refreshClaims();
-      setAllClaims(getClaims());
+      // Check if it's a local draft or a submitted claim
+      const drafts = getDraftClaims();
+      const isDraft = drafts.some(d => d.claimId === deleteConfirmId);
+      if (isDraft) {
+        deleteDraftClaim(deleteConfirmId);
+        setAllClaims(prev => prev.filter(c => c.claimId !== deleteConfirmId));
+      } else {
+        await deleteClaim(deleteConfirmId);
+        await refreshClaims();
+        const submitted = getClaims();
+        const remaining = getDraftClaims().filter(d => !submitted.some(c => c.claimId === d.claimId));
+        setAllClaims([...submitted, ...remaining]);
+      }
       setDeleteConfirmId(null);
     } catch {
       setDeleteError('Failed to delete. Please try again.');
@@ -243,21 +260,6 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
             </svg>
             Export CSV
           </button>
-          <button
-            type="button"
-            onClick={() => navigate('/claims/new')}
-            className="
-              inline-flex items-center gap-2 px-4 py-2 text-sm font-medium
-              text-white bg-blue-600 border border-transparent rounded-lg
-              hover:bg-blue-700 transition-colors
-              focus:outline-none focus:ring-2 focus:ring-blue-500
-            "
-          >
-            <svg className="w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-            </svg>
-            New Claim
-          </button>
         </div>
       </div>
 
@@ -279,11 +281,63 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
 
       {/* ── Table ── */}
       <div className="flex-1 px-6 py-4">
+        {/* Draft bills shown above submitted bills */}
+        {adaptedClaims.some(c => c.status === 'Draft') && (
+          <div className="mb-4 space-y-2">
+            <h2 className="text-xs font-semibold text-amber-700 uppercase tracking-wide flex items-center gap-1.5">
+              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+              Saved Drafts
+            </h2>
+            {adaptedClaims.filter(c => c.status === 'Draft').map(draft => (
+              <div key={draft.claimId} className="flex items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-200 text-amber-800">
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                      Draft
+                    </span>
+                    <span className="text-sm font-semibold text-gray-800">{draft.billNo}</span>
+                    {draft.claimStartDate && (
+                      <span className="text-xs text-gray-500">
+                        {draft.claimStartDate}{draft.claimEndDate && draft.claimEndDate !== draft.claimStartDate ? ` → ${draft.claimEndDate}` : ''}
+                      </span>
+                    )}
+                    {draft.trainingLocation && (
+                      <span className="text-xs text-gray-500">• {draft.trainingLocation}</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-amber-700 mt-1">Saved automatically — click Resume to continue editing</p>
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => navigate(`/create-bill?draft=${draft.claimId}`)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500 text-white text-xs font-semibold hover:bg-amber-600 transition-colors focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>
+                    Resume
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteConfirmId(draft.claimId)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 text-xs font-medium hover:bg-red-50 transition-colors focus:outline-none focus:ring-2 focus:ring-red-300"
+                    title="Delete draft"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <ClaimTable
-          claims={adaptedClaims as ClaimHeader[]}
+          claims={adaptedClaims.filter(c => c.status !== 'Draft') as ClaimHeader[]}
           onClaimClick={(claimId) => navigate(`/claims/${claimId}`)}
           userRole={currentUser.role}
           onDeleteClaim={currentUser.role === 'Trainer' ? setDeleteConfirmId : undefined}
+          onEditClaim={currentUser.role === 'Trainer' ? (claimId) => navigate(`/create-bill?edit=${claimId}`) : undefined}
           emptyMessage="No claims match your filters."
         />
       </div>

@@ -7,6 +7,33 @@ import type {
 
 // ── Storage Keys (only for non-claim data) ────────────────────────────────────
 
+const DRAFT_CLAIMS_KEY = 'tada_draft_claims';
+
+// ── Draft Claims (localStorage only — never sent to Turso) ───────────────────
+
+export function getDraftClaims(): ClaimHeader[] {
+  try {
+    const raw = localStorage.getItem(DRAFT_CLAIMS_KEY);
+    return raw ? (JSON.parse(raw) as ClaimHeader[]) : [];
+  } catch { return []; }
+}
+
+export function saveDraftClaim(claim: ClaimHeader): void {
+  try {
+    const existing = getDraftClaims();
+    const idx = existing.findIndex(c => c.claimId === claim.claimId);
+    if (idx >= 0) existing[idx] = claim; else existing.push(claim);
+    localStorage.setItem(DRAFT_CLAIMS_KEY, JSON.stringify(existing));
+  } catch { /* storage full — silent */ }
+}
+
+export function deleteDraftClaim(claimId: string): void {
+  try {
+    const existing = getDraftClaims().filter(c => c.claimId !== claimId);
+    localStorage.setItem(DRAFT_CLAIMS_KEY, JSON.stringify(existing));
+  } catch { /* ignore */ }
+}
+
 export const STORAGE_KEYS = {
   ATTACHMENTS: 'tada_attachments',
   STATUS_HISTORY: 'tada_status_history',
@@ -259,6 +286,76 @@ export function getAuditLogs(claimId?: string): AuditLog[] {
   const all = getFromStorage<AuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);
   if (claimId === undefined) return all;
   return all.filter(log => log.claimId === claimId);
+}
+
+// ── DA Paid Date Tracking ─────────────────────────────────────────────────────
+
+/**
+ * Returns a Map<dateISO, billNo> of DA dates already covered in approved/paid
+ * claims for the given trainer, excluding the current claim being viewed.
+ * Used by HR Admin to grey out duplicate DA dates across claims.
+ */
+export function getPaidDADates(trainerId: string, excludeClaimId: string): Map<string, string> {
+  const paidStatuses = new Set(['Approved', 'Partially Approved', 'Payment Pending', 'Paid']);
+  const result = new Map<string, string>();
+  for (const c of _claims) {
+    if (c.claimId === excludeClaimId) continue;
+    if (c.trainerId !== trainerId) continue;
+    if (!paidStatuses.has(c.status)) continue;
+
+    // Prefer embedded lineItems (set at submit time), fall back to in-memory cache
+    const items = (c.lineItems && c.lineItems.length > 0)
+      ? c.lineItems
+      : _lineItems.filter(li => li.claimId === c.claimId);
+    const daItems = items.filter(li => li.expenseType === 'DA' && li.date);
+
+    if (daItems.length > 0) {
+      // Precise: use actual stored DA line items
+      for (const li of daItems) {
+        if (!result.has(li.date!)) result.set(li.date!, c.billNo ?? c.claimId);
+      }
+    } else if (c.claimStartDate && c.claimEndDate) {
+      // Fallback for old claims that predate lineItems storage:
+      // treat every date in the claim's date range as potentially paid DA.
+      // This prevents double-payment for claims submitted before lineItems were persisted.
+      const cur = new Date(c.claimStartDate);
+      const end = new Date(c.claimEndDate);
+      while (cur <= end) {
+        const iso = cur.toISOString().slice(0, 10);
+        if (!result.has(iso)) result.set(iso, c.billNo ?? c.claimId);
+        cur.setDate(cur.getDate() + 1);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * Returns true if any DA date in the claim overlaps with already-paid DA
+ * from another approved/paid claim for the same trainer.
+ * For claims without stored DA items, checks against the claim date range.
+ */
+export function hasDaOverlap(claim: ClaimHeader): boolean {
+  if (!claim.trainerId) return false;
+  const paid = getPaidDADates(claim.trainerId, claim.claimId);
+  if (paid.size === 0) return false;
+  const items = (claim.lineItems && claim.lineItems.length > 0)
+    ? claim.lineItems
+    : _lineItems.filter(li => li.claimId === claim.claimId);
+  const daItems = items.filter(li => li.expenseType === 'DA' && li.date);
+  if (daItems.length > 0) {
+    return daItems.some(li => paid.has(li.date!));
+  }
+  // Fallback: check if the claim's date range overlaps with any paid dates
+  if (claim.claimStartDate && claim.claimEndDate) {
+    const cur = new Date(claim.claimStartDate);
+    const end = new Date(claim.claimEndDate);
+    while (cur <= end) {
+      if (paid.has(cur.toISOString().slice(0, 10))) return true;
+      cur.setDate(cur.getDate() + 1);
+    }
+  }
+  return false;
 }
 
 // ── Draft Wizard ──────────────────────────────────────────────────────────────

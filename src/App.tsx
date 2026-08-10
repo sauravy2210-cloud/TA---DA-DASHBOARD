@@ -331,7 +331,7 @@ export default function App() {
           element={
             <RoleGuard
               currentUser={currentUser}
-              allowedRoles={['Trainer', 'HRAdmin', 'SuperAdmin']}
+              allowedRoles={['HRAdmin', 'SuperAdmin']}
             >
               <ShellWrap
                 currentUser={currentUser!}

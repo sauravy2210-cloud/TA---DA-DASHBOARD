@@ -1,5 +1,5 @@
 ﻿import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import type { User, ClaimHeader } from '../types';
 import { ClaimTable } from '../components/ClaimTable';
 import { getClaims, saveClaimAsync, refreshClaims } from '../services/storageService';
@@ -286,9 +286,28 @@ const CheckboxFilter: React.FC<{
 
 const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) => {
   const navigate = useNavigate();
+  const location = useLocation();
 
   // ── State ────────────────────────────────────────────────────────────────
   const [filters, setFilters] = useState<Filters>(EMPTY_FILTERS);
+
+  // Apply status filter from URL query param every time the URL changes
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const raw = params.get('status');
+    if (!raw) {
+      setFilters(EMPTY_FILTERS);
+      return;
+    }
+    const decoded = decodeURIComponent(raw).replace(/\+/g, ' ');
+    const statusUpper = decoded.toUpperCase().trim();
+    const statusMap: Record<string, string[]> = {
+      'APPROVED': ['APPROVED', 'PARTIALLY APPROVED'],
+    };
+    const claimStatuses = statusMap[statusUpper] ?? [statusUpper];
+    setFilters({ ...EMPTY_FILTERS, claimStatuses });
+    setPage(1);
+  }, [location.search]);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [filterOpen, setFilterOpen] = useState(false);
@@ -423,6 +442,102 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
     exportClaimsQueue(toExport as import('../types').ClaimHeader[]);
   };
 
+  const REPORT_RECIPIENTS = [
+    'saurav.yadav@koenig-solutions.com',
+    'Sakshi.Pandey@koenig-solutions.com',
+    'Rashi.Oberoi@koenig-solutions.com',
+    'sakshi.dhawan@koenig-solutions.com',
+  ];
+  const [emailReportSending, setEmailReportSending] = useState(false);
+  const [emailReportMsg, setEmailReportMsg] = useState('');
+  const [reportDateFrom, setReportDateFrom] = useState('');
+  const [reportDateTo, setReportDateTo] = useState('');
+  const [excludedRecipients, setExcludedRecipients] = useState<Set<string>>(new Set());
+  const [showRecipientPicker, setShowRecipientPicker] = useState(false);
+  const toggleRecipient = (email: string) => {
+    setExcludedRecipients(prev => {
+      const next = new Set(prev);
+      if (next.has(email)) next.delete(email); else next.add(email);
+      return next;
+    });
+  };
+
+  // Monday–Friday of the calendar week immediately before the current one
+  const applyPreviousWeekRange = () => {
+    const now = new Date();
+    const day = now.getDay(); // 0=Sun..6=Sat
+    // Days back to THIS week's Monday, then another 7 back to LAST week's Monday
+    const daysSinceMonday = (day + 6) % 7;
+    const thisMonday = new Date(now);
+    thisMonday.setDate(now.getDate() - daysSinceMonday);
+    const lastMonday = new Date(thisMonday);
+    lastMonday.setDate(thisMonday.getDate() - 7);
+    const lastFriday = new Date(lastMonday);
+    lastFriday.setDate(lastMonday.getDate() + 4);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    setReportDateFrom(iso(lastMonday));
+    setReportDateTo(iso(lastFriday));
+  };
+
+  const handleEmailReport = async () => {
+    const REPORT_STATUSES = new Set(['Submitted', 'Approved', 'Partially Approved', 'Paid', 'Payment Pending']);
+    // Strip all heavy fields — only keep what the email table needs
+    const reportClaims = allClaims
+      .filter(c => REPORT_STATUSES.has(c.status))
+      .filter(c => {
+        if (!reportDateFrom && !reportDateTo) return true;
+        const submittedDate = (c.submittedAt ?? '').slice(0, 10);
+        if (!submittedDate) return false;
+        if (reportDateFrom && submittedDate < reportDateFrom) return false;
+        if (reportDateTo && submittedDate > reportDateTo) return false;
+        return true;
+      })
+      .map(c => ({
+        billNo: c.billNo,
+        trainerName: c.trainerName,
+        status: c.status,
+        totalClaimedAmount: c.totalClaimedAmount ?? 0,
+        approvedAmount: c.approvedAmount ?? 0,
+        claimStartDate: c.claimStartDate ?? '',
+        claimEndDate: c.claimEndDate ?? '',
+        trainingLocation: c.trainingLocation ?? '',
+        submittedAt: c.submittedAt ?? '',
+      }));
+    if (reportClaims.length === 0) { setEmailReportMsg('No bills found for the selected criteria.'); return; }
+    const activeRecipients = REPORT_RECIPIENTS.filter(e => !excludedRecipients.has(e));
+    if (activeRecipients.length === 0) { setEmailReportMsg('❌ All recipients excluded — select at least one.'); return; }
+    setEmailReportSending(true);
+    setEmailReportMsg('');
+    const periodLabel = reportDateFrom || reportDateTo
+      ? `${reportDateFrom || '…'} to ${reportDateTo || '…'}`
+      : '';
+    try {
+      const r = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'bills_report',
+          claims: reportClaims,
+          sentBy: 'HR Admin',
+          toEmail: 'saurav.yadav@koenig-solutions.com',
+          periodLabel,
+          excludeEmails: Array.from(excludedRecipients),
+        }),
+      });
+      if (r.ok) {
+        setEmailReportMsg(`✅ Report sent to ${activeRecipients.length} recipient${activeRecipients.length === 1 ? '' : 's'} (${reportClaims.length} bills)`);
+      } else {
+        const d = await r.json().catch(() => ({}));
+        setEmailReportMsg(`❌ Failed: ${d.error ?? 'Unknown error'}`);
+      }
+    } catch {
+      setEmailReportMsg('❌ Network error — please try again.');
+    } finally {
+      setEmailReportSending(false);
+      setTimeout(() => setEmailReportMsg(''), 6000);
+    }
+  };
+
   const handleSendReminder = () => {
     const trainers = [
       ...new Set(
@@ -525,6 +640,100 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
 
           {/* Bulk action header buttons — disabled until selection */}
           <div className="flex items-center gap-2 flex-wrap">
+
+            {/* Email report button + date range — always active */}
+            <div className="flex flex-col items-end gap-1">
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                <input
+                  type="date"
+                  value={reportDateFrom}
+                  onChange={(e) => setReportDateFrom(e.target.value)}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  aria-label="Report from date"
+                />
+                <span className="text-xs text-gray-400">to</span>
+                <input
+                  type="date"
+                  value={reportDateTo}
+                  onChange={(e) => setReportDateTo(e.target.value)}
+                  className="px-2 py-1 text-xs border border-gray-300 rounded-md text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                  aria-label="Report to date"
+                />
+                {(reportDateFrom || reportDateTo) && (
+                  <button
+                    type="button"
+                    onClick={() => { setReportDateFrom(''); setReportDateTo(''); }}
+                    className="text-xs text-gray-400 hover:text-gray-600 px-1"
+                    title="Clear date range"
+                  >
+                    ✕
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={applyPreviousWeekRange}
+                  className="inline-flex items-center px-2.5 py-1 text-xs font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                >
+                  Previous Week (Mon–Fri)
+                </button>
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setShowRecipientPicker(v => !v)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-md border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    title="Choose who receives this report"
+                  >
+                    Recipients ({REPORT_RECIPIENTS.length - excludedRecipients.size})
+                  </button>
+                  {showRecipientPicker && (
+                    <div className="absolute right-0 mt-1 w-64 bg-white border border-gray-200 rounded-md shadow-lg z-20 p-3">
+                      <p className="text-xs font-semibold text-gray-500 mb-2">Send report to:</p>
+                      <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
+                        {REPORT_RECIPIENTS.map(email => (
+                          <label key={email} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={!excludedRecipients.has(email)}
+                              onChange={() => toggleRecipient(email)}
+                              className="rounded border-gray-300"
+                            />
+                            <span className="truncate">{email}</span>
+                          </label>
+                        ))}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowRecipientPicker(false)}
+                        className="mt-3 w-full text-center text-xs font-medium text-blue-600 hover:text-blue-800"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleEmailReport}
+                  disabled={emailReportSending}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-60 disabled:cursor-not-allowed transition-colors focus:outline-none focus:ring-2 focus:ring-blue-400"
+                >
+                  {emailReportSending ? (
+                    <span className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin inline-block" />
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                    </svg>
+                  )}
+                  {emailReportSending ? 'Sending…' : 'Email Bills Report'}
+                </button>
+              </div>
+              {emailReportMsg && (
+                <span className={`text-xs font-medium ${emailReportMsg.startsWith('✅') ? 'text-green-600' : 'text-red-600'}`}>
+                  {emailReportMsg}
+                </span>
+              )}
+            </div>
+
             <button
               type="button"
               disabled={selectedIds.length === 0}

@@ -686,7 +686,7 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
         claimId: c.claimId,
         billNo: c.billNo,
         remarks,
-        hrName: currentUser.name,
+        hrName: 'HR Admin',
         netPayable,
         currency: c.currency,
       }),
@@ -940,6 +940,18 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
                   <span className="text-gray-400">Claimed Amount</span>
                   <p className="font-semibold text-gray-800">
                     {formatINR(claim!.totalClaimedAmount)}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-gray-400">Approved Amount</span>
+                  <p className="font-semibold text-green-700">
+                    {formatINR(claim!.approvedAmount ?? 0)}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-gray-400">Net Payable</span>
+                  <p className="font-bold text-blue-700">
+                    {formatINR(claim!.netPayable ?? 0)}
                   </p>
                 </div>
               </div>

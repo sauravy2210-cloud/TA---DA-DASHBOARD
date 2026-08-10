@@ -8,5 +8,11 @@
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/notify?type=weekly_report",
+      "schedule": "30 2 * * 1"
+    }
   ]
 }

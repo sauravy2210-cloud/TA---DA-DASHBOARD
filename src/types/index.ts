@@ -280,6 +280,7 @@ export interface ClaimHeader {
   advanceItems?: ClaimAdvanceItem[];  // all advances from Step 9 at submit time
   lineItems?: ClaimLineItem[];        // embedded at submit time for cross-browser access
   advanceRecoveries?: Array<{ advanceKey: string; claimAmountUsed: number }>; // set at approve time
+  draftWizardData?: string; // JSON-encoded wizard state, only present when status === 'Draft'
 }
 
 export type ExpenseType = 'TA' | 'DA' | 'Lodging' | 'Cab' | 'Other';
