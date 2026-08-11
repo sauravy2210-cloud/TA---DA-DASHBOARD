@@ -2140,8 +2140,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // Best email for the trainer — PMS-resolved takes priority, stored claim email as fallback
   const effectiveTrainerEmail = resolvedTrainerEmail || (claim as unknown as { trainerEmail?: string })?.trainerEmail || '';
 
-  // Fire HR action email — always sends when an email is available; never blocks the action
-  const fireActionEmail = (actionKey: string, remarks?: string, overrideNetPayable?: number) => {
+  // Fire HR action email — always sends when an email is available; never blocks the action.
+  // approvedAmount is always sent (never omitted) so the trainer always sees exactly what
+  // HR Admin approved for this action.
+  const fireActionEmail = (actionKey: string, remarks?: string, overrideApprovedAmount?: number) => {
     if (!claim) return;
     const email = effectiveTrainerEmail;
     if (!email) {
@@ -2156,7 +2158,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       billNo: claim.billNo,
       remarks: remarks || undefined,
       hrName: 'HR Admin',
-      netPayable: overrideNetPayable ?? (liveGrandTotalINR > 0 ? liveNetPayableINR : computedFinalSettlement),
+      approvedAmount: overrideApprovedAmount ?? (liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount ?? 0)),
       currency: 'INR',
     });
   };

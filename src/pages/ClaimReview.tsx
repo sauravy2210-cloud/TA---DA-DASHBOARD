@@ -667,7 +667,9 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
   );
 
   // ── Email helper — fire-and-forget, never blocks the action ──────────────
-  const notifyTrainer = useCallback((actionKey: string, remarks?: string, netPayable?: number) => {
+  // approvedAmount is always sent (defaults to 0), so the trainer always sees exactly
+  // what HR Admin approved for this action — never conditionally omitted.
+  const notifyTrainer = useCallback((actionKey: string, remarks?: string, approvedAmount: number = 0) => {
     const c = claim as import('../types').ClaimHeader | null;
     if (!c) return;
     // Use PMS-resolved email (always current) with embedded claim email as fallback
@@ -687,7 +689,7 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
         billNo: c.billNo,
         remarks,
         hrName: 'HR Admin',
-        netPayable,
+        approvedAmount,
         currency: c.currency,
       }),
       keepalive: true,
@@ -757,7 +759,8 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
         lastActionAt: new Date().toISOString(),
       });
       logAction({ claimId, entityType: 'Claim', entityId: claimId ?? '', action: ACTION_TYPES.PARTIALLY_APPROVED, performedBy: currentUser.name, performedByRole: currentUser.role });
-      notifyTrainer('partial-approve');
+      const partialApprovedTotal = updatedItems.reduce((s, li) => s + (li.approvedAmount ?? 0), 0);
+      notifyTrainer('partial-approve', undefined, partialApprovedTotal);
       closeModal();
       showSuccess('Partial decisions saved. Redirecting to queue…');
       setTimeout(() => navigate('/claims'), 1800);

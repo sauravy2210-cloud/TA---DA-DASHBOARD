@@ -9,7 +9,7 @@ export interface ActionEmailPayload {
   billNo: string;
   remarks?: string;
   hrName: string;
-  netPayable?: number;
+  approvedAmount?: number;
   currency?: string;
 }
 

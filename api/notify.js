@@ -98,12 +98,12 @@ const ACTION_COLORS = {
   'mark-paid': '#7c3aed',
 };
 
-function buildEmailHtml({ claimId, billNo, trainerName, actionKey, actionLabel, remarks, hrName, netPayable, currency }) {
+function buildEmailHtml({ claimId, billNo, trainerName, actionKey, actionLabel, remarks, hrName, approvedAmount, currency }) {
   const color = ACTION_COLORS[actionKey] ?? '#2563eb';
   const sym = (currency === 'INR' || !currency) ? '₹' : `${currency} `;
-  const netLine = (netPayable != null && netPayable > 0)
-    ? `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px;">Net Payable</td><td style="padding:6px 0;font-weight:700;font-size:15px;color:#16a34a;">${sym}${Math.abs(netPayable).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td></tr>`
-    : '';
+  // Always show Approved Amount — never conditional — so the trainer always sees exactly
+  // what HR Admin approved for this action, regardless of whether it is zero or positive.
+  const netLine = `<tr><td style="padding:6px 0;color:#6b7280;font-size:14px;">Approved Amount</td><td style="padding:6px 0;font-weight:700;font-size:15px;color:#16a34a;">${sym}${Math.abs(approvedAmount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td></tr>`;
 
   return `<!DOCTYPE html>
 <html>
@@ -538,7 +538,7 @@ export default async function handler(req, res) {
   }
 
   // ── HR action notification email ──────────────────────────────────────────
-  const { toEmail, toName, actionKey, claimId, billNo, remarks, hrName, netPayable, currency } = body;
+  const { toEmail, toName, actionKey, claimId, billNo, remarks, hrName, approvedAmount, currency } = body;
   if (!toEmail || !actionKey || !claimId) {
     return res.status(400).json({ error: 'Missing required fields: toEmail, actionKey, claimId' });
   }
@@ -547,7 +547,7 @@ export default async function handler(req, res) {
   const html = buildEmailHtml({
     claimId, billNo: billNo ?? claimId, trainerName: toName ?? 'Trainer',
     actionKey, actionLabel, remarks: remarks || '', hrName: hrName ?? 'HR Admin',
-    netPayable: netPayable ?? null, currency: currency ?? 'INR',
+    approvedAmount: approvedAmount ?? 0, currency: currency ?? 'INR',
   });
   const subject = `TA/DA Claim ${actionLabel} — ${billNo ?? claimId}`;
 
