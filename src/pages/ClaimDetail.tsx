@@ -632,6 +632,32 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     });
   }
 
+  // Downscale + re-encode image receipts (like CreateTADABill's compressAndEncode) so a
+  // full-resolution phone photo (often 3-8MB) doesn't blow past the API's body size limit
+  // and silently fail the POST. Non-images (PDFs) pass through unchanged.
+  function compressReceiptForPostSubmit(file: File): Promise<string> {
+    if (!file.type.startsWith('image/')) return fileToBase64(file);
+    return new Promise((resolve) => {
+      const img = new Image();
+      const objectUrl = URL.createObjectURL(file);
+      img.onload = () => {
+        const MAX = 1200;
+        let w = img.width, h = img.height;
+        if (w > MAX || h > MAX) {
+          if (w >= h) { h = Math.round(h * MAX / w); w = MAX; }
+          else { w = Math.round(w * MAX / h); h = MAX; }
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+        URL.revokeObjectURL(objectUrl);
+        resolve(canvas.toDataURL('image/jpeg', 0.78));
+      };
+      img.onerror = async () => { URL.revokeObjectURL(objectUrl); resolve(await fileToBase64(file)); };
+      img.src = objectUrl;
+    });
+  }
+
   async function addMiscExpensePostSubmit() {
     if (!claimId || !miscPostSubmitDraft.date || !miscPostSubmitDraft.amount) return;
     setMiscPostSubmitSaving(true);
@@ -663,12 +689,17 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ lineItems: [newItem] }),
       });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      if (!r.ok) {
+        const bodyText = await r.text().catch(() => '');
+        console.error('[addMiscExpensePostSubmit] POST failed', r.status, bodyText);
+        throw new Error(`HTTP ${r.status}${bodyText ? ` — ${bodyText.slice(0, 200)}` : ''}`);
+      }
 
       setClaimLineItems(prev => [...prev, newItem]);
       setMiscPostSubmitDraft({ date: '', expenseType: 'Other', amount: 0, currency: 'INR', remarks: '', receiptData: '', receiptName: '' });
       setMiscPostSubmitMsg('✅ Expense added');
     } catch (err) {
+      console.error('[addMiscExpensePostSubmit] failed', err);
       setMiscPostSubmitMsg(`❌ Failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
     } finally {
       setMiscPostSubmitSaving(false);
@@ -3962,7 +3993,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                     onChange={async e => {
                                       const file = e.target.files?.[0];
                                       if (!file) return;
-                                      const data = await fileToBase64(file);
+                                      const data = await compressReceiptForPostSubmit(file);
                                       setMiscPostSubmitDraft(v => ({ ...v, receiptData: data, receiptName: file.name }));
                                     }}
                                     className="w-full text-[10px] text-gray-500" />
@@ -3973,6 +4004,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                               </div>
                               <div className="mt-3 flex items-center gap-2">
                                 <button
+                                  type="button"
                                   onClick={addMiscExpensePostSubmit}
                                   disabled={miscPostSubmitSaving || !miscPostSubmitDraft.date || !miscPostSubmitDraft.amount}
                                   className="px-3 py-1.5 rounded bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed"
