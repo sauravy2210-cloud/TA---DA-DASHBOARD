@@ -622,6 +622,29 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
       });
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       setVisaEntries(prev => prev.map(e => (e.id === entry.id ? updated : e)));
+
+      // Email the trainer immediately — mirrors the action-email pattern used for
+      // regular claim approve/reject in Recent Submissions; never blocks the decision.
+      if (entry.trainerEmail) {
+        const entryLabel = entry.entryType === 'travel'
+          ? `Travel — ${entry.data.travelType ?? 'Travel Expense'}`
+          : `Misc — ${entry.data.expenseType ?? 'Miscellaneous Expense'}`;
+        fetch('/api/notify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'visa_action',
+            toEmail: entry.trainerEmail,
+            toName: entry.trainerName,
+            entryLabel,
+            status,
+            amount: entry.data.amount,
+            currency: entry.data.currency,
+            date: entry.data.date,
+          }),
+          keepalive: true,
+        }).catch(() => { /* email is a notification, never blocks the HR action */ });
+      }
     } catch { /* leave entry unchanged on failure — HR Admin can retry */ }
     finally { setVisaDecidingId(null); }
   }

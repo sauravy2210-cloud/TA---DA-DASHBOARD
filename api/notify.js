@@ -148,6 +148,53 @@ function buildEmailHtml({ claimId, billNo, trainerName, actionKey, actionLabel, 
 </html>`;
 }
 
+// ── Visa Fees Entry action email template ─────────────────────────────────────
+
+function buildVisaActionEmailHtml({ trainerName, entryLabel, statusLabel, color, amount, currency, date, reviewRemark }) {
+  const sym = (currency === 'INR' || !currency) ? '₹' : `${currency} `;
+  return `<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:Arial,sans-serif;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f3f4f6;padding:32px 0;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.1);">
+        <tr><td style="background:${color};padding:24px 32px;">
+          <p style="margin:0;color:#ffffff;font-size:11px;letter-spacing:1px;text-transform:uppercase;font-weight:600;">Koenig Solutions — TA/DA Portal</p>
+          <h1 style="margin:8px 0 0;color:#ffffff;font-size:22px;font-weight:700;">Visa Fees Entry ${statusLabel}</h1>
+        </td></tr>
+        <tr><td style="padding:28px 32px;">
+          <p style="margin:0 0 20px;font-size:15px;color:#111827;">Hi <strong>${trainerName}</strong>,</p>
+          <p style="margin:0 0 24px;font-size:15px;color:#374151;">
+            Your <strong>${entryLabel}</strong> entry on the Visa Fees Entry page has been <strong style="color:${color};">${statusLabel}</strong> by <strong>HR Admin</strong>.
+          </p>
+          <table width="100%" cellpadding="0" cellspacing="0" style="border:1px solid #e5e7eb;border-radius:8px;padding:16px 20px;margin-bottom:24px;">
+            <tr><td style="padding:6px 0;color:#6b7280;font-size:14px;">Entry Type</td><td style="padding:6px 0;font-weight:600;font-size:14px;color:#111827;">${entryLabel}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280;font-size:14px;">Date</td><td style="padding:6px 0;font-weight:600;font-size:14px;color:#111827;">${date ?? '—'}</td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280;font-size:14px;">Status</td><td style="padding:6px 0;"><span style="background:${color}20;color:${color};padding:2px 10px;border-radius:20px;font-size:13px;font-weight:600;">${statusLabel}</span></td></tr>
+            <tr><td style="padding:6px 0;color:#6b7280;font-size:14px;">Amount</td><td style="padding:6px 0;font-weight:700;font-size:15px;color:#16a34a;">${sym}${Math.abs(amount ?? 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</td></tr>
+          </table>
+          ${reviewRemark ? `
+          <div style="background:#f9fafb;border-left:4px solid ${color};border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:24px;">
+            <p style="margin:0 0 4px;font-size:12px;font-weight:600;color:#6b7280;text-transform:uppercase;letter-spacing:0.5px;">HR Remarks</p>
+            <p style="margin:0;font-size:14px;color:#111827;">${reviewRemark}</p>
+          </div>` : ''}
+          <p style="margin:0;font-size:14px;color:#6b7280;">
+            Please log in to the <strong>TA/DA Portal</strong> to view full details.
+          </p>
+        </td></tr>
+        <tr><td style="background:#f9fafb;padding:16px 32px;border-top:1px solid #e5e7eb;">
+          <p style="margin:0;font-size:12px;color:#9ca3af;text-align:center;">
+            This is an automated notification from Koenig Solutions TA/DA Portal. Do not reply to this email.
+          </p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body>
+</html>`;
+}
+
 // ── File upload via Vercel Blob ───────────────────────────────────────────────
 
 async function handleUpload(req, res) {
@@ -534,6 +581,28 @@ export default async function handler(req, res) {
       return res.status(200).json(result);
     } catch (err) {
       return res.status(err && err.statusCode === 400 ? 400 : 502).json({ error: (err && err.message) || 'Failed to send report email' });
+    }
+  }
+
+  // ── Visa Fees Entry approve/reject notification email ───────────────────────
+  if (type === 'visa_action') {
+    const { toEmail: visaToEmail, toName: visaToName, entryLabel, status, amount, currency: visaCurrency, date, reviewRemark } = body;
+    if (!visaToEmail || !status) {
+      return res.status(400).json({ error: 'Missing required fields: toEmail, status' });
+    }
+    const color = status === 'Approved' ? '#16a34a' : '#dc2626';
+    const html = buildVisaActionEmailHtml({
+      trainerName: visaToName ?? 'Trainer', entryLabel: entryLabel ?? 'Visa Fees',
+      statusLabel: status, color, amount: amount ?? 0, currency: visaCurrency ?? 'INR',
+      date, reviewRemark: reviewRemark || '',
+    });
+    const subject = `Visa Fees Entry ${status} — ${entryLabel ?? 'Visa Fees'}`;
+    try {
+      const result = await sendHrEmail({ to: visaToEmail, subject, html });
+      return res.status(200).json(result);
+    } catch (err) {
+      console.error('All email providers failed for visa action:', err && err.message);
+      return res.status(502).json({ error: 'All email providers failed', detail: err && err.message });
     }
   }
 
