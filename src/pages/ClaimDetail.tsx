@@ -2250,14 +2250,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             <div className="text-center">
               <div className="text-xs text-gray-400 uppercase tracking-wide">Claimed</div>
               <div className="font-semibold text-gray-800">
-                ₹{(claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}
+                ₹{(liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
               </div>
             </div>
             {claim.approvedAmount !== null && (
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Approved</div>
                 <div className="font-semibold text-green-700">
-                  ₹{(claim.approvedAmount ?? 0).toLocaleString('en-IN')}
+                  ₹{(liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2273,7 +2273,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Net Payable</div>
                 <div className="font-bold text-blue-700">
-                  ₹{(claim.netPayable ?? 0).toLocaleString('en-IN')}
+                  ₹{(liveGrandTotalINR > 0 ? liveNetPayableINR : (claim.netPayable ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
