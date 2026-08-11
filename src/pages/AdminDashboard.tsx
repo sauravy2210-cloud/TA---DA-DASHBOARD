@@ -610,6 +610,40 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
   }, []);
   useEffect(() => { reloadVisaEntries(); }, [reloadVisaEntries]);
 
+  const [visaReopenTarget, setVisaReopenTarget] = useState<{ id: string; label: string } | null>(null);
+  const [visaDeleteTarget, setVisaDeleteTarget] = useState<{ id: string; label: string } | null>(null);
+  const [visaDeleteLoading, setVisaDeleteLoading] = useState(false);
+
+  async function handleVisaReopen() {
+    if (!visaReopenTarget) return;
+    const entry = visaEntries.find(e => e.id === visaReopenTarget.id);
+    if (entry) {
+      const updated: VisaDbRecord = { ...entry, status: 'Pending', reviewedAt: undefined, reviewRemark: undefined };
+      try {
+        await fetch('/api/turso?type=visa', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated),
+        });
+        setVisaEntries(prev => prev.map(e => (e.id === entry.id ? updated : e)));
+      } catch { /* leave entry unchanged on failure — HR Admin can retry */ }
+    }
+    setVisaReopenTarget(null);
+  }
+
+  async function handleVisaDelete() {
+    if (!visaDeleteTarget) return;
+    setVisaDeleteLoading(true);
+    try {
+      await fetch(`/api/turso?type=visa&id=${encodeURIComponent(visaDeleteTarget.id)}`, { method: 'DELETE' });
+      setVisaEntries(prev => prev.filter(e => e.id !== visaDeleteTarget.id));
+    } catch { /* leave entry unchanged on failure — HR Admin can retry */ }
+    finally {
+      setVisaDeleteLoading(false);
+      setVisaDeleteTarget(null);
+    }
+  }
+
   const [visaDecidingId, setVisaDecidingId] = useState<string | null>(null);
   async function decideVisaEntry(entry: VisaDbRecord, status: 'Approved' | 'Rejected') {
     setVisaDecidingId(entry.id);
@@ -1298,7 +1332,25 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                               >Reject</button>
                             </div>
                           ) : (
-                            <span className="text-gray-400 text-[11px]">{formatDate(e.reviewedAt)}</span>
+                            <div className="inline-flex items-center gap-1">
+                              <span className="text-gray-400 text-[11px] mr-1">{formatDate(e.reviewedAt)}</span>
+                              <button
+                                onClick={() => setVisaReopenTarget({ id: e.id, label: `${e.trainerName || e.trainerId} — ${e.entryType === 'travel' ? 'Travel' : 'Misc'} entry` })}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-amber-600 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                                title="Reopen entry"
+                              >
+                                <RotateCcw size={13} />
+                                Reopen
+                              </button>
+                              <button
+                                onClick={() => setVisaDeleteTarget({ id: e.id, label: `${e.trainerName || e.trainerId} — ${e.entryType === 'travel' ? 'Travel' : 'Misc'} entry` })}
+                                className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs text-red-500 hover:bg-red-50 hover:text-red-700 transition-colors"
+                                title="Delete entry"
+                              >
+                                <Trash2 size={13} />
+                                Delete
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -1503,6 +1555,76 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                 className="flex-1 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition-colors"
               >
                 Reopen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Visa Fees Entry: Reopen confirmation modal ── */}
+      {visaReopenTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0">
+                <RotateCcw size={18} className="text-amber-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-gray-800">Reopen Visa Fees Entry</p>
+                <p className="text-xs text-gray-500 mt-0.5">Entry will go back to Pending for re-review</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-6">
+              Reopen <span className="font-semibold text-gray-800">{visaReopenTarget.label}</span>? Its status will change back to <span className="font-semibold text-amber-700">Pending</span>.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setVisaReopenTarget(null)}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleVisaReopen}
+                className="flex-1 px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold transition-colors"
+              >
+                Reopen
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Visa Fees Entry: Delete confirmation modal ── */}
+      {visaDeleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl border border-gray-200 w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                <Trash2 size={18} className="text-red-600" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-gray-800">Delete Visa Fees Entry</p>
+                <p className="text-xs text-gray-500 mt-0.5">This action cannot be undone</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Are you sure you want to delete <span className="font-semibold text-gray-800">{visaDeleteTarget.label}</span>?
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setVisaDeleteTarget(null)}
+                disabled={visaDeleteLoading}
+                className="flex-1 px-4 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleVisaDelete}
+                disabled={visaDeleteLoading}
+                className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-semibold transition-colors disabled:opacity-60"
+              >
+                {visaDeleteLoading ? 'Deleting…' : 'Delete'}
               </button>
             </div>
           </div>
