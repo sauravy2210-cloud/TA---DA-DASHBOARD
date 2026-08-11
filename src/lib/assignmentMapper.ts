@@ -135,261 +135,350 @@ export function deriveDeliveryMode(bdm: string): string {
 // PMS frequently sends country='India' even for international assignments.
 // City-based lookup is authoritative when PMS country is India or blank.
 const CITY_COUNTRY_MAP: Record<string, string> = {
-  // India
-  'delhi': 'India', 'new delhi': 'India', 'noida': 'India', 'gurgaon': 'India',
-  'gurugram': 'India', 'mumbai': 'India', 'bombay': 'India', 'bangalore': 'India',
-  'bengaluru': 'India', 'hyderabad': 'India', 'chennai': 'India', 'madras': 'India',
-  'pune': 'India', 'kolkata': 'India', 'calcutta': 'India', 'ahmedabad': 'India',
-  'jaipur': 'India', 'chandigarh': 'India', 'kochi': 'India', 'cochin': 'India',
-  'lucknow': 'India', 'bhopal': 'India', 'indore': 'India', 'nagpur': 'India',
-  'coimbatore': 'India', 'surat': 'India', 'vadodara': 'India', 'baroda': 'India',
-  'agra': 'India', 'varanasi': 'India', 'patna': 'India', 'ranchi': 'India',
-  'bhubaneswar': 'India', 'visakhapatnam': 'India', 'vijayawada': 'India',
-  'thiruvananthapuram': 'India', 'trivandrum': 'India', 'mysore': 'India',
-  'mysuru': 'India', 'srinagar': 'India', 'amritsar': 'India', 'dehradun': 'India',
-  'goa': 'India', 'panaji': 'India', 'faridabad': 'India', 'meerut': 'India',
-  'nashik': 'India', 'aurangabad': 'India', 'rajkot': 'India', 'jabalpur': 'India',
-  'raipur': 'India', 'jodhpur': 'India', 'madurai': 'India', 'mangalore': 'India',
-  'mangaluru': 'India', 'hubli': 'India', 'dharwad': 'India', 'guwahati': 'India',
-  // UAE
-  'dubai': 'United Arab Emirates', 'abu dhabi': 'United Arab Emirates',
-  'sharjah': 'United Arab Emirates', 'ajman': 'United Arab Emirates',
-  'ras al khaimah': 'United Arab Emirates', 'fujairah': 'United Arab Emirates',
-  'umm al quwain': 'United Arab Emirates', 'al ain': 'United Arab Emirates',
-  'jebel ali': 'United Arab Emirates', 'uae': 'United Arab Emirates',
-  'emirates': 'United Arab Emirates',
-  // UK
-  'london': 'UK', 'manchester': 'UK', 'birmingham': 'UK', 'edinburgh': 'UK',
-  'glasgow': 'UK', 'bristol': 'UK', 'leeds': 'UK', 'liverpool': 'UK',
-  'sheffield': 'UK', 'newcastle': 'UK', 'cardiff': 'UK', 'belfast': 'UK',
-  'oxford': 'UK', 'cambridge': 'UK', 'reading': 'UK', 'southampton': 'UK',
-  'nottingham': 'UK', 'leicester': 'UK', 'coventry': 'UK', 'bradford': 'UK',
-  'aberdeen': 'UK', 'swansea': 'UK', 'wolverhampton': 'UK',
-  'london city': 'UK', 'heathrow': 'UK', 'gatwick': 'UK',
-  'uk': 'UK', 'england': 'UK', 'britain': 'UK', 'united kingdom': 'UK',
-  // USA
-  'new york': 'USA', 'los angeles': 'USA', 'chicago': 'USA', 'houston': 'USA',
-  'san francisco': 'USA', 'seattle': 'USA', 'boston': 'USA', 'dallas': 'USA',
-  'austin': 'USA', 'denver': 'USA', 'atlanta': 'USA', 'miami': 'USA',
-  'washington': 'USA', 'phoenix': 'USA', 'las vegas': 'USA',
-  'san diego': 'USA', 'portland': 'USA', 'detroit': 'USA', 'philadelphia': 'USA',
-  'minneapolis': 'USA', 'nashville': 'USA', 'charlotte': 'USA',
-  'columbus': 'USA', 'indianapolis': 'USA', 'baltimore': 'USA',
-  'new york city': 'USA', 'nyc': 'USA', 'silicon valley': 'USA',
-  'usa': 'USA', 'us': 'USA', 'america': 'USA', 'united states': 'USA',
-  // Singapore
-  'singapore': 'Singapore',
-  // Saudi Arabia
-  'riyadh': 'Saudi Arabia', 'jeddah': 'Saudi Arabia', 'mecca': 'Saudi Arabia',
-  'medina': 'Saudi Arabia', 'dammam': 'Saudi Arabia', 'khobar': 'Saudi Arabia',
-  'al khobar': 'Saudi Arabia', 'dhahran': 'Saudi Arabia', 'jubail': 'Saudi Arabia',
-  'taif': 'Saudi Arabia', 'tabuk': 'Saudi Arabia', 'abha': 'Saudi Arabia',
-  'yanbu': 'Saudi Arabia', 'buraidah': 'Saudi Arabia',
-  // Qatar
-  'doha': 'Qatar',
-  // Bahrain
-  'manama': 'Bahrain',
-  // Kuwait
-  'kuwait city': 'Kuwait', 'kuwait': 'Kuwait',
-  // Oman
-  'muscat': 'Oman', 'salalah': 'Oman', 'sohar': 'Oman',
-  // Australia
-  'sydney': 'Australia', 'melbourne': 'Australia', 'brisbane': 'Australia',
-  'perth': 'Australia', 'adelaide': 'Australia', 'canberra': 'Australia',
-  'gold coast': 'Australia', 'hobart': 'Australia', 'darwin': 'Australia',
-  // Canada
-  'toronto': 'Canada', 'vancouver': 'Canada', 'calgary': 'Canada',
-  'ottawa': 'Canada', 'montreal': 'Canada', 'edmonton': 'Canada',
-  'winnipeg': 'Canada', 'mississauga': 'Canada', 'brampton': 'Canada',
-  // Germany
-  'frankfurt': 'Germany', 'munich': 'Germany', 'berlin': 'Germany',
-  'hamburg': 'Germany', 'düsseldorf': 'Germany', 'dusseldorf': 'Germany',
-  'cologne': 'Germany', 'stuttgart': 'Germany', 'dresden': 'Germany',
-  'nuremberg': 'Germany', 'nürnberg': 'Germany', 'hannover': 'Germany',
-  // Netherlands
-  'amsterdam': 'Netherlands', 'rotterdam': 'Netherlands', 'the hague': 'Netherlands',
-  'utrecht': 'Netherlands', 'eindhoven': 'Netherlands',
-  // France
-  'paris': 'France', 'lyon': 'France', 'marseille': 'France',
-  'nice': 'France', 'bordeaux': 'France', 'toulouse': 'France',
-  'strasbourg': 'France', 'lille': 'France', 'nantes': 'France',
-  // Switzerland
-  'zurich': 'Switzerland', 'geneva': 'Switzerland', 'bern': 'Switzerland',
-  'basel': 'Switzerland', 'lausanne': 'Switzerland',
-  // Belgium
-  'brussels': 'Belgium', 'antwerp': 'Belgium', 'ghent': 'Belgium', 'bruges': 'Belgium',
-  // Sweden
-  'stockholm': 'Sweden', 'gothenburg': 'Sweden', 'malmö': 'Sweden', 'malmo': 'Sweden',
-  // Japan
-  'tokyo': 'Japan', 'osaka': 'Japan', 'kyoto': 'Japan', 'nagoya': 'Japan',
-  'hiroshima': 'Japan', 'sapporo': 'Japan', 'fukuoka': 'Japan', 'kobe': 'Japan',
-  'yokohama': 'Japan',
-  // South Korea
-  'seoul': 'South Korea', 'busan': 'South Korea', 'incheon': 'South Korea',
-  // Hong Kong
-  'hong kong': 'Hong Kong',
-  // China
-  'beijing': 'China', 'shanghai': 'China', 'shenzhen': 'China',
-  'guangzhou': 'China', 'chengdu': 'China', 'chongqing': 'China',
-  'wuhan': 'China', 'nanjing': 'China', 'hangzhou': 'China', 'tianjin': 'China',
-  'macau': 'China', 'macao': 'China',
-  // Malaysia
-  'kuala lumpur': 'Malaysia', 'penang': 'Malaysia', 'johor bahru': 'Malaysia',
-  'kota kinabalu': 'Malaysia', 'kuching': 'Malaysia', 'kl': 'Malaysia',
-  // Thailand
-  'bangkok': 'Thailand', 'phuket': 'Thailand', 'chiang mai': 'Thailand',
-  // Philippines
-  'manila': 'Philippines', 'cebu': 'Philippines', 'makati': 'Philippines',
-  'quezon city': 'Philippines', 'davao': 'Philippines', 'taguig': 'Philippines',
-  'bgc': 'Philippines', 'bonifacio global city': 'Philippines',
-  // Indonesia
-  'jakarta': 'Indonesia', 'bali': 'Indonesia', 'surabaya': 'Indonesia',
-  'bandung': 'Indonesia', 'medan': 'Indonesia',
-  // Vietnam
-  'hanoi': 'Vietnam', 'ho chi minh': 'Vietnam', 'ho chi minh city': 'Vietnam',
-  'da nang': 'Vietnam', 'hue': 'Vietnam',
-  // Nepal
-  'kathmandu': 'Nepal', 'pokhara': 'Nepal', 'lalitpur': 'Nepal',
-  'patan': 'Nepal', 'bhaktapur': 'Nepal', 'bharatpur': 'Nepal',
-  'biratnagar': 'Nepal', 'birgunj': 'Nepal', 'janakpur': 'Nepal',
-  // Bangladesh
-  'dhaka': 'Bangladesh', 'chittagong': 'Bangladesh', 'chattogram': 'Bangladesh',
-  'sylhet': 'Bangladesh', 'rajshahi': 'Bangladesh', 'khulna': 'Bangladesh',
-  // Myanmar
-  'yangon': 'Myanmar', 'rangoon': 'Myanmar', 'naypyidaw': 'Myanmar',
-  'mandalay': 'Myanmar',
-  // Bhutan
-  'thimphu': 'Bhutan', 'thimpu': 'Bhutan', 'paro': 'Bhutan', 'punakha': 'Bhutan',
-  'phuntsholing': 'Bhutan',
-  // Sri Lanka
-  'colombo': 'Sri Lanka', 'kandy': 'Sri Lanka', 'galle': 'Sri Lanka',
-  'jaffna': 'Sri Lanka', 'negombo': 'Sri Lanka',
-  // Pakistan
-  'karachi': 'Pakistan', 'lahore': 'Pakistan', 'islamabad': 'Pakistan',
-  'faisalabad': 'Pakistan', 'rawalpindi': 'Pakistan', 'multan': 'Pakistan',
-  // Egypt
-  'cairo': 'Egypt', 'alexandria': 'Egypt', 'giza': 'Egypt',
-  // South Africa
-  'johannesburg': 'South Africa', 'cape town': 'South Africa', 'durban': 'South Africa',
-  'pretoria': 'South Africa',
-  // Kenya
-  'nairobi': 'Kenya', 'mombasa': 'Kenya',
-  // Nigeria
-  'lagos': 'Nigeria', 'abuja': 'Nigeria',
-  // Turkey
-  'istanbul': 'Turkey', 'ankara': 'Turkey', 'izmir': 'Turkey',
-  // Israel
-  'tel aviv': 'Israel', 'jerusalem': 'Israel',
-  // Jordan
-  'amman': 'Jordan',
-  // New Zealand
-  'auckland': 'New Zealand', 'wellington': 'New Zealand', 'christchurch': 'New Zealand',
-  // Russia
-  'moscow': 'Russia', 'st. petersburg': 'Russia', 'saint petersburg': 'Russia',
-  // Denmark
-  'copenhagen': 'Denmark',
-  // Spain
-  'madrid': 'Spain', 'barcelona': 'Spain', 'seville': 'Spain', 'valencia': 'Spain',
-  // Italy
-  'rome': 'Italy', 'milan': 'Italy', 'naples': 'Italy', 'turin': 'Italy',
-  'florence': 'Italy', 'venice': 'Italy',
-  // Portugal
-  'lisbon': 'Portugal', 'porto': 'Portugal',
-  // Ireland
-  'dublin': 'Ireland', 'cork': 'Ireland', 'galway': 'Ireland',
-  // Greece
-  'athens': 'Greece', 'thessaloniki': 'Greece',
-  // Austria
-  'vienna': 'Austria', 'salzburg': 'Austria', 'graz': 'Austria',
-  // Finland
-  'helsinki': 'Finland', 'tampere': 'Finland',
-  // Norway
-  'oslo': 'Norway', 'bergen': 'Norway',
-  // Iceland
-  'reykjavik': 'Iceland',
-  // Poland
-  'warsaw': 'Poland', 'krakow': 'Poland', 'wroclaw': 'Poland',
-  // Czech Republic
-  'prague': 'Czech Republic', 'brno': 'Czech Republic',
-  // Hungary
-  'budapest': 'Hungary',
-  // Romania
-  'bucharest': 'Romania', 'cluj-napoca': 'Romania',
-  // Taiwan
-  'taipei': 'Taiwan',
-  // Kazakhstan
-  'almaty': 'Kazakhstan', 'astana': 'Kazakhstan', 'nur-sultan': 'Kazakhstan',
-  // Uzbekistan
-  'tashkent': 'Uzbekistan', 'samarkand': 'Uzbekistan',
-  // Azerbaijan
-  'baku': 'Azerbaijan',
-  // Georgia (country)
-  'tbilisi': 'Georgia', 'batumi': 'Georgia',
-  // Armenia
-  'yerevan': 'Armenia',
-  // Morocco
-  'casablanca': 'Morocco', 'rabat': 'Morocco', 'marrakech': 'Morocco',
-  // Tanzania
-  'dar es salaam': 'Tanzania', 'arusha': 'Tanzania',
-  // Uganda
-  'kampala': 'Uganda',
-  // Ghana
-  'accra': 'Ghana',
-  // Ethiopia
-  'addis ababa': 'Ethiopia',
-  // Maldives
-  'male': 'Maldives', 'malé': 'Maldives',
-  // Mexico
-  'mexico city': 'Mexico', 'guadalajara': 'Mexico', 'monterrey': 'Mexico',
-  'cancun': 'Mexico',
-  // Brazil
-  'sao paulo': 'Brazil', 'são paulo': 'Brazil', 'rio de janeiro': 'Brazil',
-  'brasilia': 'Brazil', 'brasília': 'Brazil',
-  // Argentina
-  'buenos aires': 'Argentina',
-  // Colombia
-  'bogota': 'Colombia', 'bogotá': 'Colombia', 'medellin': 'Colombia',
-  // Chile
-  'santiago': 'Chile',
-  // Cambodia
-  'phnom penh': 'Cambodia', 'siem reap': 'Cambodia',
-  // Mongolia
-  'ulaanbaatar': 'Mongolia',
-  // Cyprus
-  'nicosia': 'Cyprus', 'limassol': 'Cyprus', 'larnaca': 'Cyprus',
-  // Malta
-  'valletta': 'Malta',
-  // Luxembourg
-  'luxembourg': 'Luxembourg', 'luxembourg city': 'Luxembourg',
-  // Yemen
-  "sana'a": 'Yemen', 'sanaa': 'Yemen', 'aden': 'Yemen',
-  // Lebanon
-  'beirut': 'Lebanon',
-  // Iraq
-  'baghdad': 'Iraq', 'basra': 'Iraq', 'erbil': 'Iraq',
-  // Iran
-  'tehran': 'Iran', 'isfahan': 'Iran', 'mashhad': 'Iran',
-  // Afghanistan
-  'kabul': 'Afghanistan',
-  // Country names typed as city
-  'philippines': 'Philippines', 'indonesia': 'Indonesia', 'vietnam': 'Vietnam',
-  'viet nam': 'Vietnam', 'thailand': 'Thailand', 'malaysia': 'Malaysia',
-  'china': 'China', 'japan': 'Japan', 'south korea': 'South Korea',
-  'taiwan': 'Taiwan', 'australia': 'Australia', 'canada': 'Canada',
-  'germany': 'Germany', 'france': 'France', 'italy': 'Italy', 'spain': 'Spain',
-  'netherlands': 'Netherlands', 'switzerland': 'Switzerland', 'belgium': 'Belgium',
-  'sweden': 'Sweden', 'denmark': 'Denmark', 'finland': 'Finland',
-  'norway': 'Norway', 'austria': 'Austria', 'poland': 'Poland',
-  'russia': 'Russia', 'turkey': 'Turkey', 'ukraine': 'Ukraine',
-  'saudi arabia': 'Saudi Arabia', 'qatar': 'Qatar', 'bahrain': 'Bahrain',
-  'oman': 'Oman', 'jordan': 'Jordan', 'egypt': 'Egypt', 'nigeria': 'Nigeria',
-  'kenya': 'Kenya', 'south africa': 'South Africa', 'ghana': 'Ghana',
-  'brazil': 'Brazil', 'argentina': 'Argentina', 'chile': 'Chile',
-  'colombia': 'Colombia', 'mexico': 'Mexico', 'iran': 'Iran', 'iraq': 'Iraq',
-  'israel': 'Israel', 'myanmar': 'Myanmar', 'burma': 'Myanmar',
-  'new zealand': 'New Zealand', 'maldives': 'Maldives', 'sri lanka': 'Sri Lanka',
-  'nepal': 'Nepal', 'bhutan': 'Bhutan', 'bangladesh': 'Bangladesh',
+  // Comprehensive world city→country map, merged and kept in sync across CreateTADABill.tsx
+  // and assignmentMapper.ts on 2026-08-10 — both files must use the IDENTICAL list.
+  "aalborg": "Denmark", "aarhus": "Denmark", "aba": "Nigeria", "aberdeen": "UK", "abha": "Saudi Arabia",
+  "abidjan": "Ivory Coast", "abu dhabi": "United Arab Emirates", "abuja": "Nigeria", "acapulco": "Mexico",
+  "accra": "Ghana", "adana": "Turkey", "addis": "Ethiopia", "addis ababa": "Ethiopia", "addu": "Maldives",
+  "addu city": "Maldives", "adelaide": "Australia", "aden": "Yemen", "aden'a": "Yemen", "afghanistan": "Afghanistan",
+  "agra": "India", "aguascalientes": "Mexico", "ahmedabad": "India", "ahvaz": "Iran",
+  "ajman": "United Arab Emirates", "aktobe": "Kazakhstan", "akyab": "Myanmar", "al ain": "United Arab Emirates",
+  "al khobar": "Saudi Arabia", "albuquerque": "USA", "aleppo": "Syria", "alexandria": "Egypt", "algeria": "Algeria",
+  "algiers": "Algeria", "ali sabieh": "Djibouti", "alicante": "Spain", "almaty": "Kazakhstan", "america": "USA",
+  "amman": "Jordan", "ampang": "Malaysia", "ampara": "Sri Lanka", "amritsar": "India", "amsterdam": "Netherlands",
+  "andijan": "Uzbekistan", "andorra la vella": "Andorra", "angeles": "Philippines", "angola": "Angola",
+  "ankara": "Turkey", "annaba": "Algeria", "antalya": "Turkey", "antananarivo": "Madagascar",
+  "antipolo": "Philippines", "antofagasta": "Chile", "antsirabe": "Madagascar", "antwerp": "Belgium",
+  "anuradhapura": "Sri Lanka", "apia": "Samoa", "aqaba": "Jordan", "arequipa": "Peru", "argentina": "Argentina",
+  "arugam bay": "Sri Lanka", "arusha": "Tanzania", "ashdod": "Israel", "ashgabat": "Turkmenistan",
+  "asmara": "Eritrea", "asmera": "Eritrea", "astana": "Kazakhstan", "asuncion": "Paraguay", "asunción": "Paraguay",
+  "aswan": "Egypt", "athens": "Greece", "atlanta": "USA", "auckland": "New Zealand", "aurangabad": "India",
+  "austin": "USA", "australia": "Australia", "austria": "Austria", "bacolod": "Philippines", "badulla": "Sri Lanka",
+  "bafoussam": "Cameroon", "bagerhat": "Bangladesh", "baghdad": "Iraq", "bago": "Myanmar", "baguio": "Philippines",
+  "bahrain": "Bahrain", "baku": "Azerbaijan", "bali": "Indonesia", "balikpapan": "Indonesia", "balti": "Moldova",
+  "baltimore": "USA", "bamako": "Mali", "bambari": "Central African Republic", "bamenda": "Cameroon",
+  "bandar abbas": "Iran", "bandar seri begawan": "Brunei", "bandung": "Indonesia", "banepa": "Nepal",
+  "bangalore": "India", "bangkok": "Thailand", "bangladesh": "Bangladesh", "bangui": "Central African Republic",
+  "banja luka": "Bosnia and Herzegovina", "barcelona": "Spain", "bari": "Italy", "barisal": "Bangladesh",
+  "barishal": "Bangladesh", "baroda": "India", "barquisimeto": "Venezuela", "barranquilla": "Colombia",
+  "basel": "Switzerland", "basra": "Iraq", "bassein": "Myanmar", "basseterre": "Saint Kitts and Nevis",
+  "bata": "Equatorial Guinea", "batam": "Indonesia", "battambang": "Cambodia", "batticaloa": "Sri Lanka",
+  "batumi": "Georgia", "baucau": "East Timor", "beer sheva": "Israel", "beijing": "China", "beira": "Mozambique",
+  "beirut": "Lebanon", "bekasi": "Indonesia", "belem": "Brazil", "belfast": "UK", "belgium": "Belgium",
+  "belgrade": "Serbia", "belize city": "Belize", "belmopan": "Belize", "belo horizonte": "Brazil", "belém": "Brazil",
+  "bengaluru": "India", "benghazi": "Libya", "benguela": "Angola", "benin city": "Nigeria", "bentota": "Sri Lanka",
+  "berbera": "Somalia", "bergen": "Norway", "berlin": "Germany", "bern": "Switzerland", "beruwala": "Sri Lanka",
+  "bethlehem": "Palestine", "bgc": "Philippines", "bhadgaon": "Nepal", "bhairahawa": "Nepal", "bhaktapur": "Nepal",
+  "bharatpur": "Nepal", "bhola": "Bangladesh", "bhopal": "India", "bhubaneswar": "India", "bhutan": "Bhutan",
+  "bien hoa": "Vietnam", "bilbao": "Spain", "biratnagar": "Nepal", "birendranagar": "Nepal", "birgunj": "Nepal",
+  "birmingham": "UK", "bishkek": "Kyrgyzstan", "bissau": "Guinea-Bissau", "bitola": "North Macedonia",
+  "bizerte": "Tunisia", "blantyre": "Malawi", "blida": "Algeria", "bloemfontein": "South Africa",
+  "bo": "Sierra Leone", "bobo-dioulasso": "Burkina Faso", "bogor": "Indonesia", "bogota": "Colombia",
+  "bogotá": "Colombia", "bogra": "Bangladesh", "bogura": "Bangladesh", "bolivia": "Bolivia", "bologna": "Italy",
+  "bombay": "India", "bonifacio global city": "Philippines", "bordeaux": "France", "bosaso": "Somalia",
+  "boston": "USA", "bouake": "Ivory Coast", "bradford": "UK", "braga": "Portugal", "brahmanbaria": "Bangladesh",
+  "brampton": "Canada", "brasilia": "Brazil", "brasília": "Brazil", "bratislava": "Slovakia", "brazil": "Brazil",
+  "brazzaville": "Republic of Congo", "breda": "Netherlands", "bremen": "Germany", "bridgetown": "Barbados",
+  "brikama": "Gambia", "brisbane": "Australia", "bristol": "UK", "britain": "UK", "brno": "Czech Republic",
+  "bruges": "Belgium", "brunei": "Brunei", "brussels": "Belgium", "bsb": "Brunei", "bucaramanga": "Colombia",
+  "bucharest": "Romania", "budapest": "Hungary", "buenos aires": "Argentina", "bujumbura": "Burundi",
+  "bukavu": "Democratic Republic of the Congo", "bukhara": "Uzbekistan", "bulawayo": "Zimbabwe",
+  "bumthang": "Bhutan", "bunia": "Democratic Republic of the Congo", "buon ma thuot": "Vietnam",
+  "buraidah": "Saudi Arabia", "burgas": "Bulgaria", "burma": "Myanmar", "bursa": "Turkey", "burundi": "Burundi",
+  "busan": "South Korea", "butare": "Rwanda", "butuan": "Philippines", "butwal": "Nepal",
+  "cagayan de oro": "Philippines", "cairns": "Australia", "cairo": "Egypt", "calcutta": "India", "calgary": "Canada",
+  "cali": "Colombia", "caloocan": "Philippines", "cambodia": "Cambodia", "cambridge": "UK", "cameroon": "Cameroon",
+  "campo grande": "Brazil", "can tho": "Vietnam", "canada": "Canada", "canberra": "Australia", "cancun": "Mexico",
+  "cape town": "South Africa", "caracas": "Venezuela", "cardiff": "UK", "cartagena": "Colombia",
+  "casablanca": "Morocco", "castries": "Saint Lucia", "catania": "Italy", "cebu": "Philippines", "chad": "Chad",
+  "chandigarh": "India", "changsha": "China", "chapainawabganj": "Bangladesh", "charlotte": "USA",
+  "chattogram": "Bangladesh", "chelyabinsk": "Russia", "chengdu": "China", "chennai": "India", "chhukha": "Bhutan",
+  "chiang mai": "Thailand", "chiang rai": "Thailand", "chiba": "Japan", "chicago": "USA", "chiclayo": "Peru",
+  "chilaw": "Sri Lanka", "chile": "Chile", "china": "China", "chipata": "Zambia", "chisinau": "Moldova",
+  "chittagong": "Bangladesh", "chitungwiza": "Zimbabwe", "chișinău": "Moldova", "chongqing": "China",
+  "christchurch": "New Zealand", "chukha": "Bhutan", "ciudad juarez": "Mexico", "clark": "Philippines",
+  "cluj": "Romania", "cluj-napoca": "Romania", "cochabamba": "Bolivia", "cochin": "India", "coimbatore": "India",
+  "coimbra": "Portugal", "cologne": "Germany", "colombia": "Colombia", "colombo": "Sri Lanka", "columbus": "USA",
+  "comilla": "Bangladesh", "conakry": "Guinea", "concepcion": "Chile", "concepción": "Chile", "constanta": "Romania",
+  "constantine": "Algeria", "copenhagen": "Denmark", "cordoba": "Argentina", "cork": "Ireland",
+  "cotabato": "Philippines", "cotonou": "Benin", "coventry": "UK", "cox's bazar": "Bangladesh",
+  "coxs bazar": "Bangladesh", "cuba": "Cuba", "cuenca": "Ecuador", "culiacan": "Mexico", "cumilla": "Bangladesh",
+  "curitiba": "Brazil", "cusco": "Peru", "cuzco": "Peru", "cyberjaya": "Malaysia", "córdoba": "Argentina",
+  "córdoba es": "Spain", "da nang": "Vietnam", "daegu": "South Korea", "daejeon": "South Korea", "dagana": "Bhutan",
+  "dagupan": "Philippines", "dakar": "Senegal", "dalat": "Vietnam", "dalian": "China", "dallas": "USA",
+  "daloa": "Ivory Coast", "damak": "Nepal", "damascus": "Syria", "dambulla": "Sri Lanka", "dammam": "Saudi Arabia",
+  "dar es salaam": "Tanzania", "darkhan": "Mongolia", "darwin": "Australia", "daugavpils": "Latvia",
+  "davao": "Philippines", "dawei": "Myanmar", "debrecen": "Hungary", "dehradun": "India", "deir ez-zor": "Syria",
+  "delhi": "India", "denmark": "Denmark", "denver": "USA", "depok": "Indonesia", "detroit": "USA",
+  "dhahran": "Saudi Arabia", "dhaka": "Bangladesh", "dhaka north": "Bangladesh", "dhaka south": "Bangladesh",
+  "dhangadhi": "Nepal", "dharan": "Nepal", "dharwad": "India", "dhulikhel": "Nepal", "dili": "East Timor",
+  "dinajpur": "Bangladesh", "dire dawa": "Ethiopia", "djibouti": "Djibouti", "djibouti city": "Djibouti",
+  "dnipro": "Ukraine", "dodoma": "Tanzania", "doha": "Qatar", "dongguan": "China", "dortmund": "Germany",
+  "douala": "Cameroon", "drammen": "Norway", "dresden": "Germany", "dubai": "United Arab Emirates",
+  "dublin": "Ireland", "dubrovnik": "Croatia", "dunedin": "New Zealand", "durban": "South Africa",
+  "durres": "Albania", "durrës": "Albania", "dushanbe": "Tajikistan", "dusseldorf": "Germany",
+  "düsseldorf": "Germany", "east london": "South Africa", "ecuador": "Ecuador", "edinburgh": "UK",
+  "edmonton": "Canada", "egypt": "Egypt", "eindhoven": "Netherlands", "eldoret": "Kenya", "ella": "Sri Lanka",
+  "emirates": "United Arab Emirates", "england": "UK", "entebbe": "Uganda", "erbil": "Iraq", "erdenet": "Mongolia",
+  "ermita": "Philippines", "esbjerg": "Denmark", "espoo": "Finland", "essen": "Germany", "ethiopia": "Ethiopia",
+  "faisalabad": "Pakistan", "fallujah": "Iraq", "famagusta": "Cyprus", "faridabad": "India",
+  "faridpur": "Bangladesh", "faro": "Portugal", "feni": "Bangladesh", "fergana": "Uzbekistan", "fez": "Morocco",
+  "fianarantsoa": "Madagascar", "finland": "Finland", "florence": "Italy", "florianopolis": "Brazil",
+  "fortaleza": "Brazil", "foshan": "China", "france": "France", "francistown": "Botswana", "frankfurt": "Germany",
+  "freetown": "Sierra Leone", "fresno": "USA", "fujairah": "United Arab Emirates", "fukuoka": "Japan",
+  "funafuti": "Tuvalu", "funchal": "Portugal", "fuvahmulah": "Maldives", "fuzhou": "China", "gaborone": "Botswana",
+  "galle": "Sri Lanka", "galway": "Ireland", "gampaha": "Sri Lanka", "ganja": "Azerbaijan", "gao": "Mali",
+  "garoua": "Cameroon", "gasa": "Bhutan", "gatwick": "UK", "gaza": "Palestine", "gaziantep": "Turkey",
+  "gazipur": "Bangladesh", "gbarnga": "Liberia", "gdansk": "Poland", "geelong": "Australia", "gelephu": "Bhutan",
+  "general santos": "Philippines", "geneva": "Switzerland", "genoa": "Italy", "genova": "Italy",
+  "georgetown": "Guyana", "germany": "Germany", "ghana": "Ghana", "ghent": "Belgium", "ghorahi": "Nepal",
+  "gibraltar": "Gibraltar", "gitarama": "Rwanda", "gitega": "Burundi", "giza": "Egypt", "glasgow": "UK",
+  "goa": "India", "goiania": "Brazil", "gold coast": "Australia", "goma": "Democratic Republic of the Congo",
+  "gomel": "Belarus", "gondar": "Ethiopia", "gopalganj": "Bangladesh", "gothenburg": "Sweden", "granada": "Spain",
+  "graz": "Austria", "grenoble": "France", "grodno": "Belarus", "groningen": "Netherlands", "guadalajara": "Mexico",
+  "guangzhou": "China", "guatemala city": "Guatemala", "guayaquil": "Ecuador", "gujranwala": "Pakistan",
+  "gurgaon": "India", "gurugram": "India", "guwahati": "India", "guyana": "Guyana", "gwangju": "South Korea",
+  "gweru": "Zimbabwe", "gyumri": "Armenia", "haa": "Bhutan", "habana": "Cuba", "haifa": "Israel",
+  "haiphong": "Vietnam", "hakha": "Myanmar", "hama": "Syria", "hamadan": "Iran", "hambantota": "Sri Lanka",
+  "hamburg": "Germany", "hamilton": "New Zealand", "hamilton on": "Canada", "hangzhou": "China",
+  "hannover": "Germany", "hanoi": "Vietnam", "harare": "Zimbabwe", "harbin": "China", "hargeisa": "Somalia",
+  "hat yai": "Thailand", "havana": "Cuba", "hawassa": "Ethiopia", "heathrow": "UK", "hebron": "Palestine",
+  "hefei": "China", "helsinki": "Finland", "heraklion": "Greece", "herat": "Afghanistan", "hermosillo": "Mexico",
+  "hetauda": "Nepal", "hikkaduwa": "Sri Lanka", "hinthada": "Myanmar", "hiroshima": "Japan",
+  "ho chi minh": "Vietnam", "ho chi minh city": "Vietnam", "hobart": "Australia", "homs": "Syria",
+  "hong kong": "Hong Kong", "honiara": "Solomon Islands", "houston": "USA", "hpa an": "Myanmar", "hpa-an": "Myanmar",
+  "hsinchu": "Taiwan", "hua hin": "Thailand", "huambo": "Angola", "hubli": "India", "hudaydah": "Yemen",
+  "hue": "Vietnam", "hurghada": "Egypt", "hyderabad": "India", "hyderabad pk": "Pakistan", "iasi": "Romania",
+  "iași": "Romania", "ibadan": "Nigeria", "iligan": "Philippines", "iloilo": "Philippines", "inaruwa": "Nepal",
+  "incheon": "South Korea", "indianapolis": "USA", "indonesia": "Indonesia", "indore": "India",
+  "innsbruck": "Austria", "ipoh": "Malaysia", "iquique": "Chile", "iquitos": "Peru", "iran": "Iran", "iraq": "Iraq",
+  "irbid": "Jordan", "isfahan": "Iran", "islamabad": "Pakistan", "ismailia": "Egypt", "israel": "Israel",
+  "istanbul": "Turkey", "itahari": "Nepal", "italy": "Italy", "izmir": "Turkey", "jabalpur": "India",
+  "jacksonville": "USA", "jaffna": "Sri Lanka", "jaipur": "India", "jakarta": "Indonesia",
+  "jalal-abad": "Kyrgyzstan", "jalalabad": "Afghanistan", "jamaica": "Jamaica", "jamalpur": "Bangladesh",
+  "janakpur": "Nepal", "janakpurdham": "Nepal", "japan": "Japan", "jashore": "Bangladesh",
+  "jebel ali": "United Arab Emirates", "jeddah": "Saudi Arabia", "jenin": "Palestine", "jericho": "Palestine",
+  "jerusalem": "Israel", "jessore": "Bangladesh", "jhalokathi": "Bangladesh", "jinan": "China", "jinja": "Uganda",
+  "joao pessoa": "Brazil", "jodhpur": "India", "johannesburg": "South Africa", "johor bahru": "Malaysia",
+  "jordan": "Jordan", "jos": "Nigeria", "jounieh": "Lebanon", "juarez": "Mexico", "jubail": "Saudi Arabia",
+  "jyväskylä": "Finland", "kabul": "Afghanistan", "kabwe": "Zambia", "kaduna": "Nigeria", "kairouan": "Tunisia",
+  "kalay": "Myanmar", "kalmunai": "Sri Lanka", "kalutara": "Sri Lanka", "kampala": "Uganda",
+  "kandahar": "Afghanistan", "kandy": "Sri Lanka", "kankan": "Guinea", "kano": "Nigeria", "kansas city": "USA",
+  "kaohsiung": "Taiwan", "karachi": "Pakistan", "karaganda": "Kazakhstan", "karaj": "Iran", "karakol": "Kyrgyzstan",
+  "karbala": "Iraq", "kassala": "Sudan", "kathmandu": "Nepal", "katowice": "Poland", "kaunas": "Lithuania",
+  "kawasaki": "Japan", "kawkareik": "Myanmar", "kayseri": "Turkey", "kazan": "Russia", "keelung": "Taiwan",
+  "kegalle": "Sri Lanka", "kenema": "Sierra Leone", "kengtung": "Myanmar", "kenya": "Kenya", "keren": "Eritrea",
+  "kharkiv": "Ukraine", "khartoum": "Sudan", "khobar": "Saudi Arabia", "khon kaen": "Thailand",
+  "khujand": "Tajikistan", "khulna": "Bangladesh", "kiev": "Ukraine", "kigali": "Rwanda", "kilinochchi": "Sri Lanka",
+  "kimberley": "South Africa", "kingston": "Jamaica", "kingstown": "Saint Vincent and the Grenadines",
+  "kinshasa": "Democratic Republic of the Congo", "kirkuk": "Iraq", "kirtipur": "Nepal",
+  "kisangani": "Democratic Republic of the Congo", "kishorganj": "Bangladesh", "kismayo": "Somalia",
+  "kisumu": "Kenya", "kitakyushu": "Japan", "kitwe": "Zambia", "kl": "Malaysia", "klagenfurt": "Austria",
+  "klaipeda": "Lithuania", "klaipėda": "Lithuania", "klang": "Malaysia", "kobe": "Japan", "kochi": "India",
+  "kolkata": "India", "konya": "Turkey", "korat": "Thailand", "koror": "Palau", "kota kinabalu": "Malaysia",
+  "kotte": "Sri Lanka", "koudougou": "Burkina Faso", "kragujevac": "Serbia", "krakow": "Poland",
+  "kuala belait": "Brunei", "kuala lampur": "Malaysia", "kuala lumpur": "Malaysia", "kuching": "Malaysia",
+  "kulob": "Tajikistan", "kumamoto": "Japan", "kumasi": "Ghana", "kunduz": "Afghanistan", "kunming": "China",
+  "kurunegala": "Sri Lanka", "kushtia": "Bangladesh", "kutaisi": "Georgia", "kuwait": "Kuwait",
+  "kuwait city": "Kuwait", "kyaingtong": "Myanmar", "kyaukpyu": "Myanmar", "kyiv": "Ukraine", "kyoto": "Japan",
+  "la": "USA", "la ceiba": "Honduras", "la paz": "Bolivia", "la plata": "Argentina", "lae": "Papua New Guinea",
+  "lagos": "Nigeria", "lahore": "Pakistan", "lalitpur": "Nepal", "laoag": "Philippines", "laos": "Laos",
+  "larissa": "Greece", "larnaca": "Cyprus", "las pinas": "Philippines", "las piñas": "Philippines",
+  "las vegas": "USA", "lashio": "Myanmar", "latakia": "Syria", "lausanne": "Switzerland", "lebanon": "Lebanon",
+  "leeds": "UK", "legazpi": "Philippines", "leicester": "UK", "leipzig": "Germany", "lekhnath": "Nepal",
+  "leon": "Mexico", "lhuntse": "Bhutan", "libreville": "Gabon", "libya": "Libya", "liege": "Belgium",
+  "lille": "France", "lilongwe": "Malawi", "lima": "Peru", "limassol": "Cyprus", "limerick": "Ireland",
+  "linkoping": "Sweden", "linköping": "Sweden", "linz": "Austria", "lisbon": "Portugal", "liverpool": "UK",
+  "livingstone": "Zambia", "liège": "Belgium", "ljubljana": "Slovenia", "lobamba": "Eswatini", "lobito": "Angola",
+  "lodz": "Poland", "loikaw": "Myanmar", "lombok": "Indonesia", "lome": "Togo", "lomé": "Togo", "london": "UK",
+  "london city": "UK", "los angeles": "USA", "louisville": "USA", "luanda": "Angola", "luang prabang": "Laos",
+  "lubango": "Angola", "lublin": "Poland", "lubumbashi": "Democratic Republic of the Congo", "lucknow": "India",
+  "lusaka": "Zambia", "luxembourg": "Luxembourg", "luxembourg city": "Luxembourg", "luxor": "Egypt",
+  "lviv": "Ukraine", "lyon": "France", "macao": "China", "macau": "China", "maceio": "Brazil",
+  "madang": "Papua New Guinea", "madaripur": "Bangladesh", "madhyapur thimi": "Nepal", "madras": "India",
+  "madrid": "Spain", "madurai": "India", "magway": "Myanmar", "magwe": "Myanmar", "mahajanga": "Madagascar",
+  "maiduguri": "Nigeria", "majuro": "Marshall Islands", "makassar": "Indonesia", "makati": "Philippines",
+  "malabo": "Equatorial Guinea", "malabon": "Philippines", "malaga": "Spain", "malawi": "Malawi",
+  "malaysia": "Malaysia", "maldives": "Maldives", "male": "Maldives", "mali": "Mali", "malindi": "Kenya",
+  "malmo": "Sweden", "malmö": "Sweden", "malé": "Maldives", "manado": "Indonesia", "managua": "Nicaragua",
+  "manama": "Bahrain", "manaus": "Brazil", "manchester": "UK", "mandalay": "Myanmar", "mandaluyong": "Philippines",
+  "mangalore": "India", "mangaluru": "India", "manikganj": "Bangladesh", "manila": "Philippines",
+  "mannar": "Sri Lanka", "maputo": "Mozambique", "mar del plata": "Argentina", "maracaibo": "Venezuela",
+  "maradi": "Niger", "marikina": "Philippines", "marrakech": "Morocco", "marseille": "France",
+  "mary": "Turkmenistan", "maseru": "Lesotho", "mashhad": "Iran", "massawa": "Eritrea", "matale": "Sri Lanka",
+  "matara": "Sri Lanka", "maun": "Botswana", "mawlamyine": "Myanmar", "maymyo": "Myanmar",
+  "mazar-e-sharif": "Afghanistan", "mazar-i-sharif": "Afghanistan", "mbabane": "Eswatini",
+  "mbuji-mayi": "Democratic Republic of the Congo", "mecca": "Saudi Arabia", "mechinagar": "Nepal",
+  "medan": "Indonesia", "medellin": "Colombia", "medellín": "Colombia", "medina": "Saudi Arabia", "meerut": "India",
+  "meherpur": "Bangladesh", "meiktila": "Myanmar", "mekelle": "Ethiopia", "melbourne": "Australia", "memphis": "USA",
+  "mendoza": "Argentina", "mergui": "Myanmar", "merida": "Mexico", "mersin": "Turkey", "mesa": "USA",
+  "mexicali": "Mexico", "mexico": "Mexico", "mexico city": "Mexico", "miami": "USA", "milan": "Italy",
+  "milan city": "Italy", "milwaukee": "USA", "mindelo": "Cabo Verde", "minneapolis": "USA", "minsk": "Belarus",
+  "mirissa": "Sri Lanka", "mirpur": "Bangladesh", "miskolc": "Hungary", "misrata": "Libya", "mississauga": "Canada",
+  "mogadishu": "Somalia", "mogilev": "Belarus", "mombasa": "Kenya", "monaragala": "Sri Lanka", "monastir": "Tunisia",
+  "mongar": "Bhutan", "monrovia": "Liberia", "monte carlo": "Monaco", "monterrey": "Mexico", "montevideo": "Uruguay",
+  "montpellier": "France", "montreal": "Canada", "monywa": "Myanmar", "mopti": "Mali", "morocco": "Morocco",
+  "moroni": "Comoros", "moscow": "Russia", "moshi": "Tanzania", "mostar": "Bosnia and Herzegovina", "mosul": "Iraq",
+  "moulmein": "Myanmar", "moundou": "Chad", "mozambique": "Mozambique", "mukalla": "Yemen",
+  "mullaitivu": "Sri Lanka", "multan": "Pakistan", "mumbai": "India", "munich": "Germany",
+  "munshiganj": "Bangladesh", "muntinlupa": "Philippines", "murcia": "Spain", "muscat": "Oman", "mutare": "Zimbabwe",
+  "mutsamudu": "Comoros", "mwanza": "Tanzania", "myanmar": "Myanmar", "myeik": "Myanmar", "myingyan": "Myanmar",
+  "myitkyina": "Myanmar", "mymensingh": "Bangladesh", "mysore": "India", "mysuru": "India", "mzuzu": "Malawi",
+  "málaga": "Spain", "n'djamena": "Chad", "nablus": "Palestine", "nacala": "Mozambique", "nadi": "Fiji",
+  "naga": "Philippines", "nagoya": "Japan", "nagpur": "India", "nairobi": "Kenya", "najaf": "Iraq",
+  "nakhon ratchasima": "Thailand", "nakuru": "Kenya", "namangan": "Uzbekistan", "nampula": "Mozambique",
+  "namur": "Belgium", "nanjing": "China", "nantes": "France", "naples": "Italy", "narayanganj": "Bangladesh",
+  "narayanghat": "Nepal", "narsingdi": "Bangladesh", "nashik": "India", "nashville": "USA", "nassau": "Bahamas",
+  "natal": "Brazil", "natore": "Bangladesh", "navotas": "Philippines", "nawabganj": "Bangladesh",
+  "nay pyi taw": "Myanmar", "naypyidaw": "Myanmar", "ndjamena": "Chad", "ndola": "Zambia", "negombo": "Sri Lanka",
+  "nelspruit": "South Africa", "nepal": "Nepal", "nepalgunj": "Nepal", "netanya": "Israel",
+  "netherlands": "Netherlands", "netrokona": "Bangladesh", "new delhi": "India", "new jersey": "USA",
+  "new york": "USA", "new york city": "USA", "new zealand": "New Zealand", "newcastle": "UK",
+  "newcastle au": "Australia", "ngerulmud": "Palau", "ngozi": "Burundi", "nha trang": "Vietnam", "niamey": "Niger",
+  "nice": "France", "nicosia": "Cyprus", "niger": "Niger", "nigeria": "Nigeria", "niksic": "Montenegro",
+  "nikšić": "Montenegro", "ningbo": "China", "nis": "Serbia", "nizhny novgorod": "Russia", "niš": "Serbia",
+  "noakhali": "Bangladesh", "noida": "India", "norway": "Norway", "nottingham": "UK", "nouakchott": "Mauritania",
+  "noumea": "New Caledonia", "nouméa": "New Caledonia", "novi sad": "Serbia", "novosibirsk": "Russia",
+  "nuku'alofa": "Tonga", "nukualofa": "Tonga", "nukus": "Uzbekistan", "nur-sultan": "Kazakhstan",
+  "nuremberg": "Germany", "nuwara": "Sri Lanka", "nuwara eliya": "Sri Lanka", "nyc": "USA", "nzerekore": "Guinea",
+  "nürnberg": "Germany", "odense": "Denmark", "odesa": "Ukraine", "odessa": "Ukraine", "okayama": "Japan",
+  "olongapo": "Philippines", "omaha": "USA", "oman": "Oman", "omdurman": "Sudan", "omsk": "Russia",
+  "oran": "Algeria", "orebro": "Sweden", "oruro": "Bolivia", "osaka": "Japan", "osh": "Kyrgyzstan",
+  "osijek": "Croatia", "oslo": "Norway", "ostrava": "Czech Republic", "ottawa": "Canada",
+  "ouagadougou": "Burkina Faso", "oulu": "Finland", "oxford": "UK", "pabna": "Bangladesh", "padova": "Italy",
+  "padua": "Italy", "pakistan": "Pakistan", "pakokku": "Myanmar", "pakse": "Laos", "palembang": "Indonesia",
+  "palermo": "Italy", "palikir": "Micronesia", "palm jumeirah": "United Arab Emirates", "palma": "Spain",
+  "palmerston north": "New Zealand", "panaji": "India", "panama city": "Panama", "paphos": "Cyprus",
+  "paraguay": "Paraguay", "parakou": "Benin", "paramaribo": "Suriname", "paranaque": "Philippines",
+  "parañaque": "Philippines", "paris": "France", "paro": "Bhutan", "pasay": "Philippines", "pasig": "Philippines",
+  "patan": "Nepal", "pathein": "Myanmar", "patna": "India", "patras": "Greece", "pattaya": "Thailand",
+  "patuakhali": "Bangladesh", "pavlodar": "Kazakhstan", "pecs": "Hungary", "pegu": "Myanmar",
+  "pemagatshel": "Bhutan", "penang": "Malaysia", "perth": "Australia", "peru": "Peru", "peshawar": "Pakistan",
+  "petaling jaya": "Malaysia", "petra": "Jordan", "philadelphia": "USA", "philippines": "Philippines",
+  "phnom penh": "Cambodia", "phoenix": "USA", "phuentsholing": "Bhutan", "phuket": "Thailand",
+  "phuntsholing": "Bhutan", "pilipinas": "Philippines", "pisa": "Italy", "piura": "Peru", "plovdiv": "Bulgaria",
+  "plzen": "Czech Republic", "plzeň": "Czech Republic", "podgorica": "Montenegro",
+  "pointe-noire": "Republic of Congo", "pokhara": "Nepal", "poland": "Poland", "polokwane": "South Africa",
+  "polonnaruwa": "Sri Lanka", "port elizabeth": "South Africa", "port harcourt": "Nigeria",
+  "port louis": "Mauritius", "port moresby": "Papua New Guinea", "port of spain": "Trinidad and Tobago",
+  "port said": "Egypt", "port sudan": "Sudan", "port vila": "Vanuatu", "port-au-prince": "Haiti",
+  "port-gentil": "Gabon", "portland": "USA", "porto": "Portugal", "porto alegre": "Brazil", "porto-novo": "Benin",
+  "poznan": "Poland", "poznań": "Poland", "prague": "Czech Republic", "praia": "Cabo Verde", "praslin": "Seychelles",
+  "pretoria": "South Africa", "prishtina": "Kosovo", "pristina": "Kosovo", "prizren": "Kosovo", "prome": "Myanmar",
+  "puchong": "Malaysia", "puebla": "Mexico", "punakha": "Bhutan", "pune": "India", "putrajaya": "Malaysia",
+  "puttalam": "Sri Lanka", "puttaparthi": "Sri Lanka", "pyay": "Myanmar", "pyin oo lwin": "Myanmar",
+  "pyongyang": "North Korea", "pécs": "Hungary", "qalqilya": "Palestine", "qatar": "Qatar", "qingdao": "China",
+  "qom": "Iran", "quatre bornes": "Mauritius", "quebec city": "Canada", "quelimane": "Mozambique",
+  "quetta": "Pakistan", "quezon city": "Philippines", "quito": "Ecuador", "rabat": "Morocco", "raipur": "India",
+  "rajkot": "India", "rajshahi": "Bangladesh", "raleigh": "USA", "ramallah": "Palestine", "ranchi": "India",
+  "randers": "Denmark", "rangoon": "Myanmar", "rangpur": "Bangladesh", "raqqa": "Syria",
+  "ras al khaimah": "United Arab Emirates", "rasht": "Iran", "ratnapura": "Sri Lanka", "rawalpindi": "Pakistan",
+  "reading": "UK", "recife": "Brazil", "regina": "Canada", "rennes": "France", "reykjavik": "Iceland",
+  "rhodes": "Greece", "riga": "Latvia", "rijeka": "Croatia", "rio": "Brazil", "rio de janeiro": "Brazil",
+  "rishon lezion": "Israel", "riyadh": "Saudi Arabia", "rome": "Italy", "rosario": "Argentina",
+  "rose hill": "Mauritius", "roseau": "Dominica", "rostov": "Russia", "rotterdam": "Netherlands", "rundu": "Namibia",
+  "russia": "Russia", "rustavi": "Georgia", "rwanda": "Rwanda", "sacramento": "USA", "sagaing": "Myanmar",
+  "saidpur": "Bangladesh", "saint georges": "Grenada", "saint johns": "Antigua and Barbuda",
+  "saint petersburg": "Russia", "saint-louis": "Senegal", "sakai": "Japan", "salalah": "Oman", "salvador": "Brazil",
+  "salzburg": "Austria", "samara": "Russia", "samarinda": "Indonesia", "samarkand": "Uzbekistan",
+  "samdrup jongkhar": "Bhutan", "san diego": "USA", "san francisco": "USA", "san jose": "Costa Rica",
+  "san jose ca": "USA", "san josé": "Costa Rica", "san marino": "San Marino", "san pedro ic": "Ivory Coast",
+  "san pedro sula": "Honduras", "san salvador": "El Salvador", "sana'a": "Yemen", "sanaa": "Yemen",
+  "sandton": "South Africa", "santa cruz": "Bolivia", "santiago": "Chile", "santo domingo": "Dominican Republic",
+  "sao paulo": "Brazil", "sao tome": "Sao Tome and Principe", "sao tome city": "Sao Tome and Principe",
+  "sapporo": "Japan", "sarajevo": "Bosnia and Herzegovina", "sarh": "Chad", "sarpang": "Bhutan",
+  "saskatoon": "Canada", "satkhira": "Bangladesh", "saudi arabia": "Saudi Arabia", "savannakhet": "Laos",
+  "seattle": "USA", "sekondi": "Ghana", "semarang": "Indonesia", "sendai": "Japan", "senegal": "Senegal",
+  "seoul": "South Korea", "serekunda": "Gambia", "seria": "Brunei", "seville": "Spain", "sf": "USA",
+  "sfax": "Tunisia", "shah alam": "Malaysia", "shanghai": "China", "shariatpur": "Bangladesh",
+  "sharjah": "United Arab Emirates", "sharm el sheikh": "Egypt", "sheffield": "UK", "shenzhen": "China",
+  "shiraz": "Iran", "shwebo": "Myanmar", "shymkent": "Kazakhstan", "sialkot": "Pakistan", "siddharthanagar": "Nepal",
+  "sidon": "Lebanon", "siem reap": "Cambodia", "siena": "Italy", "sigiriya": "Sri Lanka",
+  "sihanoukville": "Cambodia", "silicon valley": "USA", "sing": "Singapore", "singapore": "Singapore",
+  "singapur": "Singapore", "sirajganj": "Bangladesh", "sirte": "Libya", "sittwe": "Myanmar",
+  "skopje": "North Macedonia", "sofia": "Bulgaria", "sohar": "Oman", "sokode": "Togo", "somalia": "Somalia",
+  "sousse": "Tunisia", "south africa": "South Africa", "south korea": "South Korea", "southampton": "UK",
+  "soweto": "South Africa", "spain": "Spain", "split": "Croatia", "sri jayawardenepura kotte": "Sri Lanka",
+  "sri lanka": "Sri Lanka", "srinagar": "India", "st. george's": "Grenada", "st. john's": "Antigua and Barbuda",
+  "st. petersburg": "Russia", "st. pölten": "Austria", "stara zagora": "Bulgaria", "stavanger": "Norway",
+  "stockholm": "Sweden", "stoke-on-trent": "UK", "strasbourg": "France", "stuttgart": "Germany",
+  "subang jaya": "Malaysia", "sucre": "Bolivia", "sudan": "Sudan", "sulaymaniyah": "Iraq", "sumgayit": "Azerbaijan",
+  "sunshine coast": "Australia", "surabaya": "Indonesia", "surat": "India", "suriname": "Suriname",
+  "surrey": "Canada", "suva": "Fiji", "suwon": "South Korea", "suzhou": "China", "swakopmund": "Namibia",
+  "swansea": "UK", "sweden": "Sweden", "switzerland": "Switzerland", "sydney": "Australia", "sylhet": "Bangladesh",
+  "syria": "Syria", "szczecin": "Poland", "são paulo": "Brazil", "são tomé": "Sao Tome and Principe",
+  "tabriz": "Iran", "tabuk": "Saudi Arabia", "tacloban": "Philippines", "taguig": "Philippines",
+  "taichung": "Taiwan", "taif": "Saudi Arabia", "tainan": "Taiwan", "taipei": "Taiwan", "taiwan": "Taiwan",
+  "taiz": "Yemen", "takoradi": "Ghana", "tallinn": "Estonia", "tamale": "Ghana", "tampere": "Finland",
+  "tangail": "Bangladesh", "tangerang": "Indonesia", "tansen": "Nepal", "tanzania": "Tanzania", "tarawa": "Kiribati",
+  "tartu": "Estonia", "tashigang": "Bhutan", "tashkent": "Uzbekistan", "taunggyi": "Myanmar", "taungoo": "Myanmar",
+  "tauranga": "New Zealand", "tavoy": "Myanmar", "tbilisi": "Georgia", "tegucigalpa": "Honduras", "tehran": "Iran",
+  "tel aviv": "Israel", "tel-aviv": "Israel", "temuco": "Chile", "tete": "Mozambique", "teyateyaneng": "Lesotho",
+  "thailand": "Thailand", "thaton": "Myanmar", "the hague": "Netherlands", "thessaloniki": "Greece",
+  "thies": "Senegal", "thika": "Kenya", "thimphu": "Bhutan", "thimpu": "Bhutan", "thiruvananthapuram": "India",
+  "tianjin": "China", "tijuana": "Mexico", "tilburg": "Netherlands", "timbuktu": "Mali", "timisoara": "Romania",
+  "tirana": "Albania", "tiranë": "Albania", "tiraspol": "Moldova", "tlemcen": "Algeria", "toamasina": "Madagascar",
+  "tobruk": "Libya", "tokyo": "Japan", "toliara": "Madagascar", "tombouctou": "Mali", "tondo": "Philippines",
+  "tongi": "Bangladesh", "toronto": "Canada", "toulouse": "France", "toungoo": "Myanmar", "townsville": "Australia",
+  "trabzon": "Turkey", "trashigang": "Bhutan", "trashiyangtse": "Bhutan", "trieste": "Italy", "trinco": "Sri Lanka",
+  "trincomalee": "Sri Lanka", "tripoli": "Libya", "tripoli lb": "Lebanon", "tripoli lb2": "Lebanon",
+  "trivandrum": "India", "trondheim": "Norway", "trongsa": "Bhutan", "trujillo": "Peru", "tsirang": "Bhutan",
+  "tucson": "USA", "tucuman": "Argentina", "tucumán": "Argentina", "tulkarm": "Palestine", "tulsipur": "Nepal",
+  "tunis": "Tunisia", "tunisia": "Tunisia", "turin": "Italy", "turkey": "Turkey", "turkmenabat": "Turkmenistan",
+  "turkmenbashi": "Turkmenistan", "turku": "Finland", "tuxtla": "Mexico", "tuzla": "Bosnia and Herzegovina",
+  "tyre": "Lebanon", "uae": "United Arab Emirates", "udon thani": "Thailand", "ufa": "Russia", "uganda": "Uganda",
+  "uk": "UK", "ukraine": "Ukraine", "ulaanbaatar": "Mongolia", "ulan bator": "Mongolia", "ulsan": "South Korea",
+  "umm al quwain": "United Arab Emirates", "unawatuna": "Sri Lanka", "united kingdom": "UK", "united states": "USA",
+  "uppsala": "Sweden", "uruguay": "Uruguay", "us": "USA", "usa": "USA", "utrecht": "Netherlands",
+  "vadodara": "India", "vaduz": "Liechtenstein", "valencia": "Spain", "valencia ve": "Venezuela",
+  "valenzuela": "Philippines", "valladolid": "Spain", "valletta": "Malta", "valparaiso": "Chile",
+  "vanadzor": "Armenia", "vancouver": "Canada", "varanasi": "India", "varna": "Bulgaria", "vatican": "Vatican City",
+  "vatican city": "Vatican City", "vavuniya": "Sri Lanka", "venezuela": "Venezuela", "venice": "Italy",
+  "veracruz": "Mexico", "verona": "Italy", "victoria": "Seychelles", "victoria bc": "Canada", "vienna": "Austria",
+  "vientiane": "Laos", "viet nam": "Vietnam", "vietnam": "Vietnam", "vijayawada": "India", "vilnius": "Lithuania",
+  "virginia beach": "USA", "visakhapatnam": "India", "vladivostok": "Russia", "vlorë": "Albania", "volos": "Greece",
+  "vung tau": "Vietnam", "wad madani": "Sudan", "waling": "Nepal", "walvis bay": "Namibia", "wangdi": "Bhutan",
+  "wangdue phodrang": "Bhutan", "warsaw": "Poland", "washington": "USA", "waterford": "Ireland",
+  "weligama": "Sri Lanka", "wellington": "New Zealand", "wenzhou": "China", "windhoek": "Namibia",
+  "winnipeg": "Canada", "winterthur": "Switzerland", "wollongong": "Australia", "wolverhampton": "UK",
+  "wroclaw": "Poland", "wuhan": "China", "wuxi": "China", "xi'an": "China", "xiamen": "China", "xian": "China",
+  "yamoussoukro": "Ivory Coast", "yanbu": "Saudi Arabia", "yangon": "Myanmar", "yaounde": "Cameroon",
+  "yaoundé": "Cameroon", "yaren": "Nauru", "yazd": "Iran", "yekaterinburg": "Russia", "yerevan": "Armenia",
+  "yogyakarta": "Indonesia", "yokohama": "Japan", "zagreb": "Croatia", "zahedan": "Iran", "zambia": "Zambia",
+  "zamboanga": "Philippines", "zanzibar": "Tanzania", "zanzibar city": "Tanzania", "zaporizhzhia": "Ukraine",
+  "zaragoza": "Spain", "zaria": "Nigeria", "zarqa": "Jordan", "zhemgang": "Bhutan", "zhengzhou": "China",
+  "ziguinchor": "Senegal", "zimbabwe": "Zimbabwe", "zinder": "Niger", "zomba": "Malawi", "zurich": "Switzerland",
+  "örebro": "Sweden", "łódź": "Poland",
 };
+
+// Small edit-distance helper — catches PMS typos/misspellings (e.g. "Kuala Lampur" for
+// "Kuala Lumpur") that exact and substring matching miss. Only used as a last-resort
+// fallback, after exact and substring matches have already failed.
+function levenshteinDistance(a: string, b: string): number {
+  const dp: number[][] = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+  for (let i = 0; i <= a.length; i++) dp[i][0] = i;
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+function fuzzyMatchCityCountry(lower: string): string {
+  let best: { dist: number; country: string } | null = null;
+  for (const [key, c] of Object.entries(CITY_COUNTRY_MAP)) {
+    // Skip very short keys (e.g. "kl") — fuzzy-matching short strings produces false positives
+    if (key.length < 4) continue;
+    const dist = levenshteinDistance(lower, key);
+    const threshold = Math.max(1, Math.floor(Math.min(lower.length, key.length) * 0.2));
+    if (dist <= threshold && (!best || dist < best.dist)) best = { dist, country: c };
+  }
+  return best ? best.country : '';
+}
 
 export function inferCountryFromCity(city: string): string {
   if (!city) return 'India';
@@ -398,6 +487,8 @@ export function inferCountryFromCity(city: string): string {
   for (const [key, c] of Object.entries(CITY_COUNTRY_MAP)) {
     if (lower.includes(key) || key.includes(lower)) return c;
   }
+  const fuzzy = fuzzyMatchCityCountry(lower);
+  if (fuzzy) return fuzzy;
   return 'India';
 }
 
@@ -411,6 +502,9 @@ function inferCountry(city: string, rawCountry: string): string {
     for (const [key, c] of Object.entries(CITY_COUNTRY_MAP)) {
       if (lower.includes(key) || key.includes(lower)) return c;
     }
+    // Fuzzy match — catches PMS typos/misspellings (e.g. "Kuala Lampur" for "Kuala Lumpur")
+    const fuzzy = fuzzyMatchCityCountry(lower);
+    if (fuzzy) return fuzzy;
   }
   // City not found — trust PMS country if it's not India/blank; otherwise default India
   const rawNorm = rawCountry.toLowerCase().trim();

@@ -20,6 +20,7 @@ import {
   X,
   Send,
   CheckCircle2,
+  Stamp,
 } from 'lucide-react';
 import type { User as UserType, UserRole } from '../types';
 
@@ -65,6 +66,7 @@ const TRAINER_GROUPS: NavGroup[] = [
       { label: 'Trainer Dashboard', path: '/dashboard', icon: <LayoutDashboard size={16} /> },
       { label: 'Select Date Range', path: '/create-bill', icon: <FilePlus size={16} /> },
       { label: 'View My Bills', path: '/claims', icon: <ClipboardList size={16} /> },
+      { label: 'Visa Fees Entry', path: '/visa-entry', icon: <Stamp size={16} /> },
     ],
   },
   {

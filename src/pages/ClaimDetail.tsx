@@ -530,22 +530,36 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const { rates: liveRates } = useLiveRates();
   const toINR = (amount: number, currency: string) => convertToINR(amount, currency, liveRates);
 
-  // HR Admin DA override state — indexed by row position in daItems array
-  const [daHrOverrides, setDaHrOverrides] = useState<Record<number, { country: string; currency: string; amount: number }>>({});
+  // HR Admin DA override state — keyed by DATE (not row index, which shifts across reloads
+  // as PMS data changes) and persisted to the claim record so an edit survives navigation/
+  // reload and shows identically in Payment Processing, Verification Queue, or any other
+  // view of this same claim, instead of being silently discarded by the live PMS recompute.
+  const [daHrOverrides, setDaHrOverrides] = useState<Record<string, { country: string; currency: string; amount: number }>>({});
   const [daEditIdx, setDaEditIdx] = useState<number | null>(null);
   const [daEditValues, setDaEditValues] = useState<{ country: string; currency: string; amount: number }>({ country: '', currency: 'USD', amount: 0 });
 
-  // HR Admin Travel/Cab override state — indexed by sorted row position
-  const [taHrOverrides, setTaHrOverrides] = useState<Record<number, { currency: string; amount: number }>>({});
+  // HR Admin Travel/Cab override state — keyed by lineItemId, persisted to the claim record
+  const [taHrOverrides, setTaHrOverrides] = useState<Record<string, { currency: string; amount: number }>>({});
   const [taEditIdx, setTaEditIdx] = useState<number | null>(null);
   const [taEditValues, setTaEditValues] = useState<{ currency: string; amount: number }>({ currency: 'INR', amount: 0 });
 
-  // HR Admin Misc override state — indexed by sorted row position
-  const [miscHrOverrides, setMiscHrOverrides] = useState<Record<number, { currency: string; amount: number }>>({});
+  // HR Admin Misc override state — keyed by lineItemId, persisted to the claim record
+  const [miscHrOverrides, setMiscHrOverrides] = useState<Record<string, { currency: string; amount: number }>>({});
   const [miscEditIdx, setMiscEditIdx] = useState<number | null>(null);
   const [miscEditValues, setMiscEditValues] = useState<{ currency: string; amount: number }>({ currency: 'INR', amount: 0 });
 
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
+
+  // Post-submission misc expense upload — exempted trainers (and HR Admin on their behalf)
+  // can add NEW misc expense bills to an already-submitted claim, not just view/edit existing
+  // ones. Add employee codes here (without "EMP-" prefix) as needed.
+  const MISC_POST_SUBMIT_EXEMPT_EMP_CODES = new Set(['2485']); // Ankur Kumar
+  const [miscPostSubmitDraft, setMiscPostSubmitDraft] = useState<{
+    date: string; expenseType: string; amount: number; currency: string; remarks: string;
+    receiptData: string; receiptName: string;
+  }>({ date: '', expenseType: 'Other', amount: 0, currency: 'INR', remarks: '', receiptData: '', receiptName: '' });
+  const [miscPostSubmitSaving, setMiscPostSubmitSaving] = useState(false);
+  const [miscPostSubmitMsg, setMiscPostSubmitMsg] = useState('');
 
   // Payment record for this claim (loaded from localStorage)
   const paymentRecord = useMemo(() => {
@@ -572,6 +586,95 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     return mockClaims.find((c) => c.claimId === claimId);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId, claimRefreshTick]);
+
+  // Restore any previously-saved HR overrides for THIS claim once it loads — keyed only on
+  // claimId (not claimRefreshTick) so an in-progress local edit isn't clobbered by a
+  // background poll refresh of the same claim.
+  useEffect(() => {
+    const savedDa = (claim as unknown as { daHrOverrides?: Record<string, { country: string; currency: string; amount: number }> })?.daHrOverrides;
+    if (savedDa) setDaHrOverrides(savedDa);
+    const savedTa = (claim as unknown as { taHrOverrides?: Record<string, { currency: string; amount: number }> })?.taHrOverrides;
+    if (savedTa) setTaHrOverrides(savedTa);
+    const savedMisc = (claim as unknown as { miscHrOverrides?: Record<string, { currency: string; amount: number }> })?.miscHrOverrides;
+    if (savedMisc) setMiscHrOverrides(savedMisc);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [claimId]);
+
+  // Persist an HR override field immediately to the claim record — so it survives navigation/
+  // reload and appears identically in Payment Processing, Verification Queue, or any other
+  // view of this claim, without waiting for a full Approve/Reject action.
+  const persistHrOverrideField = (
+    field: 'daHrOverrides' | 'taHrOverrides' | 'miscHrOverrides',
+    value: Record<string, unknown>,
+  ) => {
+    if (!claimId) return;
+    const base = getClaims().find((c) => c.claimId === claimId);
+    if (!base) return;
+    saveClaim({ ...base, [field]: value } as import('../types').ClaimHeader);
+  };
+
+  // Whether the current user can add a NEW misc expense to this already-submitted claim.
+  // HR Admin/SuperAdmin can ALWAYS do this, for any trainer's claim, on that trainer's
+  // behalf — a general capability. Direct self-service from the Trainer's own login is
+  // restricted to specific exempted employee codes (see MISC_POST_SUBMIT_EXEMPT_EMP_CODES) —
+  // e.g. Ankur Kumar EMP-2485 — not a general trainer capability.
+  const claimTrainerEmpCode = String((claim as unknown as { trainerId?: string })?.trainerId ?? '').replace(/^EMP-/i, '').trim();
+  const canAddMiscPostSubmit =
+    currentUser.role === 'HRAdmin' || currentUser.role === 'SuperAdmin' ||
+    (currentUser.role === 'Trainer' && MISC_POST_SUBMIT_EXEMPT_EMP_CODES.has(claimTrainerEmpCode));
+
+  function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  async function addMiscExpensePostSubmit() {
+    if (!claimId || !miscPostSubmitDraft.date || !miscPostSubmitDraft.amount) return;
+    setMiscPostSubmitSaving(true);
+    setMiscPostSubmitMsg('');
+    try {
+      const lineItemId = `LI-OTHER-${claimId}-${Date.now()}`;
+      const newItem: import('../types').ClaimLineItem = {
+        lineItemId,
+        claimId,
+        expenseType: 'Other',
+        expenseSubType: miscPostSubmitDraft.expenseType,
+        date: miscPostSubmitDraft.date,
+        description: `${miscPostSubmitDraft.expenseType}: ${miscPostSubmitDraft.remarks}`,
+        claimedAmount: miscPostSubmitDraft.amount,
+        policyLimit: miscPostSubmitDraft.amount,
+        eligibleAmount: miscPostSubmitDraft.amount,
+        approvedAmount: 0,
+        deductionAmount: 0,
+        currency: miscPostSubmitDraft.currency,
+        receiptRequired: true,
+        receiptUploaded: !!miscPostSubmitDraft.receiptData,
+        exceptionRequired: false,
+        receiptData: miscPostSubmitDraft.receiptData || undefined,
+        receiptFileName: miscPostSubmitDraft.receiptName || undefined,
+      } as import('../types').ClaimLineItem;
+
+      const r = await fetch('/api/turso?type=lineitems', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lineItems: [newItem] }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+
+      setClaimLineItems(prev => [...prev, newItem]);
+      setMiscPostSubmitDraft({ date: '', expenseType: 'Other', amount: 0, currency: 'INR', remarks: '', receiptData: '', receiptName: '' });
+      setMiscPostSubmitMsg('✅ Expense added');
+    } catch (err) {
+      setMiscPostSubmitMsg(`❌ Failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
+    } finally {
+      setMiscPostSubmitSaving(false);
+      setTimeout(() => setMiscPostSubmitMsg(''), 5000);
+    }
+  }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
   function addDays(iso: string, n: number): string {
@@ -976,6 +1079,32 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     const activeFlights = summaryFlights.filter(f => f.Is_cancelled !== 'Yes');
     const addD = (iso: string, n: number) => { if (!iso) return ''; const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
 
+    // Chase forward through same-day connecting legs to find the FINAL arrival — e.g. an
+    // international leg landing at a transit city, followed by a domestic connector to the
+    // trainer's actual base. Using only the first leg's arrival for "before 12:00"/"same-day
+    // India arrival" checks is a bug: Bhavna Singh EMP-3505 flew KL→Chennai (arrives 06:55,
+    // before 12:00) then Chennai→Delhi — her actual base — (arrives 13:55, after 12:00). The
+    // correct arrival to evaluate is Delhi 13:55, not the Chennai stopover. Mirrors
+    // CreateTADABill.tsx's resolveFinalSameDayLeg.
+    const resolveFinalSameDayLeg = (startFlight: typeof activeFlights[number]): typeof activeFlights[number] => {
+      let current = startFlight;
+      for (let hop = 0; hop < 5; hop++) {
+        const curArrDate = parseDT(String(current.arrival_date ?? '')) || parseDT(String(current.departure_date ?? ''));
+        const curArrTime = String(current.arrival_time ?? '').substring(0, 5);
+        const curToCity  = String(current.to_city ?? '').trim().toLowerCase();
+        const next = activeFlights.find(f => {
+          if (f === current) return false;
+          const fromCity = String(f.from_city ?? '').trim().toLowerCase();
+          const fd = parseDT(String(f.departure_date ?? ''));
+          const ft = String(f.departure_time ?? '').substring(0, 5);
+          return !!fromCity && fromCity === curToCity && fd === curArrDate && ft >= curArrTime;
+        });
+        if (!next) break;
+        current = next;
+      }
+      return current;
+    };
+
     // Apartment name detection helper
     const isApartmentName = (name: string) => /apartment/i.test(name || '');
     // Build apartmentDates Set from PMS accommodation records + lodging claimLineItems
@@ -1168,17 +1297,82 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             ? cityCountry : (asgn.country || cityCountry || 'India');
           const { rate, currency: destCurrency } = getHrDaInfo(destC);
           if (rate <= 0) return;
-          // Find return flight departing FROM the destination city/country after assignment ends
-          const retFlight = activeFlights.find(f => {
+          // Find the EARLIEST return flight departing FROM the destination city/country after
+          // assignment ends — .find() alone picks unsorted API array order, not chronological
+          // order. Fixed 2026-08-11 (same class as the outbound-leg regression).
+          const retFlightCandidates = activeFlights.filter(f => {
             const fd = parseDT(String(f.departure_date ?? ''));
-            if (!fd || fd <= asgn.endDate! || fd > addD(asgn.endDate!, 5)) return false;
-            const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
-            return fromC === destC;
+            return fd ? fd > asgn.endDate! && fd <= addD(asgn.endDate!, 5) && inferCountryFromCity(String(f.from_city ?? '').trim()) === destC : false;
           });
+          const retFlight = retFlightCandidates.length === 0 ? null
+            : retFlightCandidates.reduce((earliest, f) => {
+                const ed = parseDT(String(earliest.departure_date ?? '')) || '';
+                const fd = parseDT(String(f.departure_date ?? '')) || '';
+                if (fd < ed) return f;
+                if (fd > ed) return earliest;
+                const et = String(earliest.departure_time ?? '').substring(0, 5);
+                const ft = String(f.departure_time ?? '').substring(0, 5);
+                return ft < et ? f : earliest;
+              });
           if (!retFlight) return;
           const fd = parseDT(String(retFlight.departure_date ?? ''));
           if (!fd) return;
           if (autoRaw.some(li => li.date === fd)) return;
+
+          // If this return leg lands in India the SAME calendar day (a direct flight home,
+          // not an overnight/multi-leg connection through a layover country), the "arrival
+          // before 12:00 → Not Eligible" policy check takes priority over the departure-time
+          // rule below. The departure-time rule is only for legs that do NOT land in India
+          // same day (e.g. Sagnik Ghosh's Sydney→Bangkok→Delhi, landing in India the NEXT
+          // day — handled by the overnight-arrival logic elsewhere, not this branch).
+          // Bug fixed 2026-08-10: Magesh Kumar Palani EMP-3640 — KL→Chennai direct flight,
+          // dep 05:45 (≥04:00, so the old code wrongly gave full Malaysia DA), arrives
+          // Chennai 06:55 (before 12:00) — should be Not Eligible, not Malaysia DA.
+          // Chase to the FINAL same-day connecting leg first — Bhavna Singh EMP-3505 flew
+          // KL→Chennai (arrives 06:55) then Chennai→Delhi, her actual base (arrives 13:55,
+          // after 12:00) — must evaluate the Delhi arrival, not the Chennai stopover.
+          const finalRetLeg = resolveFinalSameDayLeg(retFlight);
+          const retToCountry = inferCountryFromCity(String(finalRetLeg.to_city ?? '').trim());
+          const retArrDate = parseDT(String(finalRetLeg.arrival_date ?? '')) || fd;
+          if (retToCountry === 'India' && retArrDate === fd) {
+            const arrHHMM = String(finalRetLeg.arrival_time ?? '').substring(0, 5);
+            if (arrHHMM && arrHHMM <= '12:00') {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-RET-${claimId}-${fd}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'N/A', date: fd,
+                description: `Not Eligible — Return Arrival Before 12:00 (arrives ${arrHHMM})`,
+                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+              return;
+            }
+            // Eligible (arrives after 12:00) and lands in India same day — she's simply
+            // "home" that day, so India DA applies regardless of what time she left the
+            // destination country. Bug fixed 2026-08-10: Bhavna Singh EMP-3505 flew
+            // KL→Chennai (arrives 06:55) then Chennai→Delhi, her actual base (arrives
+            // 13:55) — she should get India DA, not Malaysia DA (the >=04:00 departure
+            // rule below is only for journeys that do NOT reach India the same day).
+            const { rate: indiaRate, currency: indiaCurrency } = getHrDaInfo('India');
+            autoRaw.push({
+              lineItemId: `AUTO-DA-RET-${claimId}-${fd}`,
+              claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'India', date: fd,
+              description: `Daily Allowance — India (return travel day, arrives home ${arrHHMM || '?'} > 12:00)`,
+              claimedAmount: indiaRate, policyLimit: indiaRate, eligibleAmount: indiaRate, approvedAmount: 0, deductionAmount: 0,
+              currency: indiaCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+            });
+            return;
+          }
+
+          // If the flight is NOT heading to India — i.e. the trainer is continuing straight to
+          // a DIFFERENT international destination, not returning home — this day genuinely
+          // belongs to that new assignment/claim, not this one. Do not fabricate an "India"
+          // entry just because departure was before 04:00. Bug fixed 2026-08-10: Ankur Kumar
+          // EMP-2485 — this claim only covers Dubai (ends 16 Jul); his 19 Jul flight was
+          // Dubai→Nairobi (continuing to a new international assignment), not a return to
+          // India, so no DA line item should be fabricated here for that date.
+          const retToCountryFinal = inferCountryFromCity(String(retFlight.to_city ?? '').trim());
+          if (retToCountryFinal && retToCountryFinal !== 'India' && retToCountryFinal !== destC) return;
+
           const depHHMM = String(retFlight.departure_time ?? '').substring(0, 5);
           if (destC !== 'India' && depHHMM && depHHMM >= '04:00') {
             // Departs destination country at/after 04:00 — spent most of the day there
@@ -1244,8 +1438,24 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           const fd = parseDT(String(depFlight.departure_date ?? ''));
           if (!fd) return;
           if (autoRaw.some(li => li.date === fd)) return;
-          // Policy: departure travel day DA only if departure is before 17:00
-          const depHHMM = String(depFlight.departure_time ?? '').substring(0, 5);
+          // Policy: departure travel day DA only if departure is before 17:00. This must be
+          // checked against the EARLIEST leg departing on THIS specific date (fd) — not
+          // necessarily depFlight itself, which (via cityMatchPick) may be a LATER connecting
+          // leg on the same day chosen only to identify the correct destination/travel date.
+          // Bug fixed 2026-08-11: Girish Kumar EMP-207 — Chandigarh→Hyderabad (dep 15:30) then
+          // Hyderabad→Chennai (dep 20:40) same day; cityMatchPick correctly identified 12 Jul
+          // as the travel day via the Chennai-arriving leg, but then wrongly used THAT leg's
+          // 20:40 departure (≥17:00) for eligibility instead of the trainer's actual 15:30
+          // departure from home — silently dropping the whole day.
+          const earliestOnFd = depCandidates
+            .filter(f => parseDT(String(f.departure_date ?? '')) === fd)
+            .reduce((earliest, f) => {
+              if (!earliest) return f;
+              const et = String(earliest.departure_time ?? '').substring(0, 5);
+              const ft = String(f.departure_time ?? '').substring(0, 5);
+              return ft < et ? f : earliest;
+            }, depFlight);
+          const depHHMM = String(earliestOnFd.departure_time ?? '').substring(0, 5);
           if (depHHMM && depHHMM >= '17:00') return;
           const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
           const destC = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
@@ -1488,8 +1698,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         if (byRet) { asgn = byRet; isReturnDay = true; }
       }
       if (!asgn) {
-        // Overnight arrival check: date is 2-5 days after an assignment end,
-        // trainer arrived on overnight return flight — if arrival < 12:00, zero out DA.
+        // Overnight arrival check: date is 2-5 days after an assignment end, trainer arrived
+        // on an overnight return flight — if arrival < 12:00, zero out DA. This rule is
+        // specifically about arriving back HOME in India; it must NOT fire when the trainer
+        // is actually continuing on to a DIFFERENT international destination (a new
+        // assignment, not part of this claim). Bug fixed 2026-08-10: Ankur Kumar EMP-2485 —
+        // this claim only covers his Dubai assignment (ends 16 Jul), but his 19 Jul flight
+        // was Dubai→Nairobi (a new international assignment), not a return to India. The old
+        // code blindly labeled it "Arrived India" and zeroed it out regardless of destination.
         const overnightAsgn = enrichedSummaryAssignments.find(a => a.endDate && date > addD(a.endDate, 1) && date <= addD(a.endDate, 5));
         if (overnightAsgn) {
           const arrFlight = activeFlights.find(f => {
@@ -1497,11 +1713,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             return ad === date;
           });
           if (arrFlight) {
+            const arrToCountry = inferCountryFromCity(String(arrFlight.to_city ?? '').trim());
             const arrHHMM = String(arrFlight.arrival_time ?? '').substring(0, 5);
-            if (arrHHMM && arrHHMM < '12:00') {
+            if (arrToCountry === 'India' && arrHHMM && arrHHMM < '12:00') {
               return { ...li, claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0,
                 description: `Not Eligible — Arrived India at ${arrHHMM} (before 12:00); no DA for arrival day` };
             }
+            // Arrival is to a DIFFERENT country (not India) — this day belongs to a new
+            // international assignment not covered by this claim; leave the item as-is
+            // rather than mislabeling it "Arrived India".
           }
         }
         // If trainer has only a domestic India-to-India flight on this date, override to India ₹950
@@ -1582,24 +1802,83 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         if (getAdjacentCountry(nextAsgn) === destCountry) {
           // stays in-country, no return flight — full intl DA
         } else {
-          // Apply departure-time cutoff: check the DEPARTURE time FROM the destination country
-          // (not the arrival time at some later leg/layover). Departs at/after 04:00 local →
-          // trainer spent most of the day in destCountry → full destCountry DA. Departs before
-          // 04:00 → India DA instead. Mirrors CreateTADABill.tsx's isReturn branch.
-          // Prefer the leg departing FROM the destination country (not a transit or domestic leg).
-          const retFlightFromDest = activeFlights.find(f => {
+          // Prefer the EARLIEST leg departing FROM the destination country (not a transit or
+          // domestic leg) — .find() alone picks unsorted API array order, not chronological
+          // order. Fixed 2026-08-11 (same class as the outbound-leg regression).
+          const retFlightFromDestCandidates = activeFlights.filter(f => {
             const fd = parseDT(String(f.departure_date ?? ''));
-            if (!fd || !(fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 5))) return false;
-            const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
-            return fromC === destCountry;
+            return fd ? fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 5) && inferCountryFromCity(String(f.from_city ?? '').trim()) === destCountry : false;
           });
+          const retFlightFromDest = retFlightFromDestCandidates.length === 0 ? null
+            : retFlightFromDestCandidates.reduce((earliest, f) => {
+                const ed = parseDT(String(earliest.departure_date ?? '')) || '';
+                const fd = parseDT(String(f.departure_date ?? '')) || '';
+                if (fd < ed) return f;
+                if (fd > ed) return earliest;
+                const et = String(earliest.departure_time ?? '').substring(0, 5);
+                const ft = String(f.departure_time ?? '').substring(0, 5);
+                return ft < et ? f : earliest;
+              });
           const retFlight = retFlightFromDest ?? activeFlights.find(f => {
             const fd = parseDT(String(f.departure_date ?? ''));
             return fd ? fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 5) : false;
           });
-          const retDepTime = retFlight ? String(retFlight.departure_time ?? '').substring(0, 5) : '';
-          if (!retDepTime || retDepTime < '04:00') effectiveCountry = 'India';
-          // else: departs at/after 04:00 — keep destCountry (effectiveCountry already = destCountry)
+
+          // Only apply return-flight-based logic (same-day-India check, departure-time cutoff)
+          // when the return flight ACTUALLY departs on the date being processed. The naive
+          // "date === endDate + 1" match above only identifies ONE nominal date as isReturnDay
+          // — but when the trainer holds over in the destination country for multiple days
+          // before their real return flight (e.g. Ankur Kumar EMP-2485: Dubai batch ends 16
+          // Jul, but the Dubai→Nairobi connecting flight doesn't depart until 19 Jul), that
+          // single nominal date is NOT the flight's departure date. Wrongly applying the
+          // return-flight's country/time logic to it corrupted 17 Jul back to India DA even
+          // though the trainer was still physically in Dubai. If the return flight departs on
+          // a LATER date, this is just a holding/gap day — keep full destCountry DA untouched.
+          const retFd = retFlight ? parseDT(String(retFlight.departure_date ?? '')) : '';
+          const isActualReturnFlightDay = !!retFlight && retFd === date;
+
+          // Chase to the FINAL same-day connecting leg first — Bhavna Singh EMP-3505 flew
+          // KL→Chennai (arrives 06:55) then Chennai→Delhi, her actual base (arrives 13:55,
+          // after 12:00) — must evaluate the Delhi arrival, not the Chennai stopover.
+          const finalRetLeg = isActualReturnFlightDay ? resolveFinalSameDayLeg(retFlight!) : null;
+          const retToCountry = finalRetLeg ? inferCountryFromCity(String(finalRetLeg.to_city ?? '').trim()) : '';
+          const retArrDate = finalRetLeg ? (parseDT(String(finalRetLeg.arrival_date ?? '')) || retFd) : '';
+          // If this return leg lands in India the SAME calendar day (direct flight home, not
+          // an overnight/multi-leg connection through a layover), the "arrival before 12:00 →
+          // Not Eligible" rule takes priority over the departure-time cutoff below. Fixed
+          // 2026-08-10: Magesh Kumar Palani EMP-3640 — KL→Chennai dep 05:45 (≥04:00 wrongly
+          // gave full Malaysia DA), arrives Chennai 06:55 (before 12:00) — should be zero.
+          const sameDayIndiaReturn = isActualReturnFlightDay && retToCountry === 'India' && retArrDate === retFd;
+          if (!isActualReturnFlightDay) {
+            // Holding/gap day before the real return flight — keep full destCountry DA
+          } else if (sameDayIndiaReturn) {
+            const retArrHHMM = String(finalRetLeg!.arrival_time ?? '').substring(0, 5);
+            if (retArrHHMM && retArrHHMM <= '12:00') {
+              return { ...li, claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0,
+                description: `Not Eligible — Return Arrival Before 12:00 (arrives ${retArrHHMM})` };
+            }
+            // Eligible (arrives after 12:00) and lands in India same day — she's simply "home"
+            // that day, so India DA applies regardless of what time she left the destination
+            // country. Bug fixed 2026-08-10: Bhavna Singh EMP-3505 flew KL→Chennai (arrives
+            // 06:55) then Chennai→Delhi, her actual base (arrives 13:55) — India DA, not
+            // Malaysia DA (the departure-time cutoff below is only for journeys that do NOT
+            // reach India the same day).
+            effectiveCountry = 'India';
+          } else if (retToCountry && retToCountry !== 'India' && retToCountry !== destCountry) {
+            // The flight is heading to a DIFFERENT international destination, not returning
+            // home to India — this day genuinely belongs to that new assignment, not this
+            // one. Do not fabricate "India" just because departure was before 04:00. Bug
+            // fixed 2026-08-10: Ankur Kumar EMP-2485 — Dubai→Nairobi is a continuation to a
+            // new assignment, not a return to India; leave the stored/generated value as-is.
+          } else {
+            // Apply departure-time cutoff: check the DEPARTURE time FROM the destination country
+            // (not the arrival time at some later leg/layover). Departs at/after 04:00 local →
+            // trainer spent most of the day in destCountry → full destCountry DA. Departs before
+            // 04:00 → India DA instead. Mirrors CreateTADABill.tsx's isReturn branch.
+            const retDepTime = retFlight ? String(retFlight.departure_time ?? '').substring(0, 5) : '';
+            if (!retDepTime || retDepTime < '04:00') effectiveCountry = 'India';
+            // else: departs at/after 04:00 — keep destCountry (effectiveCountry already = destCountry)
+          }
         }
 
       } else if (date === asgn.startDate) {
@@ -1656,35 +1935,39 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     return getPaidDADates(claim.trainerId, claimId ?? '');
   }, [claim, claimId]);
 
-  // Apply HR Admin overrides on top of auto-corrected DA items
+  // Apply HR Admin overrides on top of auto-corrected DA items — keyed by DATE so the
+  // override sticks to the correct calendar day even if the underlying PMS-computed array's
+  // order/length shifts across reloads.
   const effectiveDaItemsFinal = useMemo(() =>
-    correctedDaItems.map((li, i) => {
-      const ov = daHrOverrides[i];
+    correctedDaItems.map((li) => {
+      const ov = li.date ? daHrOverrides[li.date] : undefined;
       if (!ov) return li;
       return { ...li, expenseSubType: ov.country, currency: ov.currency, policyLimit: ov.amount, claimedAmount: ov.amount };
     }),
   [correctedDaItems, daHrOverrides]);
 
-  // Apply HR travel overrides (sorted order matches render order)
+  // Apply HR travel overrides — keyed by lineItemId so the override sticks to the correct
+  // record even if the sorted render order shifts across reloads.
   // approvedAmount is also overridden so bestAmt() always picks the HR-edited value,
   // not a stale stored approvedAmount from a previous action.
   const effectiveTravelItemsFinal = useMemo(() => {
     const raw = claimLineItems.filter(li => li.expenseType === 'TA' || li.expenseType === 'Cab');
     const sorted = raw.slice().sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
-    return sorted.map((li, idx) => {
-      const ov = taHrOverrides[idx];
+    return sorted.map((li) => {
+      const ov = taHrOverrides[li.lineItemId];
       if (!ov) return li;
       return { ...li, currency: ov.currency, claimedAmount: ov.amount, eligibleAmount: ov.amount, approvedAmount: ov.amount };
     });
   }, [claimLineItems, taHrOverrides]);
 
-  // Apply HR misc overrides (sorted order matches render order)
+  // Apply HR misc overrides — keyed by lineItemId so the override sticks to the correct
+  // record even if the sorted render order shifts across reloads.
   // approvedAmount is also overridden so bestAmt() always picks the HR-edited value.
   const effectiveMiscItemsFinal = useMemo(() => {
     const raw = claimLineItems.filter(li => li.expenseType === 'Other');
     const sorted = raw.slice().sort((a, b) => (a.date ?? '').localeCompare(b.date ?? ''));
-    return sorted.map((li, idx) => {
-      const ov = miscHrOverrides[idx];
+    return sorted.map((li) => {
+      const ov = miscHrOverrides[li.lineItemId];
       if (!ov) return li;
       return { ...li, currency: ov.currency, claimedAmount: ov.amount, eligibleAmount: ov.amount, approvedAmount: ov.amount };
     });
@@ -2673,7 +2956,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                   </thead>
                                   <tbody className="divide-y divide-gray-100">
                                     {daItems.map((li, i) => {
-                                      const override = daHrOverrides[i];
+                                      const override = li.date ? daHrOverrides[li.date] : undefined;
                                       const dispCurrency = override?.currency ?? li.currency;
                                       const dispAmount   = override?.amount   ?? li.claimedAmount;
                                       const dispCountry  = override?.country  ?? (li.expenseSubType ?? '—');
@@ -2736,7 +3019,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                               <div className="flex items-center gap-1.5">
                                                 <button
                                                   onClick={() => {
-                                                    setDaHrOverrides(prev => ({ ...prev, [i]: { country: daEditValues.country, currency: daEditValues.currency, amount: daEditValues.amount } }));
+                                                    if (!li.date) { setDaEditIdx(null); return; }
+                                                    const next = { ...daHrOverrides, [li.date]: { country: daEditValues.country, currency: daEditValues.currency, amount: daEditValues.amount } };
+                                                    setDaHrOverrides(next);
+                                                    persistHrOverrideField('daHrOverrides', next);
                                                     setDaEditIdx(null);
                                                   }}
                                                   className="px-2.5 py-1 rounded bg-green-600 text-white text-xs font-medium hover:bg-green-700"
@@ -3254,7 +3540,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                     </thead>
                                     <tbody className="divide-y divide-gray-100 bg-white">
                                       {effectiveTravelItemsFinal.map((li, idx) => {
-                                          const ov       = taHrOverrides[idx];
+                                          const ov       = taHrOverrides[li.lineItemId];
                                           const journey  = journeyFrom(li.description);
                                           const dist     = distFrom(li.description);
                                           const tType    = li.expenseSubType ?? li.expenseType;
@@ -3315,7 +3601,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                   <div className="flex items-center gap-1.5">
                                                     <button
                                                       onClick={() => {
-                                                        setTaHrOverrides(prev => ({ ...prev, [idx]: { currency: taEditValues.currency, amount: taEditValues.amount } }));
+                                                        const next = { ...taHrOverrides, [li.lineItemId]: { currency: taEditValues.currency, amount: taEditValues.amount } };
+                                                        setTaHrOverrides(next);
+                                                        persistHrOverrideField('taHrOverrides', next);
                                                         setTaEditIdx(null);
                                                       }}
                                                       className="px-2.5 py-1 rounded bg-green-600 text-white text-xs font-medium hover:bg-green-700"
@@ -3503,7 +3791,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                   </thead>
                                   <tbody className="divide-y divide-gray-100 bg-white">
                                     {effectiveMiscItemsFinal.map((li, idx) => {
-                                        const ov       = miscHrOverrides[idx];
+                                        const ov       = miscHrOverrides[li.lineItemId];
                                         const expType  = li.expenseSubType ?? 'Other';
                                         const remarks  = remarksFrom(li.description);
                                         const eligible = li.eligibleAmount ?? li.claimedAmount;
@@ -3576,7 +3864,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                               <td className="px-3 py-2.5 whitespace-nowrap">
                                                 {isEditing ? (
                                                   <div className="flex items-center gap-1">
-                                                    <button onClick={() => { setMiscHrOverrides(prev => ({ ...prev, [idx]: { currency: miscEditValues.currency, amount: miscEditValues.amount } })); setMiscEditIdx(null); }}
+                                                    <button onClick={() => {
+                                                        const next = { ...miscHrOverrides, [li.lineItemId]: { currency: miscEditValues.currency, amount: miscEditValues.amount } };
+                                                        setMiscHrOverrides(next);
+                                                        persistHrOverrideField('miscHrOverrides', next);
+                                                        setMiscEditIdx(null);
+                                                      }}
                                                       className="px-2 py-1 rounded bg-green-600 text-white text-[10px] font-semibold hover:bg-green-700">Save</button>
                                                     <button onClick={() => setMiscEditIdx(null)}
                                                       className="px-2 py-1 rounded bg-gray-200 text-gray-600 text-[10px] font-semibold hover:bg-gray-300">Cancel</button>
@@ -3588,7 +3881,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                       ✏️
                                                     </button>
                                                     {ov && (
-                                                      <button onClick={() => setMiscHrOverrides(prev => { const n = { ...prev }; delete n[idx]; return n; })}
+                                                      <button onClick={() => {
+                                                          const next = { ...miscHrOverrides };
+                                                          delete next[li.lineItemId];
+                                                          setMiscHrOverrides(next);
+                                                          persistHrOverrideField('miscHrOverrides', next);
+                                                        }}
                                                         title="Reset to original" className="p-1 rounded hover:bg-red-100 text-red-500 transition-colors text-[10px]">✕</button>
                                                     )}
                                                   </div>
@@ -3613,6 +3911,81 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                 </div>
                               </div>
                             </>
+                          )}
+
+                          {/* Add a NEW misc expense to this already-submitted claim — restricted
+                              to exempted trainers (viewing their own claim) and HR Admin/
+                              SuperAdmin (on that trainer's behalf). See
+                              MISC_POST_SUBMIT_EXEMPT_EMP_CODES. */}
+                          {canAddMiscPostSubmit && (
+                            <div className="px-4 py-4 border-t border-rose-100 bg-rose-50/40">
+                              <p className="text-xs font-semibold text-rose-800 mb-3">➕ Add Miscellaneous Expense</p>
+                              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                                <div>
+                                  <label className="block text-[10px] text-gray-500 mb-1 font-semibold">Date</label>
+                                  <input type="date" value={miscPostSubmitDraft.date}
+                                    onChange={e => setMiscPostSubmitDraft(v => ({ ...v, date: e.target.value }))}
+                                    className="w-full border border-rose-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400" />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] text-gray-500 mb-1 font-semibold">Expense Type</label>
+                                  <input type="text" value={miscPostSubmitDraft.expenseType}
+                                    onChange={e => setMiscPostSubmitDraft(v => ({ ...v, expenseType: e.target.value }))}
+                                    placeholder="e.g. Internet, Visa, Tips"
+                                    className="w-full border border-rose-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400" />
+                                </div>
+                                <div className="flex gap-1.5">
+                                  <select value={miscPostSubmitDraft.currency}
+                                    onChange={e => setMiscPostSubmitDraft(v => ({ ...v, currency: e.target.value }))}
+                                    className="border border-rose-300 rounded px-1.5 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400">
+                                    <option value="INR">INR ₹</option>
+                                    <option value="USD">USD</option>
+                                    <option value="AED">AED</option>
+                                    <option value="EUR">EUR</option>
+                                    <option value="GBP">GBP</option>
+                                  </select>
+                                  <input type="number" min={0} value={miscPostSubmitDraft.amount || ''}
+                                    onChange={e => setMiscPostSubmitDraft(v => ({ ...v, amount: Number(e.target.value) }))}
+                                    placeholder="Amount"
+                                    className="w-full border border-rose-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400" />
+                                </div>
+                                <div className="col-span-2 sm:col-span-2">
+                                  <label className="block text-[10px] text-gray-500 mb-1 font-semibold">Remarks</label>
+                                  <input type="text" value={miscPostSubmitDraft.remarks}
+                                    onChange={e => setMiscPostSubmitDraft(v => ({ ...v, remarks: e.target.value }))}
+                                    placeholder="Brief description"
+                                    className="w-full border border-rose-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-rose-400" />
+                                </div>
+                                <div>
+                                  <label className="block text-[10px] text-gray-500 mb-1 font-semibold">Receipt (optional)</label>
+                                  <input type="file" accept="image/*,.pdf"
+                                    onChange={async e => {
+                                      const file = e.target.files?.[0];
+                                      if (!file) return;
+                                      const data = await fileToBase64(file);
+                                      setMiscPostSubmitDraft(v => ({ ...v, receiptData: data, receiptName: file.name }));
+                                    }}
+                                    className="w-full text-[10px] text-gray-500" />
+                                  {miscPostSubmitDraft.receiptName && (
+                                    <p className="text-[10px] text-green-600 mt-0.5 truncate">✓ {miscPostSubmitDraft.receiptName}</p>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="mt-3 flex items-center gap-2">
+                                <button
+                                  onClick={addMiscExpensePostSubmit}
+                                  disabled={miscPostSubmitSaving || !miscPostSubmitDraft.date || !miscPostSubmitDraft.amount}
+                                  className="px-3 py-1.5 rounded bg-rose-600 text-white text-xs font-semibold hover:bg-rose-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                  {miscPostSubmitSaving ? 'Adding…' : '+ Add Expense'}
+                                </button>
+                                {miscPostSubmitMsg && (
+                                  <span className={`text-xs font-medium ${miscPostSubmitMsg.startsWith('✅') ? 'text-green-600' : 'text-red-600'}`}>
+                                    {miscPostSubmitMsg}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           )}
                         </div>
                       )}

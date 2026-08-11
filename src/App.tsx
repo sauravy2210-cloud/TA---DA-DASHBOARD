@@ -34,6 +34,7 @@ import CreateTADABill from './pages/CreateTADABill'
 import HelpPolicy from './pages/HelpPolicy'
 import TrainerProfile from './pages/TrainerProfile'
 import CheckDetails from './pages/CheckDetails'
+import VisaEntry from './pages/VisaEntry'
 
 // ── Error Boundary ───────────────────────────────────────────────────────────
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
@@ -321,6 +322,21 @@ export default function App() {
                 onLogout={handleLogout}
               >
                 <EligibleAssignments currentUser={currentUser!} />
+              </ShellWrap>
+            </AuthGuard>
+          }
+        />
+
+        <Route
+          path="/visa-entry"
+          element={
+            <AuthGuard currentUser={currentUser}>
+              <ShellWrap
+                currentUser={currentUser!}
+                onRoleSwitch={handleRoleSwitch}
+                onLogout={handleLogout}
+              >
+                <VisaEntry currentUser={currentUser!} />
               </ShellWrap>
             </AuthGuard>
           }

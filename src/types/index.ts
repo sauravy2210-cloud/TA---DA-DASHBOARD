@@ -281,6 +281,13 @@ export interface ClaimHeader {
   lineItems?: ClaimLineItem[];        // embedded at submit time for cross-browser access
   advanceRecoveries?: Array<{ advanceKey: string; claimAmountUsed: number }>; // set at approve time
   draftWizardData?: string; // JSON-encoded wizard state, only present when status === 'Draft'
+  // HR Admin manual DA/TA/Misc overrides, keyed by date (DA/Misc) or lineItemId (TA) — persisted
+  // so an edited value survives navigation/reload and shows identically in Payment Processing,
+  // Verification Queue, or any other view of this same claim, instead of being silently
+  // discarded by the live PMS recompute the next time the claim is opened.
+  daHrOverrides?: Record<string, { country: string; currency: string; amount: number }>;
+  taHrOverrides?: Record<string, { currency: string; amount: number }>;
+  miscHrOverrides?: Record<string, { currency: string; amount: number }>;
 }
 
 export type ExpenseType = 'TA' | 'DA' | 'Lodging' | 'Cab' | 'Other';

@@ -8,6 +8,28 @@ export const config = { maxDuration: 30 };
 
 const BASE = 'https://api.koenig-solutions.com';
 
+// Cache Koenig access tokens per (userName, role) for the lifetime of this warm serverless
+// instance — avoids a redundant GetToken round-trip on every request.
+const TOKEN_TTL_MS = 10 * 60 * 1000;
+const tokenCache = new Map();
+
+async function getToken(userName, userPassword, userRole) {
+  const cacheKey = `${userName}::${userRole}`;
+  const cached = tokenCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return { ok: true, content: cached.token };
+
+  const tokenRes = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userName, userPassword, userRole }),
+  });
+  if (!tokenRes.ok) return { ok: false, error: `Token endpoint HTTP ${tokenRes.status}` };
+  const tokenData = await tokenRes.json();
+  if (tokenData.statuscode !== 200) return { ok: false, error: tokenData.message || 'Token failed' };
+  tokenCache.set(cacheKey, { token: tokenData.content, expiresAt: Date.now() + TOKEN_TTL_MS });
+  return { ok: true, content: tokenData.content };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
@@ -22,27 +44,16 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Step 1 — get token
-    const tokenRes = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        userName:     process.env.KOENIG_LEAVE_USER || '',
-        userPassword: process.env.KOENIG_LEAVE_PASS || '',
-        userRole:     'Get Employee Leave Details',
-      }),
-    });
-
-    if (!tokenRes.ok) {
-      return res.status(502).json({ error: `Token endpoint HTTP ${tokenRes.status}` });
+    // Step 1 — get token (cached across warm invocations)
+    const tokenResult = await getToken(
+      process.env.KOENIG_LEAVE_USER || '',
+      process.env.KOENIG_LEAVE_PASS || '',
+      'Get Employee Leave Details'
+    );
+    if (!tokenResult.ok) {
+      return res.status(502).json({ error: tokenResult.error });
     }
-
-    const tokenData = await tokenRes.json();
-    if (tokenData.statuscode !== 200) {
-      return res.status(502).json({ error: tokenData.message || 'Token failed' });
-    }
-
-    const { accessToken, deviceToken } = tokenData.content;
+    const { accessToken, deviceToken } = tokenResult.content;
 
     // Step 2 — fetch leave records (send emp_code; API returns all leaves for employee)
     const dataUrl =

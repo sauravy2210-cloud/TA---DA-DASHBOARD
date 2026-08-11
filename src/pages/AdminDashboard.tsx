@@ -39,6 +39,36 @@ import { RiskFlagBadge } from '../components/StatusBadge';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Mirrors the record shape saved by VisaEntry.tsx (Trainer's Visa Fees Entry page) to
+// /api/turso?type=visa — travel + misc expenses logged there, surfaced here for HR Admin.
+interface VisaDbRecord {
+  id: string;
+  trainerId: string;
+  trainerName: string;
+  trainerEmail: string;
+  entryType: 'travel' | 'misc';
+  submittedAt: string;
+  fromDate: string;
+  toDate: string;
+  status?: 'Pending' | 'Approved' | 'Rejected';
+  reviewRemark?: string;
+  reviewedAt?: string;
+  data: {
+    date: string;
+    amount: number;
+    currency: string;
+    receiptData?: string;
+    receiptName?: string;
+    // travel-specific
+    travelType?: string;
+    from?: string;
+    to?: string;
+    // misc-specific
+    expenseType?: string;
+    remarks?: string;
+  };
+}
+
 function formatINR(amount: number): string {
   if (Math.abs(amount) >= 100000) {
     return `₹${(amount / 100000).toFixed(2)}L`;
@@ -564,6 +594,37 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
   const [filterAssignment, setFilterAssignment] = useState('');
   const [filterTrainer, setFilterTrainer] = useState('');
   const [filterAdvTrainer, setFilterAdvTrainer] = useState('');
+  const [filterVisaTrainer, setFilterVisaTrainer] = useState('');
+
+  // ── Visa Fees Submission — entries trainers add on the Visa Fees Entry page ─────────────
+  const [visaEntries, setVisaEntries] = useState<VisaDbRecord[]>([]);
+  const [visaEntriesLoading, setVisaEntriesLoading] = useState(false);
+  const reloadVisaEntries = useCallback(async () => {
+    setVisaEntriesLoading(true);
+    try {
+      const r = await fetch('/api/turso?type=visa');
+      const d = await r.json();
+      setVisaEntries(Array.isArray(d.entries) ? d.entries : []);
+    } catch { /* keep previous entries on transient failure */ }
+    finally { setVisaEntriesLoading(false); }
+  }, []);
+  useEffect(() => { reloadVisaEntries(); }, [reloadVisaEntries]);
+
+  const [visaDecidingId, setVisaDecidingId] = useState<string | null>(null);
+  async function decideVisaEntry(entry: VisaDbRecord, status: 'Approved' | 'Rejected') {
+    setVisaDecidingId(entry.id);
+    const updated: VisaDbRecord = { ...entry, status, reviewedAt: new Date().toISOString() };
+    try {
+      const r = await fetch('/api/turso?type=visa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setVisaEntries(prev => prev.map(e => (e.id === entry.id ? updated : e)));
+    } catch { /* leave entry unchanged on failure — HR Admin can retry */ }
+    finally { setVisaDecidingId(null); }
+  }
 
   // liveClaims is the authoritative UI state — updated directly from Turso on each poll.
   // Using component state (not a tick counter) ensures React re-renders every computed value
@@ -1118,6 +1179,111 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                       </td>
                     </tr>
                   ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Visa Fees Submission — entries trainers add on the Visa Fees Entry page */}
+          <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div className="border-b border-gray-100 px-5 py-4">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                  Visa Fees Submission
+                </h2>
+                <span className="text-xs text-gray-400">
+                  {visaEntriesLoading ? 'Loading…' : `${visaEntries.length} entr${visaEntries.length === 1 ? 'y' : 'ies'}`}
+                </span>
+              </div>
+              <div className="relative w-44">
+                <input
+                  type="text"
+                  placeholder="Filter by Trainer…"
+                  value={filterVisaTrainer}
+                  onChange={e => setFilterVisaTrainer(e.target.value)}
+                  className="pl-3 pr-8 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 w-full"
+                />
+                {filterVisaTrainer && (
+                  <button onClick={() => setFilterVisaTrainer('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>
+                )}
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-50 text-xs">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Trainer</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Emp Code</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Type</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Details</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Date</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Amount</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Submitted</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Attachment</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Status</th>
+                    <th className="px-4 py-2.5 text-right font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50 bg-white">
+                  {visaEntries
+                    .filter(e => !filterVisaTrainer || e.trainerName.toLowerCase().includes(filterVisaTrainer.toLowerCase()))
+                    .sort((a, b) => (b.submittedAt || '').localeCompare(a.submittedAt || ''))
+                    .map(e => {
+                      const status = e.status || 'Pending';
+                      const statusColor = status === 'Approved' ? 'bg-green-100 text-green-700'
+                        : status === 'Rejected' ? 'bg-red-100 text-red-600'
+                        : 'bg-amber-100 text-amber-700';
+                      return (
+                      <tr key={e.id} className="hover:bg-blue-50/30">
+                        <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">{e.trainerName || '—'}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap font-mono text-indigo-700">{e.trainerId || '—'}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${e.entryType === 'travel' ? 'bg-sky-100 text-sky-700' : 'bg-rose-100 text-rose-700'}`}>
+                            {e.entryType === 'travel' ? 'Travel' : 'Misc'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-600">
+                          {e.entryType === 'travel'
+                            ? `${e.data.travelType || '—'}: ${e.data.from || '—'} → ${e.data.to || '—'}`
+                            : `${e.data.expenseType || 'Other'}${e.data.remarks ? ' — ' + e.data.remarks : ''}`}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{formatDate(e.data.date)}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap font-semibold text-gray-800">{e.data.currency} {e.data.amount}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{formatDate(e.submittedAt)}</td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          {e.data.receiptData ? (
+                            <a href={e.data.receiptData} download={e.data.receiptName || 'attachment'} className="text-blue-600 hover:underline font-medium">View</a>
+                          ) : (
+                            <span className="text-gray-300">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${statusColor}`}>{status}</span>
+                        </td>
+                        <td className="px-4 py-2.5 whitespace-nowrap text-right">
+                          {status === 'Pending' ? (
+                            <div className="inline-flex items-center gap-1">
+                              <button
+                                onClick={() => decideVisaEntry(e, 'Approved')}
+                                disabled={visaDecidingId === e.id}
+                                className="px-2 py-1 rounded text-[11px] font-semibold text-green-700 hover:bg-green-50 disabled:opacity-50"
+                              >Approve</button>
+                              <button
+                                onClick={() => decideVisaEntry(e, 'Rejected')}
+                                disabled={visaDecidingId === e.id}
+                                className="px-2 py-1 rounded text-[11px] font-semibold text-red-600 hover:bg-red-50 disabled:opacity-50"
+                              >Reject</button>
+                            </div>
+                          ) : (
+                            <span className="text-gray-400 text-[11px]">{formatDate(e.reviewedAt)}</span>
+                          )}
+                        </td>
+                      </tr>
+                      );
+                    })}
+                  {!visaEntriesLoading && visaEntries.length === 0 && (
+                    <tr><td colSpan={10} className="px-4 py-6 text-center text-gray-400">No visa fees entries submitted yet.</td></tr>
+                  )}
                 </tbody>
               </table>
             </div>

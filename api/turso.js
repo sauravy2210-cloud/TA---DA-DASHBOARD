@@ -7,6 +7,9 @@
 //                 POST /api/turso?type=feedback  → save to DB + email saurav.yadav@koenig-solutions.com
 // Extract:        POST /api/turso?type=extract   → AI receipt extraction (Claude vision)
 // Upload receipt: POST /api/turso?type=upload-receipt → upload base64 to Vercel Blob, return URL
+// Visa Entries:   GET/POST/DELETE /api/turso?type=visa[&empCode=x|&id=x] — Trainer's Visa Fees
+//                 Entry page (travel + misc expenses logged there), visible to HR Admin under
+//                 "Visa Fees Submission"
 
 export const config = { api: { bodyParser: { sizeLimit: '10mb' } } };
 
@@ -34,6 +37,7 @@ async function ensureTablesOnce(db) {
     `CREATE TABLE IF NOT EXISTS claims (id TEXT PRIMARY KEY, trainer_id TEXT NOT NULL, status TEXT NOT NULL, pending_with TEXT, bill_no TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS line_items (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, data TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, trainer_id TEXT, trainer_name TEXT, category TEXT NOT NULL, message TEXT NOT NULL, submitted_at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS visa_entries (id TEXT PRIMARY KEY, trainer_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
   ], 'write');
   _tablesReady = true;
 }
@@ -208,6 +212,37 @@ export default async function handler(req, res) {
   if (type === 'lineitems-all' && req.method === 'GET') {
     const result = await db.execute('SELECT data FROM line_items');
     return res.status(200).json({ lineItems: result.rows.map(r => JSON.parse(r.data)) });
+  }
+
+  // ── Visa Entries (Trainer's Visa Fees Entry page → HR Admin's Visa Fees Submission) ────────
+  if (type === 'visa') {
+    if (req.method === 'GET') {
+      const { empCode } = req.query;
+      const result = empCode
+        ? await db.execute({ sql: 'SELECT data FROM visa_entries WHERE trainer_id = ? ORDER BY created_at DESC', args: [empCode] })
+        : await db.execute('SELECT data FROM visa_entries ORDER BY created_at DESC');
+      return res.status(200).json({ entries: result.rows.map(r => JSON.parse(r.data)) });
+    }
+
+    if (req.method === 'POST') {
+      const entry = req.body;
+      if (!entry?.id || !entry?.trainerId) return res.status(400).json({ error: 'Missing id or trainerId' });
+      const now = new Date().toISOString();
+      await db.execute({
+        sql: `INSERT INTO visa_entries (id, trainer_id, data, created_at)
+              VALUES (?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+        args: [entry.id, entry.trainerId, JSON.stringify(entry), now],
+      });
+      return res.status(200).json({ ok: true });
+    }
+
+    if (req.method === 'DELETE') {
+      const { id } = req.query;
+      if (!id) return res.status(400).json({ error: 'Missing id' });
+      await db.execute({ sql: 'DELETE FROM visa_entries WHERE id = ?', args: [id] });
+      return res.status(200).json({ ok: true });
+    }
   }
 
   // ── Feedback ────────────────────────────────────────────────────────────────

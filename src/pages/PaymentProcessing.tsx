@@ -5,6 +5,7 @@ import { exportPaymentSheet } from '../services/exportEngine';
 import { downloadKoenigFile, buildKoenigFileBase64 } from '../services/koenigExport';
 import { logAction, ACTION_TYPES } from '../services/auditEngine';
 import { saveToStorage, getFromStorage, getClaims, saveClaim, refreshClaims, hasDaOverlap } from '../services/storageService';
+import VisaFeesBanner from '../components/VisaFeesBanner';
 
 interface PaymentProcessingProps {
   currentUser: User;
@@ -427,6 +428,10 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
         </div>
       </div>
 
+      <div className="px-6 pt-4">
+        <VisaFeesBanner defaultOpen={statusFilter === 'ApprovedVisaFees'} />
+      </div>
+
       {/* Filters */}
       <div className="bg-white border-b border-gray-100 px-6 py-3">
         <div className="flex flex-wrap items-end gap-3">
@@ -442,6 +447,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
               <option value="Paid">Paid</option>
               <option value="Approved">Approved</option>
               <option value="Partially Approved">Partially Approved</option>
+              <option value="ApprovedVisaFees">Approved Visa Fees</option>
             </select>
           </div>
           <div>

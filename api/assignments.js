@@ -7,7 +7,17 @@ export const config = { maxDuration: 30 };
 
 const BASE = 'https://api.koenig-solutions.com';
 
+// Cache Koenig access tokens per (userName, role) for the lifetime of this warm serverless
+// instance — avoids a redundant GetToken round-trip on every single request, which was the
+// main source of the "Loading assignment data from PMS…" delay in HR Admin's claim view.
+const TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes — comfortably under Koenig's token expiry
+const tokenCache = new Map(); // key: `${userName}::${userRole}` -> { token, expiresAt }
+
 async function getToken(userName, userPassword, userRole) {
+  const cacheKey = `${userName}::${userRole}`;
+  const cached = tokenCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.token;
+
   const res = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -16,6 +26,7 @@ async function getToken(userName, userPassword, userRole) {
   if (!res.ok) throw new Error(`Token HTTP ${res.status}`);
   const d = await res.json();
   if (d.statuscode !== 200) throw new Error(d.message || 'Token failed');
+  tokenCache.set(cacheKey, { token: d.content, expiresAt: Date.now() + TOKEN_TTL_MS });
   return d.content;
 }
 

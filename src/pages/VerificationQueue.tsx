@@ -4,6 +4,7 @@ import type { User, ClaimHeader } from '../types';
 import { ClaimTable } from '../components/ClaimTable';
 import { getClaims, saveClaimAsync, refreshClaims } from '../services/storageService';
 import { exportClaimsQueue } from '../services/exportEngine';
+import VisaFeesBanner from '../components/VisaFeesBanner';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -811,6 +812,10 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
             </button>
           </div>
         )}
+      </div>
+
+      <div className="px-6 pt-4">
+        <VisaFeesBanner />
       </div>
 
       {/* ── Search bar ── */}
