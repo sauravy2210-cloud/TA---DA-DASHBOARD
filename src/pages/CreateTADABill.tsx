@@ -3563,14 +3563,26 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         if (prevCountry === destCountry) {
           travelDayCountry = destCountry; // already in-country (consecutive same-country assignments)
         } else {
-          // Apply outbound flight arrival-time cutoff
-          const outboundFlight = activeFlights.find(f => {
+          // Apply outbound flight arrival-time cutoff. Pick the EARLIEST-departing leg in the
+          // window (not array order), then chase forward through same-day connecting legs to
+          // the FINAL arrival — a multi-leg journey (e.g. Chandigarh→Delhi→Dubai) must be judged
+          // by when the trainer actually reaches the destination, not an intermediate domestic hop.
+          const outboundCandidatesForCountry = activeFlights.filter(f => {
             const fd = parseDT(f.departure_date);
             return fd ? fd >= addDays(asgnStart, -2) && fd <= addDays(asgnStart, 1) : false;
           });
+          const earliestOutboundForCountry = outboundCandidatesForCountry.reduce((earliest, f) => {
+            if (!earliest) return f;
+            const et = (earliest.departure_time || '').substring(0, 5);
+            const ft = (f.departure_time || '').substring(0, 5);
+            return ft < et ? f : earliest;
+          }, undefined as typeof activeFlights[0] | undefined);
+          const outboundFlight = earliestOutboundForCountry ? resolveFinalSameDayLeg(earliestOutboundForCountry) : undefined;
           const arrLocal = outboundFlight ? (outboundFlight.arrival_time || '').substring(0, 5) : '';
           if (arrLocal) {
-            if (arrLocal <= '18:00') {
+            // Arrival at the destination at/before 17:00 local → destination DA (enough of the
+            // day left there). After 17:00 → India DA (trainer only just arrived).
+            if (arrLocal <= '17:00') {
               travelDayCountry = destCountry;
             } else {
               travelDayCountry = 'India';
@@ -3775,15 +3787,22 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         amount      = rate;
         const depNote  = depTimeStr ? `, departs ${depTimeStr}` : '';
         const asgnStart2   = asgn?.startDate || fromDate;
-        const outbFlight2  = activeFlights.find(f => { const fd = parseDT(f.departure_date); return fd ? fd >= addDays(asgnStart2, -2) && fd <= asgnStart2 : false; });
+        const outbCandidates2 = activeFlights.filter(f => { const fd = parseDT(f.departure_date); return fd ? fd >= addDays(asgnStart2, -2) && fd <= asgnStart2 : false; });
+        const earliestOutb2 = outbCandidates2.reduce((earliest, f) => {
+          if (!earliest) return f;
+          const et = (earliest.departure_time || '').substring(0, 5);
+          const ft = (f.departure_time || '').substring(0, 5);
+          return ft < et ? f : earliest;
+        }, undefined as typeof activeFlights[0] | undefined);
+        const outbFlight2  = earliestOutb2 ? resolveFinalSameDayLeg(earliestOutb2) : undefined;
         const arrLocal2    = outbFlight2 ? (outbFlight2.arrival_time || '').substring(0, 5) : '';
         const arrNote2     = arrLocal2 ? `, arrives ${arrLocal2} local` : '';
         remarks     = layoverInfo
           ? `${asgnTag} — departure day; ${layoverInfo.country} layover ${layoverInfo.layoverHours.toFixed(1)} hrs (≥4 hrs); ${layoverInfo.country} DA applied${depNote}`
           : isInternationalTravelDay
-            ? `${asgnTag} — departure to ${destCountry}${depNote}${arrNote2}; arrival after 18:00 local (<4 hrs in ${destCountry}), India DA applied`
+            ? `${asgnTag} — departure to ${destCountry}${depNote}${arrNote2}; arrival after 17:00 local, India DA applied`
             : destCountry !== 'India'
-              ? `${asgnTag} — departure to ${destCountry}${depNote}${arrNote2}; arrival by 18:00 local (4+ hrs in ${destCountry}), ${destCountry} DA applied`
+              ? `${asgnTag} — departure to ${destCountry}${depNote}${arrNote2}; arrival by 17:00 local, ${destCountry} DA applied`
               : `${asgnTag} — departure day${depNote}`;
       } else if (isReturn) {
         status      = 'Allowed (Return Day)';

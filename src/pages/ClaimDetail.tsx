@@ -1798,7 +1798,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         } else {
           // Trainer flies to destination.
           // Eligibility (dep < 17:00) is already guaranteed by the departure supplement.
-          // Rate: arrival at destination ≤ 18:00 → destination country DA; else India DA.
+          // Rate: arrival at destination ≤ 17:00 → destination country DA; else India DA.
           // Prefer the leg actually departing FROM India to international (not domestic connections).
           const outboundCandidates = activeFlights.filter(f => {
             const fd = parseDT(String(f.departure_date ?? ''));
@@ -1821,7 +1821,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             return fromC === 'India' && toC !== 'India';
           }) ?? outboundCandidates[0];
           const arrAtDest = outbound ? String(outbound.arrival_time ?? '').substring(0, 5) : '';
-          if (!arrAtDest || arrAtDest > '18:00') effectiveCountry = 'India';
+          if (!arrAtDest || arrAtDest > '17:00') effectiveCountry = 'India';
         }
 
       } else if (isReturnDay) {
