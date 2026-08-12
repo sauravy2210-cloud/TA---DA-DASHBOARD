@@ -1819,7 +1819,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
             const toC   = inferCountryFromCity(String(f.to_city ?? '').trim());
             return fromC === 'India' && toC !== 'India';
-          }) ?? outboundCandidates[0];
+          }) ?? outboundCandidates.reduce((earliest, f) => {
+            if (!earliest) return f;
+            const et = String(earliest.departure_time ?? '').substring(0, 5);
+            const ft = String(f.departure_time ?? '').substring(0, 5);
+            return ft < et ? f : earliest;
+          }, undefined as typeof activeFlights[number] | undefined);
           const arrAtDest = outbound ? String(outbound.arrival_time ?? '').substring(0, 5) : '';
           if (!arrAtDest || arrAtDest > '17:00') effectiveCountry = 'India';
         }
@@ -1850,10 +1855,21 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 const ft = String(f.departure_time ?? '').substring(0, 5);
                 return ft < et ? f : earliest;
               });
-          const retFlight = retFlightFromDest ?? activeFlights.find(f => {
-            const fd = parseDT(String(f.departure_date ?? ''));
-            return fd ? fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 5) : false;
-          });
+          const retFlight = retFlightFromDest ?? activeFlights
+            .filter(f => {
+              const fd = parseDT(String(f.departure_date ?? ''));
+              return fd ? fd >= asgn!.endDate && fd <= addD(asgn!.endDate, 5) : false;
+            })
+            .reduce((earliest, f) => {
+              if (!earliest) return f;
+              const ed = parseDT(String(earliest.departure_date ?? '')) || '';
+              const fd = parseDT(String(f.departure_date ?? '')) || '';
+              if (fd < ed) return f;
+              if (fd > ed) return earliest;
+              const et = String(earliest.departure_time ?? '').substring(0, 5);
+              const ft = String(f.departure_time ?? '').substring(0, 5);
+              return ft < et ? f : earliest;
+            }, undefined as typeof activeFlights[number] | undefined);
 
           // Only apply return-flight-based logic (same-day-India check, departure-time cutoff)
           // when the return flight ACTUALLY departs on the date being processed. The naive
@@ -1916,10 +1932,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         // First day of assignment — only reduce DA if trainer flew IN on this exact date
         // (departed from India on startDate itself and arrived late). If they flew in the day
         // before, they are already at destination → full destC DA, no adjustment.
-        const outbound = activeFlights.find(f => {
-          const fd = parseDT(String(f.departure_date ?? ''));
-          return fd === asgn!.startDate; // only same-day departure counts
-        });
+        // Pick the EARLIEST-departing leg on this date, not array order — a later same-day
+        // connecting leg departing after 17:00 must not wrongly disqualify a trainer who
+        // actually left home before 17:00 (same bug class as the departure-day supplement).
+        const outboundSameDayCandidates = activeFlights.filter(f => parseDT(String(f.departure_date ?? '')) === asgn!.startDate);
+        const outbound = outboundSameDayCandidates.reduce((earliest, f) => {
+          if (!earliest) return f;
+          const et = String(earliest.departure_time ?? '').substring(0, 5);
+          const ft = String(f.departure_time ?? '').substring(0, 5);
+          return ft < et ? f : earliest;
+        }, undefined as typeof activeFlights[number] | undefined);
         if (outbound) {
           const depTimeOut2 = String(outbound.departure_time ?? '').substring(0, 5);
           if (depTimeOut2 && depTimeOut2 >= '17:00') effectiveCountry = 'India';
@@ -1928,13 +1950,20 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       } else if (date === asgn.endDate) {
         // Last day of assignment — only reduce DA if return flight departs on this exact date
         // and trainer arrives home early. If flight is after endDate → full destC DA.
-        const retFlight = activeFlights.find(f => {
-          const fd = parseDT(String(f.departure_date ?? ''));
-          return fd === asgn!.endDate; // only same-day departure counts
-        });
+        // Pick the EARLIEST-departing leg on this date for the departure-time check, then chase
+        // forward through same-day connecting legs to the FINAL arrival — not array order and
+        // not just the first leg's own arrival (which may be an intermediate layover).
+        const retSameDayCandidates = activeFlights.filter(f => parseDT(String(f.departure_date ?? '')) === asgn!.endDate);
+        const retFlight = retSameDayCandidates.reduce((earliest, f) => {
+          if (!earliest) return f;
+          const et = String(earliest.departure_time ?? '').substring(0, 5);
+          const ft = String(f.departure_time ?? '').substring(0, 5);
+          return ft < et ? f : earliest;
+        }, undefined as typeof activeFlights[number] | undefined);
         if (retFlight) {
+          const finalRetLeg3 = resolveFinalSameDayLeg(retFlight);
           const retDepTime2 = String(retFlight.departure_time ?? '').substring(0, 5);
-          const retArrTime2 = String(retFlight.arrival_time ?? '').substring(0, 5);
+          const retArrTime2 = String(finalRetLeg3.arrival_time ?? '').substring(0, 5);
           // If departure is after 17:00, trainer was in destination country all day → full destC DA
           // Only downgrade to India if departure is early (≤ 17:00) AND arrives home before noon
           if (retDepTime2 && retDepTime2 <= '17:00' && retArrTime2 && retArrTime2 <= '12:00') effectiveCountry = 'India';

@@ -3630,10 +3630,21 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                 const ft = (f.departure_time || '').substring(0, 5);
                 return ft < et ? f : earliest;
               });
-          const returnFlight2 = retFlightFromDest ?? activeFlights.find(f => {
-            const fd = parseDT(f.departure_date);
-            return fd ? fd >= asgnEnd && fd <= addDays(asgnEnd, 5) : false;
-          });
+          const returnFlight2 = retFlightFromDest ?? activeFlights
+            .filter(f => {
+              const fd = parseDT(f.departure_date);
+              return fd ? fd >= asgnEnd && fd <= addDays(asgnEnd, 5) : false;
+            })
+            .reduce((earliest, f) => {
+              if (!earliest) return f;
+              const ed = parseDT(earliest.departure_date) || '';
+              const fd = parseDT(f.departure_date) || '';
+              if (fd < ed) return f;
+              if (fd > ed) return earliest;
+              const et = (earliest.departure_time || '').substring(0, 5);
+              const ft = (f.departure_time || '').substring(0, 5);
+              return ft < et ? f : earliest;
+            }, undefined as typeof activeFlights[0] | undefined);
 
           // If the journey lands back in India the SAME calendar day (chasing through any
           // same-day domestic connector to the trainer's actual base), this is simply a
@@ -3810,7 +3821,17 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         amount      = rate;
         const arrNote   = arrTimeStr ? `, arrives India ${arrTimeStr}` : '';
         const asgnEnd2     = asgn?.endDate || toDate;
-        const retFlight2   = activeFlights.find(f => { const fd = parseDT(f.departure_date); return fd ? fd >= asgnEnd2 && fd <= addDays(asgnEnd2, 2) : false; });
+        const retCandidates2 = activeFlights.filter(f => { const fd = parseDT(f.departure_date); return fd ? fd >= asgnEnd2 && fd <= addDays(asgnEnd2, 2) : false; });
+        const retFlight2   = retCandidates2.reduce((earliest, f) => {
+          if (!earliest) return f;
+          const ed = parseDT(earliest.departure_date) || '';
+          const fd = parseDT(f.departure_date) || '';
+          if (fd < ed) return f;
+          if (fd > ed) return earliest;
+          const et = (earliest.departure_time || '').substring(0, 5);
+          const ft = (f.departure_time || '').substring(0, 5);
+          return ft < et ? f : earliest;
+        }, undefined as typeof activeFlights[0] | undefined);
         const retDepLocal2 = retFlight2 ? (retFlight2.departure_time || '').substring(0, 5) : '';
         const retDepNote   = retDepLocal2 ? `departs ${destCountry} ${retDepLocal2} local` : '';
         remarks     = layoverInfo
