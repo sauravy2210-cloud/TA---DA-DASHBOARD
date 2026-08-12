@@ -64,7 +64,7 @@ const TRAINER_GROUPS: NavGroup[] = [
   {
     items: [
       { label: 'Trainer Dashboard', path: '/dashboard', icon: <LayoutDashboard size={16} /> },
-      { label: 'Select Date Range', path: '/create-bill', icon: <FilePlus size={16} /> },
+      { label: 'File TA/DA Claim', path: '/create-bill', icon: <FilePlus size={16} /> },
       { label: 'View My Bills', path: '/claims', icon: <ClipboardList size={16} /> },
       { label: 'Visa Fees Entry', path: '/visa-entry', icon: <Stamp size={16} /> },
     ],
