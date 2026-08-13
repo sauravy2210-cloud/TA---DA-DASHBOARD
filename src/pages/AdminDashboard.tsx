@@ -1422,8 +1422,36 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                           </td>
                           <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">{c.trainerName}</td>
                           <td className="px-4 py-2.5 whitespace-nowrap text-gray-800 font-medium">{formatINR(c.totalClaimedAmount)}</td>
-                          <td className="px-4 py-2.5 whitespace-nowrap">
+                          <td className="px-4 py-2.5 whitespace-nowrap align-top">
                             <span className="font-semibold text-amber-600">-{formatINR(c.advanceAdjusted)}</span>
+                            {(() => {
+                              const recoveries = (c as unknown as { advanceRecoveries?: { advanceKey: string; claimAmountUsed: number }[] }).advanceRecoveries ?? [];
+                              if (recoveries.length === 0) return null;
+                              return (
+                                <div className="mt-1 flex flex-col gap-0.5">
+                                  {recoveries.map((r) => {
+                                    // advanceKey is either "BILL-<id>" or "<PMS Date>-<original amount>"
+                                    const isBill = r.advanceKey.startsWith('BILL-');
+                                    let label = r.advanceKey;
+                                    if (!isBill) {
+                                      const lastDash = r.advanceKey.lastIndexOf('-');
+                                      if (lastDash > 0) {
+                                        const datePart = r.advanceKey.slice(0, lastDash);
+                                        const amtPart = Number(r.advanceKey.slice(lastDash + 1));
+                                        const d = new Date(datePart);
+                                        const dateLabel = isNaN(d.getTime()) ? datePart : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+                                        label = !isNaN(amtPart) ? `${formatINR(amtPart)} · ${dateLabel}` : datePart;
+                                      }
+                                    }
+                                    return (
+                                      <span key={r.advanceKey} className="text-[10px] text-gray-500 bg-amber-50 border border-amber-100 rounded px-1.5 py-0.5 whitespace-nowrap">
+                                        {label}
+                                      </span>
+                                    );
+                                  })}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-2.5 whitespace-nowrap">
                             <span className="font-bold text-blue-700">{formatINR(c.netPayable)}</span>

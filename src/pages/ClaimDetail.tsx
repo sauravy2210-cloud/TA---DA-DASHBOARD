@@ -755,14 +755,25 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
 
       // Show remaining advance balance: original minus what was already recovered
       // in previously approved claims. Fully recovered advances are hidden.
+      // For any advance THIS claim itself already recorded a recovery against (e.g. on a
+      // prior Approve, now Reopened for re-review), add that usage back on top of the
+      // globally-remaining balance — otherwise the box would show only what's left over
+      // after this claim's own (already-recorded) use, instead of the full amount HR
+      // originally adjusted. Bug fixed 2026-08-12: TADA-2026-14919 (Yogesh Meherwade).
+      const ownRecoveries = (claim as unknown as { advanceRecoveries?: { advanceKey: string; claimAmountUsed: number }[] })?.advanceRecoveries ?? [];
+      const ownUsageByKey = new Map(ownRecoveries.map(r => [r.advanceKey, r.claimAmountUsed]));
       const visibleItems = rawItems.reduce<typeof rawItems>((acc, item) => {
         const remaining = getAdvanceRemaining(empCode, item.key, item.amount);
-        if (remaining > 0) acc.push({ ...item, amount: remaining });
+        const ownUsage = ownUsageByKey.get(item.key) ?? 0;
+        const displayAmount = remaining + ownUsage;
+        if (displayAmount > 0) acc.push({ ...item, amount: displayAmount });
         return acc;
       }, []);
 
       setLiveAdvances(visibleItems);
-      setCheckedAdvances(new Set());
+      // Auto-tick any advance this claim already recorded a recovery against — HR Admin
+      // already took that action; re-showing it unchecked would look like it was never done.
+      setCheckedAdvances(new Set(visibleItems.filter(i => ownUsageByKey.has(i.key)).map(i => i.key)));
     } catch (err) {
       setAdvancesError(err instanceof Error ? err.message : 'Failed to load advances');
     } finally {
