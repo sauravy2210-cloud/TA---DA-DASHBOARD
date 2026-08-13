@@ -1425,22 +1425,34 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                           <td className="px-4 py-2.5 whitespace-nowrap align-top">
                             <span className="font-semibold text-amber-600">-{formatINR(c.advanceAdjusted)}</span>
                             {(() => {
-                              const recoveries = (c as unknown as { advanceRecoveries?: { advanceKey: string; claimAmountUsed: number }[] }).advanceRecoveries ?? [];
+                              const recoveries = (c as unknown as { advanceRecoveries?: { advanceKey: string; claimAmountUsed: number; originalAmount?: number; currency?: string; date?: string }[] }).advanceRecoveries ?? [];
                               if (recoveries.length === 0) return null;
+                              const fmtCur = (amt: number, cur: string) =>
+                                cur === 'INR' ? `₹${amt.toLocaleString('en-IN')}` : `${cur} ${amt.toLocaleString('en-IN')}`;
                               return (
                                 <div className="mt-1 flex flex-col gap-0.5">
                                   {recoveries.map((r) => {
-                                    // advanceKey is either "BILL-<id>" or "<PMS Date>-<original amount>"
-                                    const isBill = r.advanceKey.startsWith('BILL-');
-                                    let label = r.advanceKey;
-                                    if (!isBill) {
+                                    // Newer records carry originalAmount/currency/date directly (accurate
+                                    // for foreign-currency advances, e.g. AED). Older records only have
+                                    // advanceKey, which is either "BILL-<id>" or "<PMS Date>-<amount>" —
+                                    // parse it as a best-effort fallback, defaulting to INR.
+                                    let label: string;
+                                    if (r.originalAmount !== undefined) {
+                                      const d = r.date ? new Date(r.date) : null;
+                                      const dateLabel = d && !isNaN(d.getTime()) ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '';
+                                      label = `${fmtCur(r.originalAmount, r.currency || 'INR')}${dateLabel ? ` · ${dateLabel}` : ''}`;
+                                    } else if (r.advanceKey.startsWith('BILL-')) {
+                                      label = r.advanceKey;
+                                    } else {
                                       const lastDash = r.advanceKey.lastIndexOf('-');
                                       if (lastDash > 0) {
                                         const datePart = r.advanceKey.slice(0, lastDash);
                                         const amtPart = Number(r.advanceKey.slice(lastDash + 1));
                                         const d = new Date(datePart);
                                         const dateLabel = isNaN(d.getTime()) ? datePart : d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
-                                        label = !isNaN(amtPart) ? `${formatINR(amtPart)} · ${dateLabel}` : datePart;
+                                        label = !isNaN(amtPart) ? `${fmtCur(amtPart, 'INR')} · ${dateLabel}` : datePart;
+                                      } else {
+                                        label = r.advanceKey;
                                       }
                                     }
                                     return (

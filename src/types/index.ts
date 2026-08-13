@@ -279,7 +279,7 @@ export interface ClaimHeader {
   trainerEmail?: string;              // embedded at submit time for email notifications
   advanceItems?: ClaimAdvanceItem[];  // all advances from Step 9 at submit time
   lineItems?: ClaimLineItem[];        // embedded at submit time for cross-browser access
-  advanceRecoveries?: Array<{ advanceKey: string; claimAmountUsed: number }>; // set at approve time
+  advanceRecoveries?: Array<{ advanceKey: string; claimAmountUsed: number; originalAmount?: number; currency?: string; date?: string }>; // set at approve time
   draftWizardData?: string; // JSON-encoded wizard state, only present when status === 'Draft'
   // HR Admin manual DA/TA/Misc overrides, keyed by date (DA/Misc) or lineItemId (TA) — persisted
   // so an edited value survives navigation/reload and shows identically in Payment Processing,

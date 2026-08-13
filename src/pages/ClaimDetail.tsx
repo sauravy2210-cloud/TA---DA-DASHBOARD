@@ -2167,8 +2167,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         : (base.totalClaimedAmount ?? 0);
 
       // Only use advances explicitly checked by HR Admin
-      type AdvSource = { key: string; amount: number };
-      const advSources: AdvSource[] = liveAdvances.filter(i => checkedAdvances.has(i.key));
+      const advSources = liveAdvances.filter(i => checkedAdvances.has(i.key));
 
       if (claimAmount > 0 && advSources.length > 0) {
         const totalAmt = advSources.reduce((s, i) => s + i.amount, 0);
@@ -2176,6 +2175,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           .map(i => ({
             advanceKey: i.key,
             claimAmountUsed: totalAmt > 0 ? Math.round((i.amount / totalAmt) * claimAmount) : 0,
+            // Store the advance's own original amount/currency/date so it can be displayed
+            // correctly (e.g. AED, not assumed INR) without fragile parsing of advanceKey.
+            originalAmount: i.amount,
+            currency: i.currency,
+            date: i.date,
           }))
           .filter(r => r.claimAmountUsed > 0);
 
