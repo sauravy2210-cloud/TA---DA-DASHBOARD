@@ -2087,14 +2087,21 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     if (!base) return;
 
     const now = new Date().toISOString();
-    // Always persist the live advance selection and computed net payable so
-    // Payment Processing and Ledger read the same values.
     // Use live computed total (multi-currency converted to INR) when available
-    const computedNet = liveGrandTotalINR > 0 ? liveNetPayableINR : computedFinalSettlement;
     const computedTotal = liveGrandTotalINR > 0 ? liveGrandTotalINR : (base.totalClaimedAmount ?? 0);
+    // advanceAdjusted reflects whichever advance checkboxes are CURRENTLY ticked in the UI,
+    // which start unchecked on every page load. Only Approve/Partial-Approve are actions
+    // that are meant to (re)record which advances were used for this decision — every other
+    // action (Reopen, Reject, Hold, Send Clarification, etc.) must preserve the previously
+    // recorded advanceAdjusted, or it silently gets wiped to 0 whenever HR takes any action
+    // without having re-ticked the same boxes first. Bug fixed 2026-08-12: Ankur Kumar
+    // TADA-2026-80180 and others lost their recorded advance adjustment on Reopen.
+    const isAdvanceRecordingAction = action.key === 'approve' || action.key === 'partial-approve';
+    const effectiveAdvance = isAdvanceRecordingAction ? advanceAdjusted : (base.advanceAdjusted ?? 0);
+    const computedNet = computedTotal - effectiveAdvance - (base.deductionAmount ?? 0) - (base.recoverableAmount ?? 0);
     let patch: Partial<import('../types').ClaimHeader> = {
       lastActionAt: now,
-      advanceAdjusted: advanceAdjusted,
+      advanceAdjusted: effectiveAdvance,
       netPayable: computedNet,
       totalClaimedAmount: computedTotal,
     };
