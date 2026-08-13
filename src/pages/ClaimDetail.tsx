@@ -1087,10 +1087,18 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     });
   }, [allNearbyAssignments, summaryFlights]);
 
-  const advanceAdjusted = useMemo(
+  // Raw live value from whichever advance checkboxes are CURRENTLY ticked this session.
+  const liveCheckedAdvanceINR = useMemo(
     () => liveAdvances.filter(i => checkedAdvances.has(i.key)).reduce((s, i) => s + toINR(i.amount, i.currency), 0),
     [liveAdvances, checkedAdvances, liveRates]
   );
+  // The advance list is refetched (and checkedAdvances reset to empty) on every page load —
+  // including right after Reopen — so an unchecked session must NOT be read as "no advance".
+  // Fall back to the claim's already-recorded advanceAdjusted until HR actively ticks a box
+  // in THIS session to change it. Bug fixed 2026-08-12: TADA-2026-14919 (Yogesh Meherwade)
+  // showed full claimed amount as Net Payable after Reopen instead of the recorded
+  // Recoverable amount from its two previously-adjusted advances (₹72,500 + ₹55,000).
+  const advanceAdjusted = checkedAdvances.size > 0 ? liveCheckedAdvanceINR : (claim?.advanceAdjusted ?? 0);
 
   // Net Payable = Total Claimed - Advance Adjusted
   // Positive → payable to employee; Negative → recoverable from employee
