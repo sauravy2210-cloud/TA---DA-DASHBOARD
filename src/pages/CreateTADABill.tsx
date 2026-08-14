@@ -5145,8 +5145,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
                         return fd && iso >= fd && iso <= td;
                       });
                       const isCancelled = pmsLeave !== undefined && isCancelledLeave(pmsLeave.leave_status);
-                      // Orange if manually toggled OR PMS leave is active (not cancelled)
-                      const isLeave = leaveDates.has(iso) || (pmsLeave !== undefined && !isCancelled);
+                      // Manual per-record exception (see LEAVE_RECORD_OVERRIDE_EXCLUDE) — must be
+                      // respected here too, not just in the auto-mark Set, since this tile
+                      // independently re-derives "is this a leave day" from the raw PMS record.
+                      const isOverridden = LEAVE_RECORD_OVERRIDE_EXCLUDE.has(`${empCode}|${iso}`);
+                      // Orange if manually toggled OR PMS leave is active (not cancelled, not overridden)
+                      const isLeave = leaveDates.has(iso) || (pmsLeave !== undefined && !isCancelled && !isOverridden);
                       return (
                         <button
                           key={iso}
