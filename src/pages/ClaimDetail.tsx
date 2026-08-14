@@ -1226,6 +1226,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       const claimStart = (claim as unknown as { claimStartDate?: string }).claimStartDate ?? '';
       const claimEnd   = (claim as unknown as { claimEndDate?: string }).claimEndDate   ?? '';
       // Build approved-leave date set (Step 3 → Step 4 integration: same as trainer's leaveDates)
+      const overrideEmpCode = String((claim as unknown as { trainerId?: string })?.trainerId ?? '').replace(/^EMP-/i, '').trim();
       const approvedLeaveDates = new Set<string>();
       summaryLeaves.forEach(lr => {
         if (!isApprovedLeave(lr.leave_status)) return;
@@ -1233,7 +1234,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         if (!fd) return;
         const start = new Date(fd); const end = td ? new Date(td) : new Date(fd);
         const cur2 = new Date(start);
-        while (cur2 <= end) { approvedLeaveDates.add(cur2.toISOString().slice(0, 10)); cur2.setDate(cur2.getDate() + 1); }
+        while (cur2 <= end) {
+          const iso = cur2.toISOString().slice(0, 10);
+          // Manual per-record exception — mirrors CreateTADABill.tsx's
+          // LEAVE_RECORD_OVERRIDE_EXCLUDE. Vaibhav Gupta EMP-2361, 2026-08-04: HR Admin
+          // confirmed he was not actually on leave that day despite the PMS record.
+          if (!(overrideEmpCode === '2361' && iso === '2026-08-04')) approvedLeaveDates.add(iso);
+          cur2.setDate(cur2.getDate() + 1);
+        }
       });
       if (claimStart && claimEnd) {
         const autoRaw: ClaimLineItem[] = [];

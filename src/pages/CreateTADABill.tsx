@@ -403,6 +403,16 @@ function normalizeLeaveRecord(r: LeaveRecord): LeaveRecord {
 }
 
 // Parse "DD-Mon-YYYY", "DD/MM/YYYY", "YYYY-MM-DDTHH:mm:ss", "YYYY-MM-DD"
+// Manual per-record exception list — for a specific PMS leave record that HR Admin has
+// confirmed is incorrect (trainer was NOT actually on leave that day) but which the PMS
+// leave API still returns. Does not change the leave-fetching/auto-mark logic or API for
+// any other employee/date — only suppresses this exact (empCode, date) from counting as a
+// leave day. Keyed as "<empCode>|<ISO date>". Add entries only on explicit HR confirmation.
+// Vaibhav Gupta EMP-2361, 2026-08-04: confirmed by HR Admin he was not on leave that day.
+const LEAVE_RECORD_OVERRIDE_EXCLUDE = new Set<string>([
+  '2361|2026-08-04',
+]);
+
 function parseLeaveDate(raw: string | null): string {
   if (!raw) return '';
   const s = raw.trim();
@@ -2842,6 +2852,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       // leave record must not suppress DA for those days. Matches ClaimDetail.tsx's
       // (HR Admin) approvedLeaveDates logic; previously this panel marked every leave
       // regardless of status, silently zeroing DA for cancelled/pending leave dates too.
+      const overrideEmpCode = (currentUser?.trainerId ?? '').replace(/^EMP-/i, '').trim();
       const autoMarked = new Set<string>();
       inRange.filter(r => isApprovedLeave(r.leave_status)).forEach(r => {
         const fd = parseLeaveDate(r.from_date);
@@ -2851,7 +2862,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         // any local timezone shift (e.g. UTC-5 would shift date by -1 day otherwise).
         let cur = fd;
         while (cur <= (td || fd)) {
-          if (cur >= fromDate && cur <= toDate) autoMarked.add(cur);
+          if (cur >= fromDate && cur <= toDate && !LEAVE_RECORD_OVERRIDE_EXCLUDE.has(`${overrideEmpCode}|${cur}`)) autoMarked.add(cur);
           // Increment by 1 day — pure UTC, no local timezone involved
           const [y, m, d] = cur.split('-').map(Number);
           const next = new Date(Date.UTC(y, m - 1, d + 1));
