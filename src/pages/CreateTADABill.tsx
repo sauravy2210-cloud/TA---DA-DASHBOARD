@@ -2838,10 +2838,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       );
       setPmsLeaves(inRange);
 
-      // Auto-mark ALL leaves from backend on the date grid — no status filter.
-      // Whatever the API returns, those exact dates are marked. No extra logic.
+      // Auto-mark only APPROVED leaves on the date grid — a Cancelled or still-Pending
+      // leave record must not suppress DA for those days. Matches ClaimDetail.tsx's
+      // (HR Admin) approvedLeaveDates logic; previously this panel marked every leave
+      // regardless of status, silently zeroing DA for cancelled/pending leave dates too.
       const autoMarked = new Set<string>();
-      inRange.forEach(r => {
+      inRange.filter(r => isApprovedLeave(r.leave_status)).forEach(r => {
         const fd = parseLeaveDate(r.from_date);
         const td = parseLeaveDate(r.to_date) || fd;
         if (!fd) return;
