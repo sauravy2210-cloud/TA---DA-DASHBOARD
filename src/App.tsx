@@ -188,6 +188,11 @@ function ShellWrap({ currentUser, onRoleSwitch, onLogout, children }: ShellWrapP
 // ── Root app ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(loadUser)
+  // For a link coming from RMS (?email=&id=): skip role-selection and land straight on
+  // the Trainer OTP card (pre-filled with the emp code when we can find it from claim
+  // history). Login still requires OTP — see the effect below for details.
+  const [showTrainerCardDirectly, setShowTrainerCardDirectly] = useState(false)
+  const [linkPrefillEmpCode, setLinkPrefillEmpCode] = useState<string | null>(null)
 
   useEffect(() => {
     saveUser(currentUser)
@@ -235,18 +240,16 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-login via ?email=&id= link from the integrated external panel — skips the
-  // role-selection page and OTP/password entirely, since the trainer already entered
-  // their employee code once in that source system. The four listed emails get direct
-  // HR Admin access; every other email logs in directly as a Trainer, using `id` as
-  // their employee code (already validated by PMS) to fetch their profile.
+  // Link from the RMS-integrated panel (?email=&id=): skips the role-selection page.
+  // The four listed emails get direct HR Admin access (no password). Every other email
+  // still logs in as a Trainer via OTP, exactly as before — this only pre-fills the
+  // employee code when we have one on record and skips straight to the Trainer card.
   useEffect(() => {
     if (currentUser) return
     const params = new URLSearchParams(window.location.search)
     const emailParam = params.get('email')
     if (!emailParam) return
     const email: string = emailParam
-    const id = (params.get('id') || '').trim()
     const cleanUrl = () => window.history.replaceState(null, '', window.location.pathname)
 
     const HR_ADMIN_BYPASS_EMAILS = new Set([
@@ -268,85 +271,32 @@ export default function App() {
       return
     }
 
-    // RMS has already authenticated this person — they must never be asked to re-enter
-    // their employee code. But the `id` param from RMS is NOT reliably the trainer's real
-    // Koenig employee code (confirmed: PMS has no record for some observed values), and
-    // using it directly as trainerId silently breaks "View My Bills" for anyone with a
-    // prior submission, since claims are stored against the REAL emp code. Resolve the
-    // real emp code, in priority order:
-    //   1. Turso claim history (trainerEmail match) — ground truth for repeat submitters.
-    //   2. PMS employee-by-email lookup — resolves it for genuine first-time users too,
-    //      without ever asking them to type their code again.
-    //   3. PMS employee-by-id, only if PMS actually recognizes `id` as a real employee.
-    // If none of these resolve, do NOT fabricate a session — let the normal emp-code+OTP
-    // login handle it instead, so a trainer's bills are never silently hidden.
+    // Trainers must still verify via OTP, exactly as before — only the role-selection
+    // step is skipped for a link coming from RMS. The `id` param is NOT reliably the
+    // trainer's real Koenig employee code (confirmed: PMS has no record for some observed
+    // values) and PMS has no email-based lookup either (confirmed), so we can only
+    // pre-fill the employee code — never silently log them in — and only when we have a
+    // ground-truth match: an existing claim submitted under this exact email. First-time
+    // trainers (no claim history yet) simply see the normal Trainer OTP card with nothing
+    // pre-filled, same as always.
     const emailLower = email.trim().toLowerCase()
 
-    async function resolveRealEmpCode(): Promise<string | null> {
-      try {
-        const claimsRes = await fetch('/api/turso?type=claims')
-        const claimsData = await claimsRes.json()
-        const claims = Array.isArray(claimsData.claims) ? claimsData.claims : []
+    fetch('/api/turso?type=claims')
+      .then(r => r.json())
+      .then(d => {
+        const claims = Array.isArray(d.claims) ? d.claims : []
         const match = claims.find((c: { trainerEmail?: string; trainerId?: string }) =>
           (c.trainerEmail ?? '').trim().toLowerCase() === emailLower && c.trainerId
         )
-        if (match?.trainerId) return String(match.trainerId).replace(/^EMP-/i, '').trim()
-      } catch { /* fall through to email-based PMS lookup below */ }
-
-      try {
-        const empRes = await fetch(`/api/employee?email=${encodeURIComponent(email)}`)
-        const empData = await empRes.json()
-        if (empRes.ok && empData.employee) {
-          const emp = empData.employee
-          const code = emp.emp_code ?? emp.EmpCode ?? emp.empCode ?? emp.EmpID ?? emp.emp_id
-          if (code) return String(code).replace(/^EMP-/i, '').trim()
+        if (match?.trainerId) {
+          setLinkPrefillEmpCode(String(match.trainerId).replace(/^EMP-/i, '').trim())
         }
-      } catch { /* fall through to id check below */ }
-
-      if (id) {
-        try {
-          const empRes = await fetch(`/api/employee?empCode=${encodeURIComponent(id)}`)
-          const empData = await empRes.json()
-          if (empRes.ok && empData.employee) return id
-        } catch { /* fall through */ }
-      }
-      return null
-    }
-
-    resolveRealEmpCode().then(realEmpCode => {
-      if (!realEmpCode) { cleanUrl(); return } // can't safely resolve -- show normal login
-
-      fetch(`/api/employee?empCode=${encodeURIComponent(realEmpCode)}`)
-        .then(r => r.json())
-        .then(d => {
-          const emp = d.employee
-          const firstName = emp?.first_name ?? ''
-          const middleName = emp?.middle_name ?? ''
-          const lastName = emp?.last_name ?? ''
-          const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ') || `Trainer ${realEmpCode}`
-          const initials = ((firstName[0] ?? '') + (lastName[0] ?? '')).toUpperCase() || 'TR'
-          setCurrentUser({
-            id: `emp-${realEmpCode}`,
-            name: fullName,
-            email,
-            role: 'Trainer',
-            avatarInitials: initials,
-            trainerId: realEmpCode,
-            pmsDetails: emp ?? undefined,
-          })
-        })
-        .catch(() => {
-          setCurrentUser({
-            id: `emp-${realEmpCode}`,
-            name: `Trainer ${realEmpCode}`,
-            email,
-            role: 'Trainer',
-            avatarInitials: 'TR',
-            trainerId: realEmpCode,
-          })
-        })
-        .finally(cleanUrl)
-    })
+      })
+      .catch(() => { /* no prior claim found — normal blank Trainer card */ })
+      .finally(() => {
+        setShowTrainerCardDirectly(true)
+        cleanUrl()
+      })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -388,7 +338,11 @@ export default function App() {
                 <Navigate to="/admin" replace />
               )
             ) : (
-              <LoginRoleSelector onLogin={handleLogin} />
+              <LoginRoleSelector
+                onLogin={handleLogin}
+                showTrainerCardDirectly={showTrainerCardDirectly}
+                initialEmpCode={linkPrefillEmpCode}
+              />
             )
           }
         />

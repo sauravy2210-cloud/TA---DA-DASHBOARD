@@ -200,6 +200,8 @@ function ProtectedRoleCard({ card, onLogin }: ProtectedRoleCardProps) {
 
 interface TrainerCardProps {
   onLogin: (user: User) => void;
+  autoExpand?: boolean;
+  initialEmpCode?: string | null;
 }
 
 function maskEmail(email: string): string {
@@ -211,7 +213,7 @@ function maskEmail(email: string): string {
 
 const OTP_RESEND_COOLDOWN = 30; // seconds
 
-function TrainerLoginCard({ onLogin }: TrainerCardProps) {
+function TrainerLoginCard({ onLogin, autoExpand, initialEmpCode }: TrainerCardProps) {
   const [expanded, setExpanded]   = useState(false);
   const [empCode, setEmpCode]     = useState('');
   const [showCode, setShowCode]   = useState(false);
@@ -285,9 +287,8 @@ function TrainerLoginCard({ onLogin }: TrainerCardProps) {
     }
   }
 
-  async function handleCodeSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const code = empCode.trim();
+  async function submitCode(codeArg?: string) {
+    const code = (codeArg ?? empCode).trim();
     if (!code) { setError('Please enter your employee code.'); return; }
 
     setLoading(true);
@@ -366,6 +367,24 @@ function TrainerLoginCard({ onLogin }: TrainerCardProps) {
     startCooldown();
     setLoading(false);
   }
+
+  function handleCodeSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    submitCode();
+  }
+
+  // Auto-expand and auto-submit when arriving pre-filled from the RMS link (still
+  // requires the trainer to receive and enter the OTP — never skips verification).
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    if (!autoExpand || !initialEmpCode) return;
+    autoStartedRef.current = true;
+    setExpanded(true);
+    setEmpCode(initialEmpCode);
+    submitCode(initialEmpCode);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoExpand, initialEmpCode]);
 
   async function handleOtpSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -595,9 +614,14 @@ function TrainerLoginCard({ onLogin }: TrainerCardProps) {
 
 interface Props {
   onLogin: (user: User) => void;
+  // Set when arriving from the RMS-integrated link (?email=&id=) for a non-HR-Admin
+  // email — skips the role grid and lands straight on the Trainer card. OTP is still
+  // required; this only removes the extra "which role am I" click.
+  showTrainerCardDirectly?: boolean;
+  initialEmpCode?: string | null;
 }
 
-const LoginRoleSelector: React.FC<Props> = ({ onLogin }) => {
+const LoginRoleSelector: React.FC<Props> = ({ onLogin, showTrainerCardDirectly, initialEmpCode }) => {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12" style={{ backgroundColor: '#eef4fa' }}>
       {/* Logo */}
@@ -619,16 +643,24 @@ const LoginRoleSelector: React.FC<Props> = ({ onLogin }) => {
         </div>
 
         <div className="p-8">
-          <p className="text-center text-gray-500 text-sm mb-6">Select your role to continue</p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {/* Trainer card — API login */}
-            <TrainerLoginCard onLogin={onLogin} />
+          {showTrainerCardDirectly ? (
+            <div className="max-w-md mx-auto">
+              <TrainerLoginCard onLogin={onLogin} autoExpand initialEmpCode={initialEmpCode} />
+            </div>
+          ) : (
+            <>
+              <p className="text-center text-gray-500 text-sm mb-6">Select your role to continue</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {/* Trainer card — API login */}
+                <TrainerLoginCard onLogin={onLogin} />
 
-            {/* Other roles — password protected */}
-            {otherRoleCards.map(card => (
-              <ProtectedRoleCard key={card.role} card={card} onLogin={onLogin} />
-            ))}
-          </div>
+                {/* Other roles — password protected */}
+                {otherRoleCards.map(card => (
+                  <ProtectedRoleCard key={card.role} card={card} onLogin={onLogin} />
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
 
