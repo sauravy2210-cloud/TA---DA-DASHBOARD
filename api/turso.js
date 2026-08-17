@@ -38,6 +38,7 @@ async function ensureTablesOnce(db) {
     `CREATE TABLE IF NOT EXISTS line_items (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, data TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, trainer_id TEXT, trainer_name TEXT, category TEXT NOT NULL, message TEXT NOT NULL, submitted_at TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS visa_entries (id TEXT PRIMARY KEY, trainer_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS bill_counters (year INTEGER PRIMARY KEY, seq INTEGER NOT NULL DEFAULT 0)`,
   ], 'write');
   _tablesReady = true;
 }
@@ -212,6 +213,25 @@ export default async function handler(req, res) {
   if (type === 'lineitems-all' && req.method === 'GET') {
     const result = await db.execute('SELECT data FROM line_items');
     return res.status(200).json({ lineItems: result.rows.map(r => JSON.parse(r.data)) });
+  }
+
+  // ── Sequential bill number counter ──────────────────────────────────────────
+  // Atomically reserves the next per-year sequence number for TADA-<year>-<seq> bill
+  // numbers, replacing the old Date.now()-based suffix which was unique but not
+  // sequential. The INSERT ... ON CONFLICT ... RETURNING is a single statement, so the
+  // increment is atomic even under concurrent submissions.
+  if (type === 'next-bill-no') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    const year = Number(req.body?.year);
+    if (!year || !Number.isInteger(year)) return res.status(400).json({ error: 'Missing or invalid year' });
+    const result = await db.execute({
+      sql: `INSERT INTO bill_counters (year, seq) VALUES (?, 1)
+            ON CONFLICT(year) DO UPDATE SET seq = seq + 1
+            RETURNING seq`,
+      args: [year],
+    });
+    const seq = Number(result.rows?.[0]?.seq ?? 1);
+    return res.status(200).json({ seq });
   }
 
   // ── Visa Entries (Trainer's Visa Fees Entry page → HR Admin's Visa Fees Submission) ────────

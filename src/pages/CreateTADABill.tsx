@@ -4168,7 +4168,26 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     const now = new Date().toISOString();
     const isEditMode = !!editClaimIdRef.current;
     const claimId = isEditMode ? editClaimIdRef.current : `CLAIM-${Date.now()}`;
-    const billNo = isEditMode ? editBillNoRef.current : `TADA-${new Date().getFullYear()}-${String(Date.now()).slice(-5)}`;
+    let billNo = editBillNoRef.current;
+    if (!isEditMode) {
+      // Reserve the next sequential bill number for this year — atomic on the server,
+      // so two trainers submitting at the same instant never collide. Falls back to the
+      // old timestamp-suffix scheme only if the reservation call itself fails, so
+      // submission is never blocked by this.
+      const billYear = new Date().getFullYear();
+      try {
+        const seqRes = await fetch('/api/turso?type=next-bill-no', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ year: billYear }),
+        });
+        if (!seqRes.ok) throw new Error(`HTTP ${seqRes.status}`);
+        const { seq } = await seqRes.json();
+        billNo = `TADA-${billYear}-${String(seq).padStart(5, '0')}`;
+      } catch {
+        billNo = `TADA-${billYear}-${String(Date.now()).slice(-5)}`;
+      }
+    }
 
     // Build advanceItems: all PMS advances in range + manually added advances
     const advanceItems: ClaimAdvanceItem[] = [
