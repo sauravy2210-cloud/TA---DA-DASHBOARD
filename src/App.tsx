@@ -255,17 +255,24 @@ export default function App() {
     const HR_ADMIN_BYPASS_EMAILS = new Set([
       'rashi.oberoi@koenig-solutions.com',
       'sakshi.dhawan@koenig-solutions.com',
-      'saurav.yadav@koenig-solutions.com',
       'sakshi.pandey@koenig-solutions.com',
     ])
+    // Saurav Yadav gets SuperAdmin instead of HRAdmin — SuperAdmin sessions get every
+    // "View as" tab (Trainer, HR/Admin, Check Details, Finance, Super Admin) per
+    // Header.tsx's role-tab filter, so he can switch into any panel at any time.
+    // HRAdmin sessions are restricted to only HR/Admin + Check Details tabs.
+    const SUPER_ADMIN_BYPASS_EMAILS = new Set([
+      'saurav.yadav@koenig-solutions.com',
+    ])
 
-    if (HR_ADMIN_BYPASS_EMAILS.has(email.trim().toLowerCase())) {
+    const emailLower0 = email.trim().toLowerCase()
+    if (HR_ADMIN_BYPASS_EMAILS.has(emailLower0) || SUPER_ADMIN_BYPASS_EMAILS.has(emailLower0)) {
       setCurrentUser({
-        id: 'link-hr-admin',
+        id: SUPER_ADMIN_BYPASS_EMAILS.has(emailLower0) ? 'link-super-admin' : 'link-hr-admin',
         name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
         email,
-        role: 'HRAdmin',
-        avatarInitials: 'HR',
+        role: SUPER_ADMIN_BYPASS_EMAILS.has(emailLower0) ? 'SuperAdmin' : 'HRAdmin',
+        avatarInitials: SUPER_ADMIN_BYPASS_EMAILS.has(emailLower0) ? 'SA' : 'HR',
       })
       cleanUrl()
       return
