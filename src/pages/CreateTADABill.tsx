@@ -3951,6 +3951,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     [travelBills, FX_TO_INR],
   );
   const miscTotal = useMemo(() => miscExpenses.reduce((s, e) => s + e.amount, 0), [miscExpenses]);
+  // Grouped by currency — a MYR 7 expense must show as "MYR 7", not be silently
+  // relabelled with a rupee symbol by summing it into one INR-formatted number.
+  const miscTotalsByCurrency = useMemo(() => {
+    const map: Record<string, number> = {};
+    miscExpenses.forEach(e => {
+      const cur = (e.currency || 'INR').toUpperCase();
+      map[cur] = (map[cur] ?? 0) + e.amount;
+    });
+    return map;
+  }, [miscExpenses]);
   const lodgingTotal = useMemo(() => lodgingEntries.reduce((s, l) => s + l.nights * l.ratePerNight, 0), [lodgingEntries]);
   // Grand total includes foreign DA converted to INR at indicative rates
   const grandTotal = autoDATotal + foreignDATotalINR + travelTotal + lodgingTotal + miscTotal;
@@ -6506,7 +6516,13 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
 
                 <div className="mt-3 flex justify-between items-center pt-2 border-t border-gray-100">
                   <span className="text-xs font-semibold text-gray-700">Total Misc Expenses</span>
-                  <span className="text-sm font-bold text-green-700">{formatINR(miscTotal)}</span>
+                  <span className="flex items-center gap-2 flex-wrap justify-end">
+                    {Object.entries(miscTotalsByCurrency).map(([cur, amt]) => (
+                      <span key={cur} className="text-sm font-bold text-green-700">
+                        {cur === 'INR' ? formatINR(amt) : `${cur} ${amt.toLocaleString('en-IN')}`}
+                      </span>
+                    ))}
+                  </span>
                 </div>
               </div>
 
