@@ -71,7 +71,8 @@ export default async function handler(req, res) {
 
   const raw = String(req.query.empCode || '').trim();
   const empCode = raw.replace(/^EMP-/i, '').trim();
-  if (!empCode) return res.status(400).json({ error: 'empCode is required' });
+  const email = String(req.query.email || '').trim();
+  if (!empCode && !email) return res.status(400).json({ error: 'empCode or email is required' });
 
   const numCode  = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : null;
   const strCode  = empCode;
@@ -81,7 +82,7 @@ export default async function handler(req, res) {
 
     // Fire all body-param variants in parallel — PMS responds to different keys
     // depending on the API version; we collect every result and merge.
-    const bodyVariants = [
+    const bodyVariants = empCode ? [
       { emp_code:   numCode ?? strCode },
       { emp_code:   strCode },
       { EmpCode:    numCode ?? strCode },
@@ -94,6 +95,18 @@ export default async function handler(req, res) {
       { EmployeeCode:  strCode },
       { empCode:    numCode ?? strCode },
       { empCode:    strCode },
+    ] : [
+      // Email-based lookup — used when the caller only has the trainer's email (e.g.
+      // an SSO/integration link that doesn't carry the real Koenig employee code).
+      { email: email },
+      { Email: email },
+      { EmailAddress: email },
+      { email_address: email },
+      { EmailId: email },
+      { email_id: email },
+      { OfficialEmail: email },
+      { official_email: email },
+      { WorkEmail: email },
     ];
 
     // De-duplicate body variants (JSON-stringify comparison)
@@ -119,8 +132,10 @@ export default async function handler(req, res) {
     // Merge: first record is the base; subsequent records fill in missing fields
     const employee = mergeRecords(allRecords);
 
-    // Ensure empCode is always present in the response
-    if (!employee.emp_code && !employee.EmpCode && !employee.empCode) {
+    // Ensure empCode is always present in the response when we already knew it
+    // (empCode-based lookup). For an email-based lookup, the real emp code must come
+    // from the PMS record itself — an empty fallback would fabricate a wrong code.
+    if (strCode && !employee.emp_code && !employee.EmpCode && !employee.empCode) {
       employee.emp_code = strCode;
     }
 

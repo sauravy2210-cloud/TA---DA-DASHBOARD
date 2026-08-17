@@ -243,8 +243,9 @@ export default function App() {
   useEffect(() => {
     if (currentUser) return
     const params = new URLSearchParams(window.location.search)
-    const email = params.get('email')
-    if (!email) return
+    const emailParam = params.get('email')
+    if (!emailParam) return
+    const email: string = emailParam
     const id = (params.get('id') || '').trim()
     const cleanUrl = () => window.history.replaceState(null, '', window.location.pathname)
 
@@ -267,15 +268,18 @@ export default function App() {
       return
     }
 
-    // The `id` param from the external panel is NOT reliably the trainer's real Koenig
-    // employee code (confirmed: PMS has no record for some observed values) -- using it
-    // directly as trainerId silently breaks "View My Bills" for anyone with a prior
-    // submission, since claims are stored against their REAL emp code. Resolve the real
-    // emp code from Turso's claim history (trainerEmail match) first -- that's ground
-    // truth for anyone who has ever submitted a bill. Only fall back to `id` itself if
-    // PMS actually recognizes it as a real employee code. If neither resolves, do NOT
-    // fabricate a session -- let the normal emp-code + OTP login handle it instead, so a
-    // trainer's bills are never silently hidden behind a mismatched ID.
+    // RMS has already authenticated this person — they must never be asked to re-enter
+    // their employee code. But the `id` param from RMS is NOT reliably the trainer's real
+    // Koenig employee code (confirmed: PMS has no record for some observed values), and
+    // using it directly as trainerId silently breaks "View My Bills" for anyone with a
+    // prior submission, since claims are stored against the REAL emp code. Resolve the
+    // real emp code, in priority order:
+    //   1. Turso claim history (trainerEmail match) — ground truth for repeat submitters.
+    //   2. PMS employee-by-email lookup — resolves it for genuine first-time users too,
+    //      without ever asking them to type their code again.
+    //   3. PMS employee-by-id, only if PMS actually recognizes `id` as a real employee.
+    // If none of these resolve, do NOT fabricate a session — let the normal emp-code+OTP
+    // login handle it instead, so a trainer's bills are never silently hidden.
     const emailLower = email.trim().toLowerCase()
 
     async function resolveRealEmpCode(): Promise<string | null> {
@@ -287,6 +291,16 @@ export default function App() {
           (c.trainerEmail ?? '').trim().toLowerCase() === emailLower && c.trainerId
         )
         if (match?.trainerId) return String(match.trainerId).replace(/^EMP-/i, '').trim()
+      } catch { /* fall through to email-based PMS lookup below */ }
+
+      try {
+        const empRes = await fetch(`/api/employee?email=${encodeURIComponent(email)}`)
+        const empData = await empRes.json()
+        if (empRes.ok && empData.employee) {
+          const emp = empData.employee
+          const code = emp.emp_code ?? emp.EmpCode ?? emp.empCode ?? emp.EmpID ?? emp.emp_id
+          if (code) return String(code).replace(/^EMP-/i, '').trim()
+        }
       } catch { /* fall through to id check below */ }
 
       if (id) {
