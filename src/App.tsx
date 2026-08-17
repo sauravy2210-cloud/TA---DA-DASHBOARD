@@ -235,6 +235,73 @@ export default function App() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Auto-login via ?email=&id= link from the integrated external panel — skips the
+  // role-selection page and OTP/password entirely, since the trainer already entered
+  // their employee code once in that source system. The four listed emails get direct
+  // HR Admin access; every other email logs in directly as a Trainer, using `id` as
+  // their employee code (already validated by PMS) to fetch their profile.
+  useEffect(() => {
+    if (currentUser) return
+    const params = new URLSearchParams(window.location.search)
+    const email = params.get('email')
+    if (!email) return
+    const id = (params.get('id') || '').trim()
+    const cleanUrl = () => window.history.replaceState(null, '', window.location.pathname)
+
+    const HR_ADMIN_BYPASS_EMAILS = new Set([
+      'rashi.oberoi@koenig-solutions.com',
+      'sakshi.dhawan@koenig-solutions.com',
+      'saurav.yadav@koenig-solutions.com',
+      'sakshi.pandey@koenig-solutions.com',
+    ])
+
+    if (HR_ADMIN_BYPASS_EMAILS.has(email.trim().toLowerCase())) {
+      setCurrentUser({
+        id: 'link-hr-admin',
+        name: email.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+        email,
+        role: 'HRAdmin',
+        avatarInitials: 'HR',
+      })
+      cleanUrl()
+      return
+    }
+
+    if (!id) { cleanUrl(); return }
+
+    fetch(`/api/employee?empCode=${encodeURIComponent(id)}`)
+      .then(r => r.json())
+      .then(d => {
+        const emp = d.employee
+        const firstName = emp?.first_name ?? ''
+        const middleName = emp?.middle_name ?? ''
+        const lastName = emp?.last_name ?? ''
+        const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ') || `Trainer ${id}`
+        const initials = ((firstName[0] ?? '') + (lastName[0] ?? '')).toUpperCase() || 'TR'
+        setCurrentUser({
+          id: `emp-${id}`,
+          name: fullName,
+          email,
+          role: 'Trainer',
+          avatarInitials: initials,
+          trainerId: id,
+          pmsDetails: emp ?? undefined,
+        })
+      })
+      .catch(() => {
+        setCurrentUser({
+          id: `emp-${id}`,
+          name: `Trainer ${id}`,
+          email,
+          role: 'Trainer',
+          avatarInitials: 'TR',
+          trainerId: id,
+        })
+      })
+      .finally(cleanUrl)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const handleLogin = (user: User) => setCurrentUser(user)
 
   const handleRoleSwitch = (role: UserRole) => {
