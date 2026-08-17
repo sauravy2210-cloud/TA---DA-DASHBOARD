@@ -267,38 +267,72 @@ export default function App() {
       return
     }
 
-    if (!id) { cleanUrl(); return }
+    // The `id` param from the external panel is NOT reliably the trainer's real Koenig
+    // employee code (confirmed: PMS has no record for some observed values) -- using it
+    // directly as trainerId silently breaks "View My Bills" for anyone with a prior
+    // submission, since claims are stored against their REAL emp code. Resolve the real
+    // emp code from Turso's claim history (trainerEmail match) first -- that's ground
+    // truth for anyone who has ever submitted a bill. Only fall back to `id` itself if
+    // PMS actually recognizes it as a real employee code. If neither resolves, do NOT
+    // fabricate a session -- let the normal emp-code + OTP login handle it instead, so a
+    // trainer's bills are never silently hidden behind a mismatched ID.
+    const emailLower = email.trim().toLowerCase()
 
-    fetch(`/api/employee?empCode=${encodeURIComponent(id)}`)
-      .then(r => r.json())
-      .then(d => {
-        const emp = d.employee
-        const firstName = emp?.first_name ?? ''
-        const middleName = emp?.middle_name ?? ''
-        const lastName = emp?.last_name ?? ''
-        const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ') || `Trainer ${id}`
-        const initials = ((firstName[0] ?? '') + (lastName[0] ?? '')).toUpperCase() || 'TR'
-        setCurrentUser({
-          id: `emp-${id}`,
-          name: fullName,
-          email,
-          role: 'Trainer',
-          avatarInitials: initials,
-          trainerId: id,
-          pmsDetails: emp ?? undefined,
+    async function resolveRealEmpCode(): Promise<string | null> {
+      try {
+        const claimsRes = await fetch('/api/turso?type=claims')
+        const claimsData = await claimsRes.json()
+        const claims = Array.isArray(claimsData.claims) ? claimsData.claims : []
+        const match = claims.find((c: { trainerEmail?: string; trainerId?: string }) =>
+          (c.trainerEmail ?? '').trim().toLowerCase() === emailLower && c.trainerId
+        )
+        if (match?.trainerId) return String(match.trainerId).replace(/^EMP-/i, '').trim()
+      } catch { /* fall through to id check below */ }
+
+      if (id) {
+        try {
+          const empRes = await fetch(`/api/employee?empCode=${encodeURIComponent(id)}`)
+          const empData = await empRes.json()
+          if (empRes.ok && empData.employee) return id
+        } catch { /* fall through */ }
+      }
+      return null
+    }
+
+    resolveRealEmpCode().then(realEmpCode => {
+      if (!realEmpCode) { cleanUrl(); return } // can't safely resolve -- show normal login
+
+      fetch(`/api/employee?empCode=${encodeURIComponent(realEmpCode)}`)
+        .then(r => r.json())
+        .then(d => {
+          const emp = d.employee
+          const firstName = emp?.first_name ?? ''
+          const middleName = emp?.middle_name ?? ''
+          const lastName = emp?.last_name ?? ''
+          const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ') || `Trainer ${realEmpCode}`
+          const initials = ((firstName[0] ?? '') + (lastName[0] ?? '')).toUpperCase() || 'TR'
+          setCurrentUser({
+            id: `emp-${realEmpCode}`,
+            name: fullName,
+            email,
+            role: 'Trainer',
+            avatarInitials: initials,
+            trainerId: realEmpCode,
+            pmsDetails: emp ?? undefined,
+          })
         })
-      })
-      .catch(() => {
-        setCurrentUser({
-          id: `emp-${id}`,
-          name: `Trainer ${id}`,
-          email,
-          role: 'Trainer',
-          avatarInitials: 'TR',
-          trainerId: id,
+        .catch(() => {
+          setCurrentUser({
+            id: `emp-${realEmpCode}`,
+            name: `Trainer ${realEmpCode}`,
+            email,
+            role: 'Trainer',
+            avatarInitials: 'TR',
+            trainerId: realEmpCode,
+          })
         })
-      })
-      .finally(cleanUrl)
+        .finally(cleanUrl)
+    })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
