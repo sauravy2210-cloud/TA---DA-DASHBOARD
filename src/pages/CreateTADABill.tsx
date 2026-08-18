@@ -3950,7 +3950,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     }, 0),
     [travelBills, FX_TO_INR],
   );
-  const miscTotal = useMemo(() => miscExpenses.reduce((s, e) => s + e.amount, 0), [miscExpenses]);
+  // Converts each expense to INR at the live FX rate before summing — mirrors
+  // travelTotal above. A foreign-currency amount must never be added to an INR sum
+  // as if it were the same currency (e.g. USD -200 is not INR -200).
+  const miscTotal = useMemo(
+    () => miscExpenses.reduce((s, e) => {
+      const inr = e.currency && e.currency !== 'INR' ? e.amount * (FX_TO_INR[e.currency] ?? 0) : e.amount;
+      return s + inr;
+    }, 0),
+    [miscExpenses, FX_TO_INR],
+  );
   // Grouped by currency — a MYR 7 expense must show as "MYR 7", not be silently
   // relabelled with a rupee symbol by summing it into one INR-formatted number.
   const miscTotalsByCurrency = useMemo(() => {
