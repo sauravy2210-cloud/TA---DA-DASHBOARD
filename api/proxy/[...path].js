@@ -1,4 +1,4 @@
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 export default async function handler(req, res) {
   // CORS

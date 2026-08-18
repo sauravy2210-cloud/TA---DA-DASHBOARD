@@ -3,7 +3,7 @@
  * GET /api/accommodation?empCode=2225        → API 257 (empCode-based, CreateTADABill)
  * GET /api/accommodation?email=x@koenig.com  → API 120 (email-based, CreateClaim)
  */
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 

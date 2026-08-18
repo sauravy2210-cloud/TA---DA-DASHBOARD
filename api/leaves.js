@@ -4,7 +4,7 @@
  * Returns all leave records for the given employee code.
  * Date-range filtering is handled client-side.
  */
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 

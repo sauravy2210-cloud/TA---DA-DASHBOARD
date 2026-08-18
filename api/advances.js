@@ -2,7 +2,7 @@
  * Server-side employee advance list fetch.
  * GET /api/advances?empCode=2225
  */
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 

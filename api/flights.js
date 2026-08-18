@@ -3,7 +3,7 @@
  * GET /api/flights?email=...&empCode=...
  * Tries API 108 (email-based) first, falls back to API 256 (empCode-based).
  */
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 

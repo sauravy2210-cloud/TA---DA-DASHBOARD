@@ -2,7 +2,7 @@
  * Server-side country list fetch.
  * GET /api/countries
  */
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 

@@ -7,7 +7,7 @@
  * so the profile gets the richest possible data regardless of which variant
  * the PMS happens to respond to.
  */
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 

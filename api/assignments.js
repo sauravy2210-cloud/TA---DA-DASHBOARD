@@ -3,7 +3,7 @@
  * GET /api/assignments?empCode=2225&from=2025-06-01&to=2025-06-30
  * Tries API 258 (emp-code based) first, falls back to API 208 (date-range based).
  */
-export const config = { maxDuration: 30 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 

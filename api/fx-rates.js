@@ -7,7 +7,7 @@
  *
  * Response: { base, rates: { USD: number, AED: number, ... }, updatedAt: ISO }
  */
-export const config = { maxDuration: 15 };
+export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 // Simple in-memory cache (survives within a single serverless instance lifetime)
 let cache = null;
