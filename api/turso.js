@@ -10,6 +10,10 @@
 // Visa Entries:   GET/POST/DELETE /api/turso?type=visa[&empCode=x|&id=x] — Trainer's Visa Fees
 //                 Entry page (travel + misc expenses logged there), visible to HR Admin under
 //                 "Visa Fees Submission"
+// Create TA Bill: POST /api/turso?type=create-tabill → registers the submitted claim as a TA
+//                 Bill header record in Koenig RMS (api_id=342), returns { TABillID }. Fire-and-
+//                 forget from the trainer's Submit Claim flow — never blocks/fails the existing
+//                 Turso-based submission.
 
 export const config = { api: { bodyParser: { sizeLimit: '10mb' } } };
 
@@ -112,6 +116,63 @@ export default async function handler(req, res) {
       return res.status(200).json({ results: data.map(d => ({ lat: parseFloat(d.lat), lon: parseFloat(d.lon), display_name: d.display_name })) });
     } catch (err) {
       return res.status(502).json({ error: String(err.message || err) });
+    }
+  }
+
+  // ── Create TA Bill (Koenig RMS, api_id=342) — no local DB needed ────────────
+  if (type === 'create-tabill') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    const {
+      EmpID, From, To, IsSubmitted, Advance, TADAAmt, EmpRemark, scids,
+      IsSelfSponsored, FreelancerID, Source,
+    } = req.body || {};
+    if (!EmpID || !From || !To) {
+      return res.status(400).json({ error: 'EmpID, From, and To are required' });
+    }
+    try {
+      const tokUser     = process.env.KOENIG_TABILL_USER || 'TaDaPanel';
+      const tokPass     = process.env.KOENIG_TABILL_PASS || 'TaDaPanel@123';
+      const tokRole     = process.env.KOENIG_TABILL_ROLE || 'TaDaPanel';
+      const tokRes = await fetch('https://api.koenig-solutions.com/api/Kites/Operator/GetToken', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: tokUser, userPassword: tokPass, userRole: tokRole }),
+      });
+      if (!tokRes.ok) return res.status(502).json({ error: `Token HTTP ${tokRes.status}` });
+      const tokData = await tokRes.json();
+      if (tokData.statuscode !== 200) return res.status(502).json({ error: tokData.message || 'Token failed' });
+      const { accessToken, deviceToken } = tokData.content;
+
+      const body = {
+        EmpID: Number(EmpID),
+        From, To,
+        IsSubmitted: IsSubmitted ?? 1,
+        Source: Source || 'From the NEW TA DA Dashboard',
+      };
+      if (Advance != null)          body.Advance = Advance;
+      if (TADAAmt != null)          body.TADAAmt = TADAAmt;
+      if (EmpRemark)                body.EmpRemark = EmpRemark;
+      if (scids)                    body.scids = scids;
+      if (IsSelfSponsored != null)  body.IsSelfSponsored = IsSelfSponsored;
+      if (FreelancerID != null)     body.FreelancerID = FreelancerID;
+
+      const url = `https://api.koenig-solutions.com/api/Kites/Operator/common` +
+        `?apikey=342&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
+      const billRes = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!billRes.ok) return res.status(502).json({ error: `Create TA Bill HTTP ${billRes.status}` });
+      const billData = await billRes.json();
+      if (billData.statuscode !== 200) return res.status(502).json({ error: billData.message || 'Create TA Bill failed' });
+      let content = billData.content;
+      if (typeof content === 'string') { try { content = JSON.parse(content); } catch { content = []; } }
+      const row = Array.isArray(content) ? content[0] : content;
+      const TABillID = row && row.TABillID != null ? row.TABillID : null;
+      return res.status(200).json({ TABillID });
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
     }
   }
 

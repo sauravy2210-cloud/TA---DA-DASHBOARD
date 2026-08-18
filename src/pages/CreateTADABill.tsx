@@ -4397,6 +4397,51 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       }
 
       deleteDraftClaim(draftClaimIdRef.current);
+
+      // Register this claim as a TA Bill header record in Koenig RMS (api_id=342).
+      // Never blocks or fails the existing submission — this is additive registration
+      // on top of the Turso save above, which remains the source of truth for this app.
+      try {
+        const empIdNum = Number((currentUser?.trainerId ?? '').replace(/^EMP-/i, '').trim());
+        if (empIdNum) {
+          const scidList = Array.from(new Set(assignments.map(a => a.scid).filter(Boolean))).join(',');
+          const remarkParts: string[] = [];
+          if (employeeRemarks.trim()) remarkParts.push(employeeRemarks.trim());
+          remarkParts.push(
+            `DA: ${formatINR(Math.round(autoDATotal + foreignDATotalINR))} | Travel: ${formatINR(Math.round(travelTotal))} | ` +
+            `Lodging: ${formatINR(Math.round(lodgingTotal))} | Misc: ${formatINR(Math.round(miscTotal))} | Grand Total: ${formatINR(Math.round(grandTotal))}`
+          );
+          const rmsRes = await fetch('/api/turso?type=create-tabill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              EmpID: empIdNum,
+              From: `${fromDate} 00:00:00`,
+              To: `${toDate} 23:59:59`,
+              IsSubmitted: 1,
+              Advance: advanceTotal || undefined,
+              TADAAmt: grandTotal || undefined,
+              EmpRemark: remarkParts.join(' — ').slice(0, 4000),
+              scids: scidList || undefined,
+            }),
+          });
+          if (rmsRes.ok) {
+            const rmsData = await rmsRes.json();
+            if (rmsData.TABillID) {
+              saveClaim({ ...claim, lineItems: lineItemsWithUrls, rmsTABillId: rmsData.TABillID } as import('../types').ClaimHeader);
+              fetch('/api/turso?type=claims', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim, rmsTABillId: rmsData.TABillID }),
+              }).catch(() => {});
+            }
+          }
+        }
+      } catch {
+        // RMS registration is additive — a failure here must never block or roll back
+        // the claim submission that already succeeded above.
+      }
+
       setSubmitSuccess(true);
       setTimeout(() => { navigate('/claims'); }, 1800);
     } catch (err) {
