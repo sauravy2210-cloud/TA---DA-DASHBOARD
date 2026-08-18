@@ -5,7 +5,7 @@
  * HR Admin can view the receipt from any device.
  */
 
-import { getLineItems, saveLineItems } from './storageService';
+import { saveLineItems } from './storageService';
 import type { ClaimLineItem } from '../types';
 
 const BACKFILL_DONE_KEY = 'tada_receipt_backfill_done';
@@ -32,8 +32,18 @@ export async function backfillReceiptsToBlob(): Promise<void> {
   if (doneThisSession) return;
   sessionStorage.setItem(BACKFILL_DONE_KEY, '1');
 
-  // Get all line items from localStorage
-  const allItems = getLineItems();
+  // Fetch full line items (with receiptData) directly — no longer reads the shared
+  // app-wide cache, which is now a lite/no-receiptData variant for bandwidth reasons.
+  let allItems: ClaimLineItem[] = [];
+  try {
+    const r = await fetch('/api/turso?type=lineitems-all');
+    if (r.ok) {
+      const d = await r.json() as { lineItems?: ClaimLineItem[] };
+      allItems = Array.isArray(d.lineItems) ? d.lineItems : [];
+    }
+  } catch {
+    return; // can't reach Turso — nothing to backfill this session
+  }
   const toBackfill = allItems.filter(li => {
     const rd = li.receiptData;
     // Has base64 data (not already a blob URL)

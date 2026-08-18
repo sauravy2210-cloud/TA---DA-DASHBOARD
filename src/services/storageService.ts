@@ -61,8 +61,12 @@ async function fetchClaimsFromTurso(): Promise<ClaimHeader[]> {
   return Array.isArray(data.claims) ? data.claims : [];
 }
 
+// Lite variant (no receiptData — often a multi-MB base64 image per item) for the
+// app-wide bulk load on every login. Pages that need a specific claim's actual receipt
+// images (ClaimDetail.tsx, ClaimReview.tsx) independently fetch full per-claim data via
+// type=lineitems&claimId=X, unaffected by this change.
 async function fetchLineItemsFromTurso(): Promise<ClaimLineItem[]> {
-  const r = await fetch('/api/turso?type=lineitems-all');
+  const r = await fetch('/api/turso?type=lineitems-all-lite');
   if (!r.ok) throw new Error(`lineitems fetch failed: ${r.status}`);
   const data = await r.json();
   return Array.isArray(data.lineItems) ? data.lineItems : [];

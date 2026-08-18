@@ -329,6 +329,21 @@ export default async function handler(req, res) {
     return res.status(200).json({ lineItems: result.rows.map(r => JSON.parse(r.data)) });
   }
 
+  // Lightweight variant of the above — strips receiptData (by far the largest field,
+  // often a multi-MB base64 image) before sending. Used for the app-wide bulk load on
+  // every login (Vercel "Fast Origin Transfer" cost driver); per-claim views still fetch
+  // full data (including receiptData) via type=lineitems&claimId=X, unchanged, and the
+  // receipt-backfill service still reads full data via type=lineitems-all, unchanged.
+  if (type === 'lineitems-all-lite' && req.method === 'GET') {
+    const result = await db.execute('SELECT data FROM line_items');
+    const lineItems = result.rows.map(r => {
+      const item = JSON.parse(r.data);
+      const { receiptData: _r, ...lite } = item;
+      return lite;
+    });
+    return res.status(200).json({ lineItems });
+  }
+
   // ── Sequential bill number counter ──────────────────────────────────────────
   // Atomically reserves the next per-year sequence number for TADA-<year>-<seq> bill
   // numbers, replacing the old Date.now()-based suffix which was unique but not
