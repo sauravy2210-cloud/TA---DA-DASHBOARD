@@ -2172,6 +2172,35 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         break;
     }
 
+    // Notify Koenig RMS of the HR approval (api_id=343) — marks the RMS TA Bill record
+    // HR-approved and links this claim's flight Trip IDs to it. Strictly additive/
+    // fire-and-forget: only fires when this claim has an rmsTABillId (i.e. it was
+    // created via the newer Create TA Bill integration) and at least one active flight
+    // Trip ID is known; never awaited and never blocks/alters the existing HR action.
+    if (action.key === 'approve' || action.key === 'partial-approve') {
+      const tabillId = (base as unknown as { rmsTABillId?: number }).rmsTABillId;
+      if (tabillId) {
+        const tripIds = Array.from(new Set(
+          summaryFlights
+            .filter(f => f.Is_cancelled !== 'Yes')
+            .map(f => f.trip_ID)
+            .filter((v): v is string | number => v != null)
+        )).join(',');
+        if (tripIds) {
+          fetch('/api/turso?type=hr-approve-tabill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              TABillID: tabillId,
+              TripIDs: tripIds,
+              IsHRApproved: 1,
+              HRRemark: reason || '',
+            }),
+          }).catch(() => { /* additive only — never blocks the existing HR action */ });
+        }
+      }
+    }
+
     // Record advance recovery when claim is approved/partially-approved.
     // Priority: use checked advances from UI; fallback to base.advanceItems (set at submit time).
     // claimAmount = HR-approved amount; if not set, total claimed amount.

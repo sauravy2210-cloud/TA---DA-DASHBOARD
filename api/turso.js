@@ -14,6 +14,9 @@
 //                 Bill header record in Koenig RMS (api_id=342), returns { TABillID }. Fire-and-
 //                 forget from the trainer's Submit Claim flow — never blocks/fails the existing
 //                 Turso-based submission.
+// HR Approve TA Bill: POST /api/turso?type=hr-approve-tabill → marks an existing RMS TA Bill
+//                 HR-approved and links flight Trip IDs to it (api_id=343). Fire-and-forget from
+//                 HR Admin's Approve/Partially Approve actions — never blocks the existing action.
 
 export const config = { api: { bodyParser: { sizeLimit: '10mb' } } };
 
@@ -171,6 +174,56 @@ export default async function handler(req, res) {
       const row = Array.isArray(content) ? content[0] : content;
       const TABillID = row && row.TABillID != null ? row.TABillID : null;
       return res.status(200).json({ TABillID });
+    } catch (err) {
+      return res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  // ── HR Approve TA Bill (Koenig RMS, api_id=343) — no local DB needed ─────────
+  if (type === 'hr-approve-tabill') {
+    if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+    const { TABillID, TripIDs, IsHRApproved, HRRemark } = req.body || {};
+    if (!TABillID) return res.status(400).json({ error: 'Please pass the TABillID for that particular journey.' });
+    if (!TripIDs || !String(TripIDs).trim()) return res.status(400).json({ error: 'Please share the TripIds so we will update.' });
+    try {
+      const tokUser = process.env.KOENIG_TABILL_USER || 'TaDaPanel';
+      const tokPass = process.env.KOENIG_TABILL_PASS || 'TaDaPanel@123';
+      const tokRole = process.env.KOENIG_TABILL_ROLE || 'TaDaPanel';
+      const tokRes = await fetch('https://api.koenig-solutions.com/api/Kites/Operator/GetToken', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName: tokUser, userPassword: tokPass, userRole: tokRole }),
+      });
+      if (!tokRes.ok) return res.status(502).json({ error: `Token HTTP ${tokRes.status}` });
+      const tokData = await tokRes.json();
+      if (tokData.statuscode !== 200) return res.status(502).json({ error: tokData.message || 'Token failed' });
+      const { accessToken, deviceToken } = tokData.content;
+
+      const body = {
+        TABillID: Number(TABillID),
+        TripIDs: String(TripIDs),
+        IsHRApproved: IsHRApproved ?? 1,
+        HRRemark: HRRemark || '',
+      };
+
+      const url = `https://api.koenig-solutions.com/api/Kites/Operator/common` +
+        `?apikey=343&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
+      const approveRes = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (!approveRes.ok) return res.status(502).json({ error: `HR Approve TA Bill HTTP ${approveRes.status}` });
+      const approveData = await approveRes.json();
+      if (approveData.statuscode !== 200) return res.status(502).json({ error: approveData.message || 'HR Approve TA Bill failed' });
+      let content = approveData.content;
+      if (typeof content === 'string') { try { content = JSON.parse(content); } catch { content = []; } }
+      const row = Array.isArray(content) ? content[0] : content;
+      return res.status(200).json({
+        Success: row?.Success ?? 0,
+        Message: row?.Message ?? '',
+        TABillID: row?.TABillID ?? null,
+      });
     } catch (err) {
       return res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
     }
