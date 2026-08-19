@@ -236,8 +236,14 @@ export default async function handler(req, res) {
     return res.status(503).json({ error: 'DB unavailable', detail: err.message });
   }
 
+  // Only verify/create tables on writes. Tables already exist in production; running
+  // CREATE TABLE IF NOT EXISTS on every cold-start GET (which, on Hobby's smaller
+  // warm-instance pool, is now most requests) added a full extra Turso round-trip to
+  // every dashboard load -- likely why claims fetches started timing out against the
+  // Hobby plan's 10s function cap. A genuinely missing table would still surface as a
+  // clear DB error on the query itself, rather than silently needing this every time.
   const isWrite = req.method === 'POST' || req.method === 'DELETE';
-  if (isWrite || !_tablesReady) {
+  if (isWrite && !_tablesReady) {
     try {
       await ensureTablesOnce(db);
     } catch (err) {
