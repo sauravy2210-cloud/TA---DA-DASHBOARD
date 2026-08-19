@@ -4372,7 +4372,31 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         await fetch(`/api/turso?type=lineitems&claimId=${claimId}`, { method: 'DELETE' });
       }
 
-      const lineItemsWithUrls = lineItems; // base64 kept as-is
+      // Upload every receipt to Vercel Blob BEFORE writing line items to Turso, replacing
+      // the base64 with a small URL. Previously the bulk /api/turso?type=lineitems POST sent
+      // ALL receipts as raw base64 in one request; a bill with a few photo receipts easily
+      // exceeded Vercel's request body limit, the POST failed, and — because its response was
+      // never checked — submission still reported success while HR Admin's copy of the claim
+      // silently had zero receipt data (only the filename/flag survived via the claim's own
+      // lightweight embedded copy). Uploading first keeps this payload tiny and reliable, and
+      // checking the response below means a real failure now surfaces instead of being hidden.
+      const lineItemsWithUrls = await Promise.all(lineItems.map(async (li) => {
+        if (li.receiptData && li.receiptData.startsWith('data:')) {
+          try {
+            const contentType = li.receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
+            const r = await fetch('/api/turso?type=upload-receipt', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ base64: li.receiptData, filename: li.receiptFileName || li.lineItemId, contentType }),
+            });
+            if (r.ok) {
+              const { url } = await r.json() as { url?: string };
+              if (url) return { ...li, receiptData: url, receiptUrl: url };
+            }
+          } catch { /* fall through — keep base64 below so nothing is lost */ }
+        }
+        return li;
+      }));
 
       // Always persist to localStorage immediately — guarantees same-device visibility.
       saveClaim({ ...claim, lineItems: lineItemsWithUrls });
@@ -4387,13 +4411,16 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       });
       if (!claimRes.ok) throw new Error('Failed to save claim. Please try again.');
 
-      // Write line items WITH base64 receiptData to Turso — each row is one item so sizes stay manageable.
+      // Write line items to Turso — now URLs instead of base64 wherever the upload above
+      // succeeded, so this payload stays small. Checked (unlike before) so a genuine failure
+      // throws instead of silently reporting submission success.
       if (lineItemsWithUrls.length > 0) {
-        await fetch('/api/turso?type=lineitems', {
+        const liRes = await fetch('/api/turso?type=lineitems', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ lineItems: lineItemsWithUrls }),
         });
+        if (!liRes.ok) throw new Error('Claim saved, but line items (receipts, DA, travel bills) failed to sync. Please try submitting again.');
       }
 
       deleteDraftClaim(draftClaimIdRef.current);
