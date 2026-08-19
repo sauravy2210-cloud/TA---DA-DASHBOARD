@@ -1455,16 +1455,28 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           // elsewhere in this file didn't reach it) actually lands in India; checking only the
           // Doha leg wrongly looked like "heading to Qatar, a different destination" and the
           // whole 08 Aug return-day row was silently skipped instead of correctly showing Austria.
+          // Stop chasing the instant a leg lands in India (the trainer is home — a LATER,
+          // unrelated flight from that same Indian city days afterward, e.g. the start of a
+          // completely different future assignment, must never be treated as "still travelling").
+          // Also cap each hop to a 2-day connection window — a genuine layover/connection is
+          // short; anything further out is a separate trip, not part of this return journey.
+          // Bug fixed 2026-08-19 (second pass): Vaibhav Gupta EMP-2361, TADA-2026-00024 — the
+          // first attempt at this chase kept hopping past the Doha->Delhi arrival (which DOES
+          // land in India) all the way to a Delhi->Doha flight 6 days later (the start of his
+          // NEXT trip) and then on to Vienna->Amsterdam, wrongly concluding "Netherlands" and
+          // dropping the whole 08 Aug row.
           const resolveFinalDestCountry = (startFlight: typeof activeFlights[number]): string => {
             let current = startFlight;
             for (let hop = 0; hop < 5; hop++) {
               const curToCity = String(current.to_city ?? '').trim().toLowerCase();
+              const curCountry = inferCountryFromCity(String(current.to_city ?? '').trim());
+              if (curCountry === 'India') return 'India';
               const curArrDate = parseDT(String(current.arrival_date ?? '')) || parseDT(String(current.departure_date ?? ''));
               const next = activeFlights.find(f => {
                 if (f === current) return false;
                 const fromCity = String(f.from_city ?? '').trim().toLowerCase();
                 const fd = parseDT(String(f.departure_date ?? ''));
-                return !!fromCity && fromCity === curToCity && !!fd && fd >= curArrDate;
+                return !!fromCity && fromCity === curToCity && !!fd && fd >= curArrDate && fd <= addD(curArrDate, 2);
               });
               if (!next) break;
               current = next;
@@ -2559,29 +2571,32 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             {/* Amount summary */}
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <h3 className="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">Amount Summary</h3>
+              {/* Same stored totals as the header strip above (claim.totalClaimedAmount /
+                  approvedAmount / netPayable) — not a live recompute — so this card and the
+                  header never show two different "Net Payable" figures for the same claim. */}
               <AmountSummary
-                claimedAmount={liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.totalClaimedAmount ?? 0)}
-                eligibleAmount={liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount ?? claim.totalClaimedAmount ?? 0)}
-                approvedAmount={liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount ?? 0)}
+                claimedAmount={claim.totalClaimedAmount ?? 0}
+                eligibleAmount={claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)}
+                approvedAmount={claim.approvedAmount ?? 0}
                 deductionAmount={claim.deductionAmount ?? 0}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
-                recoverableAmount={liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)}
-                netPayable={liveGrandTotalINR > 0 ? liveNetPayableINR : computedFinalSettlement}
+                recoverableAmount={claim.recoverableAmount ?? 0}
+                netPayable={claim.netPayable ?? computedFinalSettlement}
                 currency="INR"
               />
-              {/* Live net payable banner — shown when live computation differs from stored */}
-              {liveGrandTotalINR > 0 && (
-                <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${liveRecoverableINR > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
+              {/* Net payable banner — mirrors the stored totals, not a live recompute */}
+              {(claim.netPayable ?? 0) > 0 && (
+                <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${(claim.recoverableAmount ?? 0) > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
                   <div>
                     <p className="text-xs font-semibold text-white uppercase tracking-wide">
-                      {liveRecoverableINR > 0 ? '⚠️ Recoverable from Trainer (Final)' : '✅ Net Payable to Trainer (Final)'}
+                      {(claim.recoverableAmount ?? 0) > 0 ? '⚠️ Recoverable from Trainer (Final)' : '✅ Net Payable to Trainer (Final)'}
                     </p>
                     <p className="text-[10px] text-white/70 mt-0.5">
-                      {liveRecoverableINR > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
+                      {(claim.recoverableAmount ?? 0) > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
                     </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{(liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR).toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{((claim.recoverableAmount ?? 0) > 0 ? claim.recoverableAmount! : claim.netPayable!).toLocaleString('en-IN')}</span>
                 </div>
               )}
 
@@ -2695,7 +2710,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             </div>
 
             {/* ── Final Payment Breakdown in INR ─────────────────────────────────── */}
-            {liveGrandTotalINR > 0 && (
+            {(claim.totalClaimedAmount ?? 0) > 0 && (
               <div className="bg-white rounded-xl border-2 border-emerald-200 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold text-emerald-800 uppercase tracking-wide flex items-center gap-2">
@@ -2776,7 +2791,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   {/* Grand total */}
                   <div className="flex items-center justify-between px-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 mt-1">
                     <span className="text-sm font-bold text-white">NET PAYABLE TO TRAINER</span>
-                    <span className="text-xl font-extrabold text-white">₹{liveNetPayableINR.toLocaleString('en-IN')}</span>
+                    <span className="text-xl font-extrabold text-white">₹{(claim.netPayable ?? claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}</span>
                   </div>
                   {(() => {
                     const hasConversion = effectiveDaItemsFinal.some(li => li.currency !== 'INR');
@@ -4510,8 +4525,8 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   { label: 'Total Claimed',    value: claim.totalClaimedAmount ?? 0, color: 'text-gray-800' },
                   { label: 'Approved Amount',  value: claim.approvedAmount ?? 0,     color: 'text-blue-700' },
                   { label: 'Advance Adjusted', value: advanceAdjusted,    color: 'text-amber-600' },
-                  { label: 'Recoverable Amount', value: liveRecoverableINR, color: liveRecoverableINR > 0 ? 'text-red-600' : 'text-gray-400' },
-                  { label: 'Net Paid',         value: paymentRecord?.paidAmount ?? liveNetPayableINR, color: 'text-emerald-700' },
+                  { label: 'Recoverable Amount', value: claim.recoverableAmount ?? 0, color: (claim.recoverableAmount ?? 0) > 0 ? 'text-red-600' : 'text-gray-400' },
+                  { label: 'Net Paid',         value: paymentRecord?.paidAmount ?? claim.netPayable ?? claim.totalClaimedAmount ?? 0, color: 'text-emerald-700' },
                 ].map(f => (
                   <div key={f.label} className="rounded-lg bg-gray-50 border border-gray-100 px-4 py-3 text-center">
                     <p className="text-[11px] text-gray-400 mb-1">{f.label}</p>
