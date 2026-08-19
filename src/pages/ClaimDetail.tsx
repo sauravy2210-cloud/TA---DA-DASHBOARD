@@ -3887,16 +3887,33 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                               </td>
                                               {currentUser.role === 'HRAdmin' && (
                                                 <td className="px-3 py-2.5">
-                                                  <button
-                                                    onClick={() => {
-                                                      setTaEditIdx(idx);
-                                                      setTaEditValues({ currency: ov?.currency ?? li.currency, amount: ov?.amount ?? li.claimedAmount });
-                                                    }}
-                                                    className="flex items-center gap-1 px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-amber-50 hover:border-amber-400 hover:text-amber-700 text-xs font-medium transition-colors"
-                                                    title="Override amount for this bill"
-                                                  >
-                                                    ✏️ Edit
-                                                  </button>
+                                                  <div className="flex items-center gap-1.5">
+                                                    {(() => {
+                                                      const src = li.receiptData || li.receiptUrl;
+                                                      const fname = li.receiptFileName || 'receipt';
+                                                      if (!src) return null;
+                                                      return (
+                                                        <a
+                                                          href={src}
+                                                          download={fname}
+                                                          className="flex items-center gap-1 px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-indigo-50 hover:border-indigo-400 hover:text-indigo-700 text-xs font-medium transition-colors"
+                                                          title={`Download ${fname}`}
+                                                        >
+                                                          ⬇️ Download
+                                                        </a>
+                                                      );
+                                                    })()}
+                                                    <button
+                                                      onClick={() => {
+                                                        setTaEditIdx(idx);
+                                                        setTaEditValues({ currency: ov?.currency ?? li.currency, amount: ov?.amount ?? li.claimedAmount });
+                                                      }}
+                                                      className="flex items-center gap-1 px-2.5 py-1 rounded border border-gray-300 text-gray-600 hover:bg-amber-50 hover:border-amber-400 hover:text-amber-700 text-xs font-medium transition-colors"
+                                                      title="Override amount for this bill"
+                                                    >
+                                                      ✏️ Edit
+                                                    </button>
+                                                  </div>
                                                 </td>
                                               )}
                                             </tr>
@@ -4094,6 +4111,17 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                   </div>
                                                 ) : (
                                                   <div className="flex items-center gap-1">
+                                                    {(() => {
+                                                      const src = li.receiptData || li.receiptUrl;
+                                                      const fname = li.receiptFileName || 'receipt';
+                                                      if (!src) return null;
+                                                      return (
+                                                        <a href={src} download={fname} title={`Download ${fname}`}
+                                                          className="p-1 rounded hover:bg-indigo-100 text-indigo-600 transition-colors">
+                                                          ⬇️
+                                                        </a>
+                                                      );
+                                                    })()}
                                                     <button onClick={() => { setMiscEditIdx(idx); setMiscEditValues({ currency: li.currency || 'INR', amount: li.claimedAmount }); }}
                                                       title="Edit amount" className="p-1 rounded hover:bg-amber-100 text-amber-600 transition-colors">
                                                       ✏️
