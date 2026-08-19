@@ -760,7 +760,10 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
 
   const handleSavePartial = useCallback(async () => {
     if (actionSaving) return;
-    const updatedItems = lineItems.map((li) => ({
+    // Build from mergedLineItems (has receiptData merged in from Turso), not the bare
+    // `lineItems` cache -- that one is fed by the app-wide lite/no-receiptData load, so
+    // saving it back to Turso silently wiped out any receipt already stored for the item.
+    const updatedItems = mergedLineItems.map((li) => ({
       ...li,
       adminDecision: decisions[li.lineItemId]?.decision,
       reasonCode: decisions[li.lineItemId]?.reasonCode,
@@ -789,7 +792,7 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
     } finally {
       setActionSaving(false);
     }
-  }, [lineItems, decisions, claimId, claim, currentUser, closeModal, navigate, actionSaving]);
+  }, [mergedLineItems, decisions, claimId, claim, currentUser, closeModal, navigate, actionSaving]);
 
   const handleSendClarification = useCallback(async () => {
     if (!modalReason || actionSaving) return;
