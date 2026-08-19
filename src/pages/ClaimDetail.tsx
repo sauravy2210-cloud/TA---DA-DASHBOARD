@@ -664,6 +664,27 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     setMiscPostSubmitMsg('');
     try {
       const lineItemId = `LI-OTHER-${claimId}-${Date.now()}`;
+
+      // Upload the receipt to Vercel Blob first (real bytes, correct content-type) and store
+      // only the small URL in Turso — same reason as CreateTADABill.tsx's submit flow: sending
+      // raw base64 in the line-items row bloats Turso storage and Vercel bandwidth, and risks
+      // hitting request-size limits. Falls back to the base64 itself if the upload fails.
+      let receiptData = miscPostSubmitDraft.receiptData || undefined;
+      if (receiptData && receiptData.startsWith('data:')) {
+        try {
+          const contentType = receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
+          const ur = await fetch('/api/turso?type=upload-receipt', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ base64: receiptData, filename: miscPostSubmitDraft.receiptName || lineItemId, contentType }),
+          });
+          if (ur.ok) {
+            const { url } = await ur.json() as { url?: string };
+            if (url) receiptData = url;
+          }
+        } catch { /* keep base64 as fallback */ }
+      }
+
       const newItem: import('../types').ClaimLineItem = {
         lineItemId,
         claimId,
@@ -678,9 +699,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         deductionAmount: 0,
         currency: miscPostSubmitDraft.currency,
         receiptRequired: true,
-        receiptUploaded: !!miscPostSubmitDraft.receiptData,
+        receiptUploaded: !!receiptData,
         exceptionRequired: false,
-        receiptData: miscPostSubmitDraft.receiptData || undefined,
+        receiptData,
+        receiptUrl: receiptData?.startsWith('http') ? receiptData : undefined,
         receiptFileName: miscPostSubmitDraft.receiptName || undefined,
       } as import('../types').ClaimLineItem;
 

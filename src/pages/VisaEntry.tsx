@@ -310,13 +310,34 @@ export default function VisaEntry({ currentUser }: VisaEntryProps) {
   const [submitting, setSubmitting] = useState(false);
   const [submitMsg, setSubmitMsg] = useState('');
 
+  // Upload a receipt to Vercel Blob and swap the base64 for the returned URL — keeps the
+  // `visa` table row small (raw base64 was bloating Turso storage and the bandwidth HR
+  // Admin's dashboard uses fetching this table on every load). Falls back to the base64
+  // itself if the upload fails, so nothing is lost.
+  async function uploadReceiptIfNeeded<T extends { receiptData?: string; receiptName?: string; id: string }>(entry: T): Promise<T> {
+    if (!entry.receiptData || !entry.receiptData.startsWith('data:')) return entry;
+    try {
+      const contentType = entry.receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
+      const r = await fetch('/api/turso?type=upload-receipt', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ base64: entry.receiptData, filename: entry.receiptName || entry.id, contentType }),
+      });
+      if (r.ok) {
+        const { url } = await r.json() as { url?: string };
+        if (url) return { ...entry, receiptData: url };
+      }
+    } catch { /* keep base64 as fallback */ }
+    return entry;
+  }
+
   async function submitVisaFeesEntry() {
     if (pendingCount === 0) return;
     setSubmitting(true);
     setSubmitMsg('');
     try {
-      const pendingTravel = travelEntries.filter(e => !e.submitted);
-      const pendingMisc = miscEntries.filter(e => !e.submitted);
+      const pendingTravel = await Promise.all(travelEntries.filter(e => !e.submitted).map(uploadReceiptIfNeeded));
+      const pendingMisc = await Promise.all(miscEntries.filter(e => !e.submitted).map(uploadReceiptIfNeeded));
       const submittedAt = new Date().toISOString();
 
       const requests = [
