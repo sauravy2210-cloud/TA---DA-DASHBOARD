@@ -696,6 +696,18 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       }
 
       setClaimLineItems(prev => [...prev, newItem]);
+
+      // Persist the addition into the claim's own stored totals immediately — the header
+      // strip and My Bills list both read totalClaimedAmount/netPayable directly (no live
+      // recompute), so without this the new expense would never show up there at all.
+      if (claim) {
+        const addedInr = toINR(newItem.claimedAmount, newItem.currency ?? 'INR');
+        const newTotal = (claim.totalClaimedAmount ?? 0) + addedInr;
+        const newNet = newTotal - (claim.advanceAdjusted ?? 0) - (claim.deductionAmount ?? 0) - (claim.recoverableAmount ?? 0);
+        saveClaim({ ...claim, totalClaimedAmount: newTotal, netPayable: newNet } as import('../types').ClaimHeader);
+        setClaimRefreshTick(n => n + 1);
+      }
+
       setMiscPostSubmitDraft({ date: '', expenseType: 'Other', amount: 0, currency: 'INR', remarks: '', receiptData: '', receiptName: '' });
       setMiscPostSubmitMsg('✅ Expense added');
     } catch (err) {
@@ -2351,17 +2363,24 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
 
           {/* Amount summary strip */}
           <div className="flex flex-wrap gap-4 text-sm">
+            {/* Always show the claim's STORED totals here — matching "View My Bills" exactly.
+                These only change when persistAction() runs (an actual HR decision) or when
+                a post-submission addition explicitly updates them (see addMiscExpensePostSubmit).
+                Previously this preferred a "live" recompute of DA/Travel/Misc from current
+                code/policy, which could silently drift from what was actually submitted
+                whenever DA logic was corrected later — showing a different "Claimed" amount
+                here than on My Bills for a claim nothing had actually changed. */}
             <div className="text-center">
               <div className="text-xs text-gray-400 uppercase tracking-wide">Claimed</div>
               <div className="font-semibold text-gray-800">
-                ₹{(liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
+                ₹{(claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}
               </div>
             </div>
             {claim.approvedAmount !== null && (
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Approved</div>
                 <div className="font-semibold text-green-700">
-                  ₹{(liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount ?? 0)).toLocaleString('en-IN')}
+                  ₹{(claim.approvedAmount ?? 0).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2377,7 +2396,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Net Payable</div>
                 <div className="font-bold text-blue-700">
-                  ₹{(liveGrandTotalINR > 0 ? liveNetPayableINR : (claim.netPayable ?? 0)).toLocaleString('en-IN')}
+                  ₹{(claim.netPayable ?? 0).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
