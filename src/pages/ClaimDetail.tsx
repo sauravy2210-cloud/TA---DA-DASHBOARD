@@ -2254,17 +2254,35 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // Best email for the trainer — PMS-resolved takes priority, stored claim email as fallback
   const effectiveTrainerEmail = resolvedTrainerEmail || (claim as unknown as { trainerEmail?: string })?.trainerEmail || '';
 
-  // Fire HR action email — always sends when an email is available; never blocks the action.
-  // approvedAmount is always sent (never omitted) so the trainer always sees exactly what
-  // HR Admin approved for this action.
-  const fireActionEmail = (actionKey: string, remarks?: string, overrideApprovedAmount?: number) => {
+  // Fire HR action email — never blocks the action itself, but must never fail silently
+  // either. approvedAmount is always sent (never omitted) so the trainer always sees
+  // exactly what HR Admin approved for this action.
+  const fireActionEmail = async (actionKey: string, remarks?: string, overrideApprovedAmount?: number) => {
     if (!claim) return;
-    const email = effectiveTrainerEmail;
+    let email = effectiveTrainerEmail;
+    if (!email) {
+      // The background PMS lookup (resolvedTrainerEmail) may not have completed yet by
+      // the time HR Admin clicks an action — retry it synchronously right here, once,
+      // before giving up. Previously an unresolved email at click-time meant the
+      // notification was skipped with only a console.warn — invisible to HR Admin, who
+      // saw the same "saved successfully" toast either way.
+      const trainerId = String((claim as unknown as { trainerId?: string }).trainerId ?? '');
+      const empCode = trainerId.replace(/^EMP-/i, '').trim();
+      if (empCode) {
+        try {
+          const r = await fetch(`/api/employee?empCode=${encodeURIComponent(empCode)}`);
+          const d = await r.json();
+          const emp = (d.employee ?? {}) as Record<string, unknown>;
+          email = String(emp.email_address ?? emp.EmailAddress ?? emp.Email ?? emp.email ?? '').trim();
+        } catch { /* fall through to the warning below */ }
+      }
+    }
     if (!email) {
       console.warn('[TA/DA] No trainer email available — skipping notification for', actionKey);
+      showToast(`⚠️ Action saved, but no email could be sent — no email address on record for ${claim.trainerName}. Please notify them manually.`);
       return;
     }
-    sendActionEmail({
+    const sent = await sendActionEmail({
       toEmail: email,
       toName: claim.trainerName,
       actionKey,
@@ -2275,6 +2293,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       approvedAmount: overrideApprovedAmount ?? (liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount ?? 0)),
       currency: 'INR',
     });
+    if (!sent) {
+      showToast(`⚠️ Action saved, but the notification email to ${claim.trainerName} failed to send. Please notify them manually.`);
+    }
   };
 
   const handleActionConfirm = (action: ActionConfig, reason: string) => {

@@ -669,35 +669,55 @@ export default function ClaimReview({ currentUser = DEFAULT_USER }: ClaimReviewP
   // ── Email helper — fire-and-forget, never blocks the action ──────────────
   // approvedAmount is always sent (defaults to 0), so the trainer always sees exactly
   // what HR Admin approved for this action — never conditionally omitted.
-  const notifyTrainer = useCallback((actionKey: string, remarks?: string, approvedAmount: number = 0) => {
+  const notifyTrainer = useCallback(async (actionKey: string, remarks?: string, approvedAmount: number = 0) => {
     const c = claim as import('../types').ClaimHeader | null;
     if (!c) return;
     // Use PMS-resolved email (always current) with embedded claim email as fallback
-    const email = effectiveTrainerEmail;
+    let email = effectiveTrainerEmail;
+    if (!email) {
+      // Background PMS lookup may not have completed yet — retry synchronously once,
+      // right here, before giving up. Previously an unresolved email meant the
+      // notification was skipped with only a console.warn, invisible to HR Admin.
+      const empCode = String(c.trainerId ?? '').replace(/^EMP-/i, '').trim();
+      if (empCode) {
+        try {
+          const r = await fetch(`/api/employee?empCode=${encodeURIComponent(empCode)}`);
+          const d = await r.json();
+          const emp = (d.employee ?? {}) as Record<string, unknown>;
+          email = String(emp.email_address ?? emp.EmailAddress ?? emp.Email ?? emp.email ?? '').trim();
+        } catch { /* fall through to the warning below */ }
+      }
+    }
     if (!email) {
       console.warn(`[notifyTrainer] No email found for trainer ${c.trainerName} (claim ${c.claimId}) — skipping notification`);
+      setActionSuccess(`⚠️ Action saved, but no email could be sent — no email address on record for ${c.trainerName}. Please notify them manually.`);
       return;
     }
-    fetch('/api/notify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        toEmail: email,
-        toName: c.trainerName,
-        actionKey,
-        claimId: c.claimId,
-        billNo: c.billNo,
-        remarks,
-        hrName: 'HR Admin',
-        approvedAmount,
-        currency: c.currency,
-      }),
-      keepalive: true,
-    }).then(r => {
-      if (!r.ok) console.warn(`[notifyTrainer] Email API returned ${r.status} for ${email}`);
-    }).catch(err => {
-      console.warn(`[notifyTrainer] Email send failed for ${email}:`, err?.message);
-    });
+    try {
+      const r = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          toEmail: email,
+          toName: c.trainerName,
+          actionKey,
+          claimId: c.claimId,
+          billNo: c.billNo,
+          remarks,
+          hrName: 'HR Admin',
+          approvedAmount,
+          currency: c.currency,
+        }),
+        keepalive: true,
+      });
+      if (!r.ok) {
+        console.warn(`[notifyTrainer] Email API returned ${r.status} for ${email}`);
+        setActionSuccess(`⚠️ Action saved, but the notification email to ${c.trainerName} failed to send. Please notify them manually.`);
+      }
+    } catch (err) {
+      console.warn(`[notifyTrainer] Email send failed for ${email}:`, err instanceof Error ? err.message : err);
+      setActionSuccess(`⚠️ Action saved, but the notification email to ${c.trainerName} failed to send. Please notify them manually.`);
+    }
   }, [claim, currentUser.name, effectiveTrainerEmail]);
 
   // ── Action handlers ────────────────────────────────────────────────────────

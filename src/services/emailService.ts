@@ -1,5 +1,7 @@
 // Sends HR action email notifications via the /api/notify serverless function.
-// Fails silently — a network/config error must never block the HR action itself.
+// Never throws — a network/config error must never block the HR action itself — but
+// DOES return whether the send actually succeeded, so callers can surface a warning to
+// HR Admin instead of silently believing every action email went out.
 
 export interface ActionEmailPayload {
   toEmail: string;
@@ -13,14 +15,15 @@ export interface ActionEmailPayload {
   currency?: string;
 }
 
-export async function sendActionEmail(payload: ActionEmailPayload): Promise<void> {
+export async function sendActionEmail(payload: ActionEmailPayload): Promise<boolean> {
   try {
-    await fetch('/api/notify', {
+    const r = await fetch('/api/notify', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
+    return r.ok;
   } catch {
-    // Silent — email is a notification, not a blocking operation
+    return false;
   }
 }
