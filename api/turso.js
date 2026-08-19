@@ -528,5 +528,37 @@ export default async function handler(req, res) {
     }
   }
 
+  // ── One-time cleanup: strip receiptData from claims' embedded lineItems ──────
+  // saveClaim/saveClaimAsync previously wrote whatever lineItems array a claim held
+  // straight back to Turso on every HR action, with no stripping -- so any claim whose
+  // embedded copy carried receipt base64 data kept re-writing it on every subsequent
+  // action. This is a one-time server-side migration to shrink the already-bloated
+  // claims table; going forward, storageService.ts's saveClaim/saveClaimAsync strip it
+  // before every write, so this should never need to grow back. The full-fidelity
+  // receipt data is untouched in the separate line_items table -- nothing is deleted.
+  if (type === 'cleanup-claims-receipts' && req.method === 'POST') {
+    try {
+      const result = await db.execute('SELECT id, data FROM claims');
+      const updates = [];
+      let savedBytes = 0;
+      for (const row of result.rows) {
+        let claim;
+        try { claim = JSON.parse(row.data); } catch { continue; }
+        if (!Array.isArray(claim.lineItems) || claim.lineItems.length === 0) continue;
+        const hasReceiptData = claim.lineItems.some(li => li && li.receiptData);
+        if (!hasReceiptData) continue;
+        const before = row.data.length;
+        claim.lineItems = claim.lineItems.map(({ receiptData, ...rest }) => rest);
+        const newData = JSON.stringify(claim);
+        savedBytes += before - newData.length;
+        updates.push({ sql: 'UPDATE claims SET data = ? WHERE id = ?', args: [newData, row.id] });
+      }
+      if (updates.length > 0) await db.batch(updates, 'write');
+      return res.status(200).json({ totalClaims: result.rows.length, cleaned: updates.length, savedBytes });
+    } catch (err) {
+      return res.status(500).json({ error: String(err?.message ?? err) });
+    }
+  }
+
   return res.status(400).json({ error: 'Missing or unknown type param' });
 }

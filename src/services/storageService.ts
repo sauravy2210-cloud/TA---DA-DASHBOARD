@@ -214,6 +214,24 @@ export function getClaims(): ClaimHeader[] {
   return _claims;
 }
 
+// The claim's embedded lineItems array is only for lightweight cross-browser/cross-device
+// metadata access (amounts, dates, types) -- the real, full-fidelity copy (including
+// receiptData) already lives in the separate line_items table. Every saveClaim/
+// saveClaimAsync call (i.e. every single HR action -- Approve, Reject, Hold, Reopen,
+// etc.) was writing whatever the claim's lineItems array currently held straight back to
+// Turso with no stripping, so any claim whose in-memory lineItems still carried receipt
+// base64 data kept re-embedding it on every subsequent action -- this is why the claims
+// table's total payload reached ~101MB. Strip receiptData here, unconditionally, right
+// before the write -- the in-memory _claims cache keeps the full object so nothing in the
+// current session's UI changes, only what actually gets sent to Turso.
+function stripReceiptDataForTurso(claim: ClaimHeader): ClaimHeader {
+  if (!claim.lineItems || claim.lineItems.length === 0) return claim;
+  return {
+    ...claim,
+    lineItems: claim.lineItems.map(({ receiptData: _r, ...rest }) => rest as ClaimLineItem),
+  };
+}
+
 export function saveClaim(claim: ClaimHeader): void {
   const idx = _claims.findIndex(c => c.claimId === claim.claimId);
   if (idx >= 0) _claims[idx] = claim;
@@ -222,7 +240,7 @@ export function saveClaim(claim: ClaimHeader): void {
   fetch('/api/turso?type=claims', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(claim),
+    body: JSON.stringify(stripReceiptDataForTurso(claim)),
   }).catch(() => {});
 }
 
@@ -235,7 +253,7 @@ export async function saveClaimAsync(claim: ClaimHeader): Promise<void> {
   const r = await fetch('/api/turso?type=claims', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(claim),
+    body: JSON.stringify(stripReceiptDataForTurso(claim)),
   });
   if (!r.ok) throw new Error(`Failed to save claim: HTTP ${r.status}`);
 }
