@@ -1446,7 +1446,32 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           // EMP-2485 — this claim only covers Dubai (ends 16 Jul); his 19 Jul flight was
           // Dubai→Nairobi (continuing to a new international assignment), not a return to
           // India, so no DA line item should be fabricated here for that date.
-          const retToCountryFinal = inferCountryFromCity(String(retFlight.to_city ?? '').trim());
+          //
+          // Must chase through ALL subsequent connecting legs (not just same-day ones) to find
+          // the TRUE final destination before deciding this — checking only the immediate next
+          // leg's to_city wrongly treated a transit hub as the final destination. Bug fixed
+          // 2026-08-19: Vaibhav Gupta EMP-2361, TADA-2026-00024 — Vienna→Doha (08 Aug, a transit
+          // layover) then Doha→Delhi (09 Aug, next calendar day so the same-day-only chase used
+          // elsewhere in this file didn't reach it) actually lands in India; checking only the
+          // Doha leg wrongly looked like "heading to Qatar, a different destination" and the
+          // whole 08 Aug return-day row was silently skipped instead of correctly showing Austria.
+          const resolveFinalDestCountry = (startFlight: typeof activeFlights[number]): string => {
+            let current = startFlight;
+            for (let hop = 0; hop < 5; hop++) {
+              const curToCity = String(current.to_city ?? '').trim().toLowerCase();
+              const curArrDate = parseDT(String(current.arrival_date ?? '')) || parseDT(String(current.departure_date ?? ''));
+              const next = activeFlights.find(f => {
+                if (f === current) return false;
+                const fromCity = String(f.from_city ?? '').trim().toLowerCase();
+                const fd = parseDT(String(f.departure_date ?? ''));
+                return !!fromCity && fromCity === curToCity && !!fd && fd >= curArrDate;
+              });
+              if (!next) break;
+              current = next;
+            }
+            return inferCountryFromCity(String(current.to_city ?? '').trim());
+          };
+          const retToCountryFinal = resolveFinalDestCountry(retFlight);
           if (retToCountryFinal && retToCountryFinal !== 'India' && retToCountryFinal !== destC) return;
 
           const depHHMM = String(retFlight.departure_time ?? '').substring(0, 5);
