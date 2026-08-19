@@ -2431,14 +2431,17 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             <div className="text-center">
               <div className="text-xs text-gray-400 uppercase tracking-wide">Claimed</div>
               <div className="font-semibold text-gray-800">
-                ₹{(claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}
+                ₹{Math.round(claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}
               </div>
             </div>
             {claim.approvedAmount !== null && (
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Approved</div>
                 <div className="font-semibold text-green-700">
-                  ₹{(claim.approvedAmount ?? 0).toLocaleString('en-IN')}
+                  {/* Before HR has actually approved (approvedAmount still 0), show the pending
+                      eligible total — same fallback as the Amount Summary card below — instead
+                      of a bare ₹0 that reads as "nothing approved" for a bill still in review. */}
+                  ₹{Math.round(claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2446,7 +2449,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Deduction</div>
                 <div className="font-semibold text-red-600">
-                  -₹{(claim.deductionAmount ?? 0).toLocaleString('en-IN')}
+                  -₹{Math.round(claim.deductionAmount ?? 0).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2454,7 +2457,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Net Payable</div>
                 <div className="font-bold text-blue-700">
-                  ₹{(claim.netPayable ?? 0).toLocaleString('en-IN')}
+                  ₹{Math.round(claim.netPayable ?? claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2575,14 +2578,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   approvedAmount / netPayable) — not a live recompute — so this card and the
                   header never show two different "Net Payable" figures for the same claim. */}
               <AmountSummary
-                claimedAmount={claim.totalClaimedAmount ?? 0}
-                eligibleAmount={claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)}
-                approvedAmount={claim.approvedAmount ?? 0}
-                deductionAmount={claim.deductionAmount ?? 0}
+                claimedAmount={Math.round(claim.totalClaimedAmount ?? 0)}
+                eligibleAmount={Math.round(claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))}
+                approvedAmount={Math.round(claim.approvedAmount ?? 0)}
+                deductionAmount={Math.round(claim.deductionAmount ?? 0)}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
-                recoverableAmount={claim.recoverableAmount ?? 0}
-                netPayable={claim.netPayable ?? computedFinalSettlement}
+                recoverableAmount={Math.round(claim.recoverableAmount ?? 0)}
+                netPayable={Math.round(claim.netPayable ?? computedFinalSettlement)}
                 currency="INR"
               />
               {/* Net payable banner — mirrors the stored totals, not a live recompute */}
@@ -2596,7 +2599,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       {(claim.recoverableAmount ?? 0) > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
                     </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{((claim.recoverableAmount ?? 0) > 0 ? claim.recoverableAmount! : claim.netPayable!).toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{Math.round((claim.recoverableAmount ?? 0) > 0 ? claim.recoverableAmount! : claim.netPayable!).toLocaleString('en-IN')}</span>
                 </div>
               )}
 
@@ -2791,7 +2794,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   {/* Grand total */}
                   <div className="flex items-center justify-between px-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 mt-1">
                     <span className="text-sm font-bold text-white">NET PAYABLE TO TRAINER</span>
-                    <span className="text-xl font-extrabold text-white">₹{(claim.netPayable ?? claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}</span>
+                    <span className="text-xl font-extrabold text-white">₹{Math.round(claim.netPayable ?? claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}</span>
                   </div>
                   {(() => {
                     const hasConversion = effectiveDaItemsFinal.some(li => li.currency !== 'INR');
