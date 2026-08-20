@@ -2696,6 +2696,15 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
         // Confirmed domestic (India city) → skip
         if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+        // City alone already gives a confident, non-India answer (e.g. PMS left `country`
+        // blank but city_of_training is a real, mappable city) — trust it rather than
+        // inheriting a country from an unrelated previous assignment below. The "unrecognized
+        // city" fallback inside inferCountryFromCity IS 'India', already excluded above, so
+        // anything reaching here that's truthy is a genuine match, not a default guess. Bug
+        // fixed 2026-08-21: Courage Tafadzwa Magadu EMP-3705, Asgn #261661 — city_of_training
+        // "Porto" (Portugal) with no PMS country field was being overwritten by a previous
+        // assignment's country instead of correctly resolving to Portugal.
+        if (asgn.city && inferCountryFromCity(asgn.city)) return asgn;
         // ILO (online) assignments — trainer is at home in India, never inherit international country
         if (asgn.deliveryMode === 'Online') return asgn;
 

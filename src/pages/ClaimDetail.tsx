@@ -1089,6 +1089,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     return sorted.map((asgn, idx) => {
       if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
       if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+      // City alone already gives a confident, non-India answer (e.g. PMS left `country` blank
+      // but `city_of_training` is "Porto") — trust it and stop here, same as the "city-inferred
+      // country wins" rule used everywhere else in this file. Without this check, an assignment
+      // with a blank country field but a perfectly identifiable city was falling through to the
+      // "borrow country from the previous international assignment" logic below and getting
+      // overwritten with a WRONG country (or India) that had nothing to do with where the
+      // trainer actually was. Bug fixed 2026-08-21: Courage Tafadzwa Magadu EMP-3705, Asgn
+      // #261661 — city_of_training "Porto" (Portugal) with no PMS country field ended up
+      // labeled India instead of Portugal.
+      if (asgn.city && inferCountryFromCity(asgn.city)) return asgn;
       if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India), never enrich
       const prevIntl = sorted.slice(0, idx)
         .filter(a => a.country && a.country !== 'India')
@@ -1138,6 +1148,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     return sorted.map((asgn, idx) => {
       if (asgn.city && asgn.country && asgn.country !== 'India') return asgn;
       if (asgn.city && inferCountryFromCity(asgn.city) === 'India') return asgn;
+      // Same fix as enrichedSummaryAssignments above: a city that confidently maps to a real,
+      // non-India country (exact or fuzzy match, NOT the "unrecognized city" default — that
+      // default IS 'India' and is already excluded by the check just above) must win over
+      // borrowing a country from an unrelated previous assignment.
+      if (asgn.city && inferCountryFromCity(asgn.city)) return asgn;
       if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India), never enrich
       const prevIntl = sorted.slice(0, idx)
         .filter(a => a.country && a.country !== 'India')
