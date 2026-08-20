@@ -644,12 +644,16 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                       </span>
                       {/* Flag right here, next to the badge, when the actual paid amount doesn't
                           match the claim's current Approved/Net Payable shown a few columns to
-                          the left — visible without scrolling all the way to Payment Date.
-                          Happens legitimately when HR reopens a paid claim and corrects the
-                          approved amount before a follow-up payment is recorded. */}
+                          the left — full payment details inline, not just the amount, so nothing
+                          needs scrolling or clicking to see. Happens legitimately when HR reopens
+                          a paid claim and corrects the approved amount before a follow-up
+                          payment is recorded. */}
                       {claim.status === 'Paid' && rec && Math.round(rec.paidAmount) !== Math.round(claim.netPayable ?? claim.approvedAmount ?? 0) && (
-                        <div className="mt-1 text-[10px] font-semibold text-amber-600" title="The recorded payment doesn't match this claim's current Net Payable — see Payment Date column for full history">
-                          ⚠ Actually paid: {claim.currency === 'AED' ? 'AED' : '₹'}{rec.paidAmount.toLocaleString('en-IN')}
+                        <div className="mt-1 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 leading-tight max-w-[180px]">
+                          <div className="font-bold">⚠ Actually paid: {claim.currency === 'AED' ? 'AED' : '₹'}{rec.paidAmount.toLocaleString('en-IN')}</div>
+                          <div>{fmtDate(rec.paymentDate)} · {rec.paymentMode}</div>
+                          <div className="font-mono">{rec.utrReference}</div>
+                          <div>by {rec.processedBy}</div>
                         </div>
                       )}
                     </td>
