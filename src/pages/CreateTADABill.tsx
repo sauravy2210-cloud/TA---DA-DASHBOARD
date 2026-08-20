@@ -4388,10 +4388,15 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       // silently had zero receipt data (only the filename/flag survived via the claim's own
       // lightweight embedded copy). Uploading first keeps this payload tiny and reliable, and
       // checking the response below means a real failure now surfaces instead of being hidden.
-      const lineItemsWithUrls = await Promise.all(lineItems.map(async (li) => {
-        if (li.receiptData && li.receiptData.startsWith('data:')) {
+      // Retry each upload once on a transient failure (network blip, cold-start timeout) — a
+      // single flaky upload previously fell back to keeping that one receipt as base64, which
+      // was often enough on its own to push the later bulk line-items POST back over Vercel's
+      // request size limit.
+      const uploadReceiptWithRetry = async (li: ClaimLineItem): Promise<ClaimLineItem> => {
+        if (!li.receiptData || !li.receiptData.startsWith('data:')) return li;
+        const contentType = li.receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
+        for (let attempt = 0; attempt < 2; attempt++) {
           try {
-            const contentType = li.receiptData.match(/^data:([^;]+);/)?.[1] ?? 'application/octet-stream';
             const r = await fetch('/api/turso?type=upload-receipt', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
@@ -4401,10 +4406,11 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
               const { url } = await r.json() as { url?: string };
               if (url) return { ...li, receiptData: url, receiptUrl: url };
             }
-          } catch { /* fall through — keep base64 below so nothing is lost */ }
+          } catch { /* retry below, or fall through and keep base64 on final attempt */ }
         }
         return li;
-      }));
+      };
+      const lineItemsWithUrls = await Promise.all(lineItems.map(uploadReceiptWithRetry));
 
       // Always persist to localStorage immediately — guarantees same-device visibility.
       saveClaim({ ...claim, lineItems: lineItemsWithUrls });
@@ -4420,15 +4426,31 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       if (!claimRes.ok) throw new Error('Failed to save claim. Please try again.');
 
       // Write line items to Turso — now URLs instead of base64 wherever the upload above
-      // succeeded, so this payload stays small. Checked (unlike before) so a genuine failure
-      // throws instead of silently reporting submission success.
-      if (lineItemsWithUrls.length > 0) {
-        const liRes = await fetch('/api/turso?type=lineitems', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ lineItems: lineItemsWithUrls }),
-        });
-        if (!liRes.ok) throw new Error('Claim saved, but line items (receipts, DA, travel bills) failed to sync. Please try submitting again.');
+      // succeeded, so this payload stays small. Sent in small batches rather than one request
+      // for the whole claim: a bill with many line items (e.g. an FMAT batch with a dozen+
+      // training dates) can still add up even with receipts converted to URLs, and if even one
+      // item's upload above fell back to base64 (upload-receipt itself down, not just a retry-
+      // able blip), a single request carrying everything fails as a whole. Batching means only
+      // the batch containing that item is affected, and each batch gets one retry on failure.
+      const LINEITEM_BATCH_SIZE = 15;
+      const failedBatches: number[] = [];
+      for (let i = 0; i < lineItemsWithUrls.length; i += LINEITEM_BATCH_SIZE) {
+        const batch = lineItemsWithUrls.slice(i, i + LINEITEM_BATCH_SIZE);
+        let ok = false;
+        for (let attempt = 0; attempt < 2 && !ok; attempt++) {
+          try {
+            const liRes = await fetch('/api/turso?type=lineitems', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lineItems: batch }),
+            });
+            ok = liRes.ok;
+          } catch { /* retry below, or record as failed after final attempt */ }
+        }
+        if (!ok) failedBatches.push(i / LINEITEM_BATCH_SIZE + 1);
+      }
+      if (failedBatches.length > 0) {
+        throw new Error(`Claim saved, but some line items (receipts, DA, travel bills) failed to sync after retrying (batch ${failedBatches.join(', ')} of ${Math.ceil(lineItemsWithUrls.length / LINEITEM_BATCH_SIZE)}). Please try submitting again.`);
       }
 
       deleteDraftClaim(draftClaimIdRef.current);
