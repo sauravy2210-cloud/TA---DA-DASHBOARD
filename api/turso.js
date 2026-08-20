@@ -248,8 +248,12 @@ export default async function handler(req, res) {
   // every dashboard load -- likely why claims fetches started timing out against the
   // Hobby plan's 10s function cap. A genuinely missing table would still surface as a
   // clear DB error on the query itself, rather than silently needing this every time.
+  // The `payments` table is new (added 2026-08-20) and, unlike the others, was never created
+  // by any prior production write -- so its very first GET on a fresh cold start would 500
+  // with "no such table" under the write-only check below. Force creation on GET too, but only
+  // for this one still-new type; every other type already exists in production.
   const isWrite = req.method === 'POST' || req.method === 'DELETE';
-  if (isWrite && !_tablesReady) {
+  if ((isWrite || type === 'payments') && !_tablesReady) {
     try {
       await ensureTablesOnce(db);
     } catch (err) {
