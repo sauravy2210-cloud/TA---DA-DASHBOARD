@@ -1628,7 +1628,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           if (rate > 0) {
             const cur = new Date(fd);
             cur.setDate(cur.getDate() + 1);
-            const endExclusive = new Date(asgn.startDate!);
+            // Normally the assignment's own start date gets picked up by the main day-by-day
+            // loop above (which runs from the claim's claimStartDate). But when the claim's own
+            // claimStartDate is LATER than the assignment's actual start date (e.g. a claim
+            // submitted covering only part of a multi-day assignment), that loop never reaches
+            // the assignment's start date at all — and this interim fill previously stopped
+            // BEFORE it too (exclusive), leaving that one day with no DA anywhere. Extend the
+            // fill through the later of the two so it's never skipped. Bug fixed 2026-08-20:
+            // TADA-2026-00030 (Akshay Kumar, Asgn #265769) — assignment starts 17 Aug, but the
+            // claim's own claimStartDate is 18 Aug, so 17 Aug (South Africa) was missing.
+            const endExclusive = new Date(claimStart && claimStart > asgn.startDate! ? claimStart : asgn.startDate!);
             while (cur < endExclusive) {
               const iso = cur.toISOString().slice(0, 10);
               if (!autoRaw.some(li => li.date === iso)) {
