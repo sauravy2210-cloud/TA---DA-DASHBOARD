@@ -561,15 +561,30 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [miscPostSubmitSaving, setMiscPostSubmitSaving] = useState(false);
   const [miscPostSubmitMsg, setMiscPostSubmitMsg] = useState('');
 
-  // Payment record for this claim (loaded from localStorage)
-  const paymentRecord = useMemo(() => {
-    const all = getFromStorage<Array<{
-      paymentId: string; claimId: string; billNumber: string; trainerName: string;
-      paidAmount: number; paymentDate: string; utrReference: string; paymentMode: string;
-      financeRemarks: string; processedBy: string; processedAt: string;
-    }>>('tada_local_payments', []);
-    return all.find(p => p.claimId === claimId) ?? null;
+  // Payment record for this claim. Used to be localStorage-only — invisible whenever this
+  // claim is opened from a different browser/device than the one that recorded the payment
+  // (exactly the "earlier paid amount is not showing" report). Fetch the server-side copy
+  // (Turso) and prefer it; fall back to the local cache only if that fetch hasn't landed yet.
+  type PaymentRecordShape = {
+    paymentId: string; claimId: string; billNumber: string; trainerName: string;
+    paidAmount: number; paymentDate: string; utrReference: string; paymentMode: string;
+    financeRemarks: string; processedBy: string; processedAt: string;
+  };
+  const [tursoPaymentRecord, setTursoPaymentRecord] = useState<PaymentRecordShape | null>(null);
+  useEffect(() => {
+    if (!claimId) return;
+    fetch(`/api/turso?type=payments&claimId=${encodeURIComponent(claimId)}`)
+      .then(r => r.ok ? r.json() : { payments: [] })
+      .then((d: { payments?: PaymentRecordShape[] }) => {
+        if (Array.isArray(d.payments) && d.payments.length > 0) setTursoPaymentRecord(d.payments[0]);
+      })
+      .catch(() => {});
   }, [claimId]);
+  const paymentRecord = useMemo(() => {
+    if (tursoPaymentRecord) return tursoPaymentRecord;
+    const all = getFromStorage<PaymentRecordShape[]>('tada_local_payments', []);
+    return all.find(p => p.claimId === claimId) ?? null;
+  }, [claimId, tursoPaymentRecord]);
 
   const [summaryOpen, setSummaryOpen] = useState<Record<string, boolean>>({
     assignment: true, leaves: false, da: false, flights: false, lodging: false, travel: true, misc: true,

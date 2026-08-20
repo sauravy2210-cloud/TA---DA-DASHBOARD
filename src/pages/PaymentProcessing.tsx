@@ -136,6 +136,39 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
     () => getFromStorage<LocalPaymentRecord[]>('tada_local_payments', [])
   );
 
+  // Payment records used to live ONLY in localStorage — invisible from any other browser or
+  // device, and easy to lose. Merge in the server-side copy (Turso) on load so payment history
+  // for a bill is reliably visible regardless of which machine originally recorded it. Turso
+  // wins on id collision (shouldn't happen — paymentId is a fresh timestamp — but future-proof).
+  useEffect(() => {
+    fetch('/api/turso?type=payments')
+      .then(r => r.ok ? r.json() : { payments: [] })
+      .then((d: { payments?: LocalPaymentRecord[] }) => {
+        const serverRecords = Array.isArray(d.payments) ? d.payments : [];
+        const serverIds = new Set(serverRecords.map(p => p.paymentId));
+        // Rescue any record that only ever existed in THIS browser's localStorage (recorded
+        // before server-side persistence existed) by pushing it up to Turso now — one-time,
+        // whenever this page happens to load in the browser that still has it cached.
+        localPayments.filter(p => !serverIds.has(p.paymentId)).forEach(p => {
+          fetch('/api/turso?type=payments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(p),
+          }).catch(() => {});
+        });
+        if (serverRecords.length === 0) return;
+        setLocalPayments(prev => {
+          const map = new Map(prev.map(p => [p.paymentId, p]));
+          serverRecords.forEach(p => map.set(p.paymentId, p));
+          const merged = Array.from(map.values());
+          saveToStorage('tada_local_payments', merged);
+          return merged;
+        });
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [bankInfoMap, setBankInfoMap] = useState<Record<string, BankInfo>>({});
   // Inline bank edit state — keyed by claimId
   const [bankEditId, setBankEditId] = useState<string | null>(null);
@@ -285,6 +318,11 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
     const updated = [...localPayments, rec];
     setLocalPayments(updated);
     saveToStorage('tada_local_payments', updated);
+    fetch('/api/turso?type=payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rec),
+    }).catch(() => { /* local copy already saved above — best-effort server sync */ });
     saveClaim({ ...claim, status: 'Paid', paymentStatus: 'Paid', pendingWith: 'None', lastActionAt: new Date().toISOString() });
     logAction({
       claimId: claim.claimId, entityType: 'Payment', entityId: claim.billNo,

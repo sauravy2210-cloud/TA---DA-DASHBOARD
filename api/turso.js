@@ -3,6 +3,11 @@
 //
 // Claims:         GET/POST/DELETE /api/turso?type=claims[&trainerId=x|&id=x]
 // Line Items:     GET/POST/DELETE /api/turso?type=lineitems[&claimId=x]
+// Payments:       GET/POST /api/turso?type=payments[&claimId=x] — HR/Finance "Mark Paid"
+//                 records, persisted server-side so payment history for a bill is visible
+//                 from any browser/device (previously localStorage-only, lost on a different
+//                 session). Multiple records per claimId are kept (full history), never
+//                 overwritten.
 // Feedback:       GET  /api/turso?type=feedback
 //                 POST /api/turso?type=feedback  → save to DB + email saurav.yadav@koenig-solutions.com
 // Extract:        POST /api/turso?type=extract   → AI receipt extraction (Claude vision)
@@ -46,6 +51,7 @@ async function ensureTablesOnce(db) {
     `CREATE TABLE IF NOT EXISTS feedback (id TEXT PRIMARY KEY, trainer_id TEXT, trainer_name TEXT, category TEXT NOT NULL, message TEXT NOT NULL, submitted_at TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS visa_entries (id TEXT PRIMARY KEY, trainer_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS bill_counters (year INTEGER PRIMARY KEY, seq INTEGER NOT NULL DEFAULT 0)`,
+    `CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, bill_no TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
   ], 'write');
   _tablesReady = true;
 }
@@ -306,6 +312,27 @@ export default async function handler(req, res) {
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: 'Missing id' });
       await db.execute({ sql: 'DELETE FROM claims WHERE id = ?', args: [id] });
+      return res.status(200).json({ ok: true });
+    }
+  }
+
+  // ── Payments (HR/Finance "Mark Paid" history) ────────────────────────────────
+  if (type === 'payments') {
+    if (req.method === 'GET') {
+      const { claimId } = req.query;
+      const result = claimId
+        ? await db.execute({ sql: 'SELECT data FROM payments WHERE claim_id = ? ORDER BY created_at DESC', args: [claimId] })
+        : await db.execute('SELECT data FROM payments ORDER BY created_at DESC');
+      return res.status(200).json({ payments: result.rows.map(r => JSON.parse(r.data)) });
+    }
+    if (req.method === 'POST') {
+      const record = req.body;
+      if (!record?.paymentId || !record?.claimId) return res.status(400).json({ error: 'Missing paymentId or claimId' });
+      await db.execute({
+        sql: `INSERT INTO payments (id, claim_id, bill_no, data, created_at) VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+        args: [record.paymentId, record.claimId, record.billNumber ?? null, JSON.stringify(record), record.processedAt || new Date().toISOString()],
+      });
       return res.status(200).json({ ok: true });
     }
   }
