@@ -1444,12 +1444,27 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               });
               return;
             }
-            // Eligible (arrives after 12:00) and lands in India same day — she's simply
-            // "home" that day, so India DA applies regardless of what time she left the
-            // destination country. Bug fixed 2026-08-10: Bhavna Singh EMP-3505 flew
-            // KL→Chennai (arrives 06:55) then Chennai→Delhi, her actual base (arrives
-            // 13:55) — she should get India DA, not Malaysia DA (the >=04:00 departure
-            // rule below is only for journeys that do NOT reach India the same day).
+            // Eligible (arrives after 12:00) and lands in India same day — still apply the
+            // same >=04:00 departure-time cutoff used below, rather than always defaulting to
+            // India just because the connecting flight happened to land in India that day.
+            // Bug fixed 2026-08-20: Pratik EMP-3214 departed Manila (Philippines) at 12:30
+            // local, a short (<4 hr) Hong Kong connection, landing Mumbai 21:05 the same day —
+            // he spent the working part of the day in the Philippines and should get
+            // Philippines DA, not India. Only an early (<04:00 local) departure — i.e.
+            // negligible time actually spent in the destination country that day — falls back
+            // to India DA (still correct for the original fix this branch covers, Bhavna Singh
+            // EMP-3505, who departed KL before 04:00 local to arrive Chennai 06:55).
+            const depHHMMSameDay = String(retFlight.departure_time ?? '').substring(0, 5);
+            if (destC !== 'India' && depHHMMSameDay && depHHMMSameDay >= '04:00') {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-RET-${claimId}-${fd}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: fd,
+                description: `Daily Allowance — ${destC} (return travel day, dep ${depHHMMSameDay} >= 04:00, arrives home ${arrHHMM || '?'} > 12:00)`,
+                claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+                currency: destCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+              return;
+            }
             const { rate: indiaRate, currency: indiaCurrency } = getHrDaInfo('India');
             autoRaw.push({
               lineItemId: `AUTO-DA-RET-${claimId}-${fd}`,

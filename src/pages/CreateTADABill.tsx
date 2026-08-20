@@ -3663,20 +3663,28 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             }, undefined as typeof activeFlights[0] | undefined);
 
           // If the journey lands back in India the SAME calendar day (chasing through any
-          // same-day domestic connector to the trainer's actual base), this is simply a
-          // "return home" day — India DA (if eligible), regardless of what time she left the
-          // destination country. The departure-time cutoff below is only for journeys that do
-          // NOT reach India the same day (e.g. Sagnik Ghosh's Sydney→Bangkok→Delhi, landing
-          // in India the next day). Bug fixed 2026-08-10: Bhavna Singh EMP-3505 flew
-          // KL→Chennai (arrives 06:55) then Chennai→Delhi, her actual base (arrives 13:55) —
-          // she should get India DA, not Malaysia DA, since she was home in Delhi that day.
+          // same-day domestic connector to the trainer's actual base), still apply the same
+          // departure-time cutoff as the non-same-day case below — reaching India the same
+          // day does NOT by itself mean the whole day counts as "home". Bug fixed 2026-08-20:
+          // Pratik EMP-3214 departed Manila (Philippines) at 12:30 local, a short (<4 hr, so
+          // not a qualifying layover) Hong Kong connection, arriving Mumbai 21:05 the same
+          // day — he spent the working part of the day in the Philippines and should get
+          // Philippines DA, not India DA, just because the connecting flight happened to land
+          // in India before midnight. Only an early (<04:00 local) departure from the
+          // destination country — i.e. negligible time actually spent there that day — should
+          // fall back to India DA. This still gives the correct answer for the original fix
+          // this branch was added for, Bhavna Singh EMP-3505 (KL→Chennai arrives 06:55, i.e.
+          // departed KL before 04:00 local).
           const finalRetLeg2 = returnFlight2 ? resolveFinalSameDayLeg(returnFlight2) : null;
           const finalToCountry = finalRetLeg2 ? inferCountryFromCity((finalRetLeg2.to_city || '').trim()) : '';
           const finalArrDate = finalRetLeg2 ? (resolveArrDate(finalRetLeg2) || parseDT(returnFlight2!.departure_date)) : '';
           const finalDepDate = returnFlight2 ? parseDT(returnFlight2.departure_date) : '';
           const sameDayIndiaReturn = finalToCountry === 'India' && finalArrDate === finalDepDate;
+          const sameDayDepLocal = returnFlight2 ? (returnFlight2.departure_time || '').substring(0, 5) : '';
 
-          if (sameDayIndiaReturn) {
+          if (sameDayIndiaReturn && sameDayDepLocal && sameDayDepLocal >= '04:00') {
+            travelDayCountry = destCountry;
+          } else if (sameDayIndiaReturn) {
             // Eligibility (arrival ≤ 12:00 → Not Eligible) is enforced separately via
             // flightRetEligible; here we only need the correct COUNTRY when it IS eligible.
             travelDayCountry = 'India';
