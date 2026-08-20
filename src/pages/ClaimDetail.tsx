@@ -570,21 +570,28 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     paidAmount: number; paymentDate: string; utrReference: string; paymentMode: string;
     financeRemarks: string; processedBy: string; processedAt: string;
   };
-  const [tursoPaymentRecord, setTursoPaymentRecord] = useState<PaymentRecordShape | null>(null);
+  // Full payment HISTORY, not just one record — a bill can legitimately be paid more than
+  // once against the same claimId (e.g. an initial payment, then HR reopens/edits the claim
+  // to correct the approved amount and a further payment is recorded for the difference).
+  // Every past entry must stay visible; a later payment must never appear to erase an earlier
+  // one. Sorted newest first; `paymentRecord` (singular, kept for existing callers) is just the
+  // most recent entry.
+  const [tursoPaymentRecords, setTursoPaymentRecords] = useState<PaymentRecordShape[]>([]);
   useEffect(() => {
     if (!claimId) return;
     fetch(`/api/turso?type=payments&claimId=${encodeURIComponent(claimId)}`)
       .then(r => r.ok ? r.json() : { payments: [] })
       .then((d: { payments?: PaymentRecordShape[] }) => {
-        if (Array.isArray(d.payments) && d.payments.length > 0) setTursoPaymentRecord(d.payments[0]);
+        if (Array.isArray(d.payments)) setTursoPaymentRecords(d.payments);
       })
       .catch(() => {});
   }, [claimId]);
-  const paymentRecord = useMemo(() => {
-    if (tursoPaymentRecord) return tursoPaymentRecord;
+  const paymentRecords = useMemo(() => {
+    if (tursoPaymentRecords.length > 0) return tursoPaymentRecords;
     const all = getFromStorage<PaymentRecordShape[]>('tada_local_payments', []);
-    return all.find(p => p.claimId === claimId) ?? null;
-  }, [claimId, tursoPaymentRecord]);
+    return all.filter(p => p.claimId === claimId).sort((a, b) => (b.processedAt || '').localeCompare(a.processedAt || ''));
+  }, [claimId, tursoPaymentRecords]);
+  const paymentRecord = paymentRecords[0] ?? null;
 
   const [summaryOpen, setSummaryOpen] = useState<Record<string, boolean>>({
     assignment: true, leaves: false, da: false, flights: false, lodging: false, travel: true, misc: true,
@@ -4673,6 +4680,34 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 </div>
               )}
             </div>
+
+            {/* Full payment HISTORY — a bill paid more than once against the same claimId
+                (e.g. an initial payment, then HR reopens/corrects the approved amount and a
+                further payment covers the difference) must show every past entry, not just the
+                most recent one. Only rendered when there's more than one, since the single-entry
+                case is already fully shown in the card above. */}
+            {paymentRecords.length > 1 && (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-6 py-4 bg-gray-50 border-b border-gray-100">
+                  <h3 className="text-sm font-bold text-gray-700 uppercase tracking-wide">🧾 Payment History ({paymentRecords.length} entries)</h3>
+                  <p className="text-xs text-gray-400 mt-0.5">Every payment recorded against this bill, most recent first</p>
+                </div>
+                <div className="divide-y divide-gray-100">
+                  {paymentRecords.map((p) => (
+                    <div key={p.paymentId} className="px-6 py-4 flex flex-wrap items-center gap-x-6 gap-y-1">
+                      <span className="font-bold text-emerald-700 text-base">
+                        {claim.currency === 'AED' ? 'AED' : '₹'} {p.paidAmount.toLocaleString('en-IN')}
+                      </span>
+                      <span className="text-sm text-gray-600">{new Date(p.paymentDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+                      <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">{p.paymentMode}</span>
+                      <span className="text-xs font-mono text-gray-500">{p.utrReference}</span>
+                      <span className="text-xs text-gray-400">by {p.processedBy}</span>
+                      {p.financeRemarks && <span className="text-xs text-amber-700 italic">— {p.financeRemarks}</span>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* HR Actions taken on this claim */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">

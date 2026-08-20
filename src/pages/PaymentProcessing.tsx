@@ -334,13 +334,16 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
     setClaimsVersion(v => v + 1);
   }
 
-  function isPaid(claimId: string) {
-    return localPayments.some((p) => p.claimId === claimId);
+  // A bill can legitimately be paid more than once against the same claimId — e.g. an initial
+  // payment, then HR reopens/corrects the approved amount and a further payment covers the
+  // difference. Return every entry (newest first), not just one, so past payments are never
+  // hidden by a later one.
+  function getPaymentRecords(claimId: string) {
+    return localPayments
+      .filter((p) => p.claimId === claimId)
+      .sort((a, b) => (b.processedAt || '').localeCompare(a.processedAt || ''));
   }
 
-  function getPaymentRecord(claimId: string) {
-    return localPayments.find((p) => p.claimId === claimId);
-  }
 
 
   function handleExport() {
@@ -569,8 +572,13 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
                 </tr>
               )}
               {filtered.map((claim) => {
-                const paid = isPaid(claim.claimId) || claim.status === 'Paid';
-                const rec = getPaymentRecord(claim.claimId);
+                // Driven by the claim's CURRENT status, not "has ever had a payment recorded" —
+                // otherwise once a bill had any payment in its history, reopening it (e.g. to
+                // correct the approved amount) could never show "Not Paid" again, and there'd
+                // be no way to record the follow-up payment as its own history entry.
+                const paid = claim.status === 'Paid';
+                const paymentHistory = getPaymentRecords(claim.claimId);
+                const rec = paymentHistory[0];
 const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { bankName: '', accountNumber: '', ifsc: '', loading: false };
                 const isEditingBank = bankEditId === claim.claimId;
                 return (
@@ -714,9 +722,26 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                         </div>
                       )}
                     </td>
-                    {/* Payment Date */}
+                    {/* Payment Date — shows the most recent payment; if this bill has been
+                        paid more than once (e.g. an initial payment, then a correction after
+                        HR reopened/edited the claim), every entry is listed below rather than
+                        the earlier one silently disappearing. */}
                     <td className="px-4 py-3 text-xs text-gray-700">
-                      {rec ? fmtDate(rec.paymentDate) : '—'}
+                      {rec ? (
+                        <div>
+                          <div>{fmtDate(rec.paymentDate)} — {claim.currency === 'AED' ? 'AED' : '₹'}{rec.paidAmount.toLocaleString('en-IN')}</div>
+                          {paymentHistory.length > 1 && (
+                            <div className="mt-1 space-y-0.5" title="All payments recorded against this bill">
+                              <div className="text-[10px] font-semibold text-amber-600">+{paymentHistory.length - 1} earlier payment{paymentHistory.length > 2 ? 's' : ''}:</div>
+                              {paymentHistory.slice(1).map(p => (
+                                <div key={p.paymentId} className="text-[10px] text-gray-400">
+                                  {fmtDate(p.paymentDate)} — {claim.currency === 'AED' ? 'AED' : '₹'}{p.paidAmount.toLocaleString('en-IN')} ({p.paymentMode})
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ) : '—'}
                     </td>
                     {/* Payment Status — inline dropdown, no modal */}
                     <td className="px-4 py-3">
