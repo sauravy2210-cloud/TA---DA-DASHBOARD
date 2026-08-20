@@ -1720,15 +1720,33 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 if (gapStart <= gapEnd && !processedGaps.has(key)) {
                   const gapDays = Math.round((new Date(gapEnd).getTime() - new Date(gapStart).getTime()) / 86400000) + 1;
                   if (gapDays <= 7) {
-                    // Same-country gap: trainer stayed put the whole gap.
+                    // Same-country gap: ONLY assume the trainer stayed put if there is no flight
+                    // evidence to the contrary. Blanket-filling every day just because both
+                    // assignments happen to be in the same country was an assumption, not a
+                    // fact — a trainer can fly home (or anywhere else) mid-gap and come back for
+                    // the next assignment. If ANY flight departs from destA during the gap
+                    // window, that's real evidence of movement, so do NOT auto-fill; leave it for
+                    // HR to review manually instead of guessing. Bug fixed 2026-08-20: multiple
+                    // consecutive "between consecutive assignments" DA rows were being generated
+                    // for a same-country gap without checking whether the trainer actually left
+                    // and returned during it.
                     // DIFFERENT-country gap (e.g. Ankur Kumar EMP-2485: Dubai batch ends 16 Jul,
                     // Nairobi batch starts 20 Jul): trainer stayed in destA's country until a
                     // connecting flight to destB departs. Only fill days up to (not including)
                     // that flight's departure — the departure day itself is handled separately
                     // by the normal departure-travel-day supplement logic.
                     let fillEnd = gapEnd;
-                    let bridgeOk = destA === destB;
-                    if (!bridgeOk) {
+                    let bridgeOk: boolean;
+                    if (destA === destB) {
+                      const anyDepartureDuringGap = activeFlights.some(f => {
+                        const fd = parseDT(String(f.departure_date ?? ''));
+                        if (!fd || fd < gapStart || fd > gapEnd) return false;
+                        const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+                        return fromC === destA;
+                      });
+                      bridgeOk = !anyDepartureDuringGap;
+                    } else {
+                      bridgeOk = false;
                       const bridgingFlight = activeFlights.find(f => {
                         const fd = parseDT(String(f.departure_date ?? ''));
                         if (!fd || fd < gapStart || fd > addD(gapEnd, 1)) return false;
