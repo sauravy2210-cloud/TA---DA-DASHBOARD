@@ -264,6 +264,20 @@ export default async function handler(req, res) {
     if (req.method === 'POST') {
       const claim = req.body;
       if (!claim?.claimId) return res.status(400).json({ error: 'Missing claimId' });
+      // rmsTABillId is set once (async, fire-and-forget) shortly AFTER the initial claim save
+      // completes. If some other action re-saves the claim from a stale in-memory copy fetched
+      // before that update landed, a blind overwrite here would silently erase it. Preserve the
+      // existing stored value whenever the incoming payload doesn't carry one itself, rather
+      // than trusting every caller to always forward it forward correctly.
+      if (claim.rmsTABillId == null) {
+        try {
+          const existing = await db.execute({ sql: 'SELECT data FROM claims WHERE id = ?', args: [claim.claimId] });
+          if (existing.rows.length > 0) {
+            const existingData = JSON.parse(existing.rows[0].data);
+            if (existingData.rmsTABillId != null) claim.rmsTABillId = existingData.rmsTABillId;
+          }
+        } catch { /* best-effort — fall through and save without it if this lookup fails */ }
+      }
       const now = new Date().toISOString();
       await db.execute({
         sql: `INSERT INTO claims (id, trainer_id, status, pending_with, bill_no, data, created_at, updated_at)
