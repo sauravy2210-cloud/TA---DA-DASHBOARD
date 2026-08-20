@@ -1961,10 +1961,6 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         : (asgn.country || cityCountry || 'India');
       // NOTE: do NOT early-return for India here — stored item may have wrong international country
       // and must be corrected to India below.
-      if (claimId === 'CLAIM-1787050886941') {
-        (window as unknown as { __dbgPT: unknown[] }).__dbgPT = (window as unknown as { __dbgPT?: unknown[] }).__dbgPT ?? [];
-        (window as unknown as { __dbgPT: unknown[] }).__dbgPT.push({ date, asgnCity: asgn.city, asgnCountry: asgn.country, cityCountry, destCountry, isDepartureDay, isReturnDay });
-      }
 
       let effectiveCountry = destCountry;
 
@@ -2169,11 +2165,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         if (layoverInfo) effectiveCountry = layoverInfo.country;
       }
 
-      if (claimId === 'CLAIM-1787050886941') {
-        (window as unknown as { __dbgPT2: unknown[] }).__dbgPT2 = (window as unknown as { __dbgPT2?: unknown[] }).__dbgPT2 ?? [];
-        (window as unknown as { __dbgPT2: unknown[] }).__dbgPT2.push({ date, destCountry, effectiveCountry, liExpenseSubType: li.expenseSubType });
+      // Country/amount already correct, but the description text can still carry a stale
+      // country name from an earlier computation of THIS SAME line item object (e.g. a country
+      // fix landing after an HR override already independently matched the corrected value) --
+      // clean that up too rather than skipping entirely just because expenseSubType matches.
+      if (effectiveCountry === li.expenseSubType) {
+        if (effectiveCountry !== 'India' && /india/i.test(li.description)) {
+          return { ...li, description: li.description.replace(/india/gi, effectiveCountry) };
+        }
+        return li;
       }
-      if (effectiveCountry === li.expenseSubType) return li; // already correct, no change
       if (effectiveCountry === 'India') {
         // PMS confirms India — correct any wrong international DA stored in claim
         const { rate, currency } = getHrDaInfo('India');
