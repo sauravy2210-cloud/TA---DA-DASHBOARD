@@ -2271,12 +2271,87 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     if (action.key === 'approve' || action.key === 'partial-approve') {
       const tabillId = (base as unknown as { rmsTABillId?: number }).rmsTABillId;
       if (tabillId) {
-        const tripIds = Array.from(new Set(
-          summaryFlights
-            .filter(f => f.Is_cancelled !== 'Yes')
-            .map(f => f.trip_ID)
-            .filter((v): v is string | number => v != null)
-        )).join(',');
+        // Only this claim's OWN travel/return flights — not every active flight the
+        // trainer has ever had in PMS. Scoped to the assignment(s) on this claim, chasing
+        // through connecting legs the same way the DA and RMS-period logic already does,
+        // rather than any date range the trainer picked.
+        const addDLocal = (iso: string, n: number) => { if (!iso) return ''; const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+        const claimAsgnIds = new Set((base.assignmentIds ?? []).map(String));
+        const claimAsgns = enrichedSummaryAssignments
+          .filter(a => a.assignmentId && claimAsgnIds.has(String(a.assignmentId)))
+          .slice()
+          .sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1);
+        const activeFlightsForTrip = summaryFlights.filter(f => f.Is_cancelled !== 'Yes');
+        const tripIdSet = new Set<string>();
+        const addTripId = (f: typeof activeFlightsForTrip[number] | undefined) => {
+          if (f?.trip_ID != null) tripIdSet.add(String(f.trip_ID));
+        };
+
+        const firstAsgn = claimAsgns[0];
+        const lastAsgn = claimAsgns[claimAsgns.length - 1];
+
+        if (firstAsgn?.startDate) {
+          const outboundCandidates = activeFlightsForTrip.filter(f => {
+            const fd = parseDT(String(f.departure_date ?? ''));
+            return fd ? fd >= addDLocal(firstAsgn.startDate!, -6) && fd <= firstAsgn.startDate! : false;
+          });
+          let outbound = outboundCandidates.length === 0 ? undefined
+            : outboundCandidates.reduce((earliest, f) => {
+                const ed = parseDT(String(earliest.departure_date ?? '')) || '';
+                const fd = parseDT(String(f.departure_date ?? '')) || '';
+                if (fd < ed) return f;
+                if (fd > ed) return earliest;
+                return String(f.departure_time ?? '').substring(0, 5) < String(earliest.departure_time ?? '').substring(0, 5) ? f : earliest;
+              });
+          for (let hop = 0; hop < 5 && outbound; hop++) {
+            addTripId(outbound);
+            const curFromCity = String(outbound.from_city ?? '').trim().toLowerCase();
+            const curDepDate = parseDT(String(outbound.departure_date ?? ''));
+            const prevLeg = activeFlightsForTrip.find(f => {
+              if (f === outbound) return false;
+              const toCity = String(f.to_city ?? '').trim().toLowerCase();
+              const fd = parseDT(String(f.departure_date ?? ''));
+              return !!toCity && toCity === curFromCity && !!fd && fd <= curDepDate && fd >= addDLocal(curDepDate, -2);
+            });
+            if (!prevLeg) break;
+            outbound = prevLeg;
+          }
+        }
+
+        if (lastAsgn?.endDate) {
+          const cityCountryLast = lastAsgn.city ? inferCountryFromCity(lastAsgn.city) : '';
+          const destCountryLast = (lastAsgn.country === 'India' && cityCountryLast && cityCountryLast !== 'India') ? cityCountryLast : (lastAsgn.country || cityCountryLast || '');
+          const returnCandidates = activeFlightsForTrip.filter(f => {
+            const fd = parseDT(String(f.departure_date ?? ''));
+            return fd ? fd >= lastAsgn.endDate! && fd <= addDLocal(lastAsgn.endDate!, 5)
+              && (!destCountryLast || inferCountryFromCity(String(f.from_city ?? '').trim()) === destCountryLast) : false;
+          });
+          let returnLeg = returnCandidates.length === 0 ? undefined
+            : returnCandidates.reduce((earliest, f) => {
+                const ed = parseDT(String(earliest.departure_date ?? '')) || '';
+                const fd = parseDT(String(f.departure_date ?? '')) || '';
+                if (fd < ed) return f;
+                if (fd > ed) return earliest;
+                return String(f.departure_time ?? '').substring(0, 5) < String(earliest.departure_time ?? '').substring(0, 5) ? f : earliest;
+              });
+          for (let hop = 0; hop < 5 && returnLeg; hop++) {
+            addTripId(returnLeg);
+            const curToCity = String(returnLeg.to_city ?? '').trim().toLowerCase();
+            const curCountry = inferCountryFromCity(String(returnLeg.to_city ?? '').trim());
+            if (curCountry === 'India') break;
+            const curArrDate = parseDT(String(returnLeg.arrival_date ?? '')) || parseDT(String(returnLeg.departure_date ?? ''));
+            const nextLeg = activeFlightsForTrip.find(f => {
+              if (f === returnLeg) return false;
+              const fromCity = String(f.from_city ?? '').trim().toLowerCase();
+              const fd = parseDT(String(f.departure_date ?? ''));
+              return !!fromCity && fromCity === curToCity && !!fd && fd >= curArrDate && fd <= addDLocal(curArrDate, 2);
+            });
+            if (!nextLeg) break;
+            returnLeg = nextLeg;
+          }
+        }
+
+        const tripIds = Array.from(tripIdSet).join(',');
         if (tripIds) {
           fetch('/api/turso?type=hr-approve-tabill', {
             method: 'POST',
