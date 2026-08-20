@@ -2694,32 +2694,40 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             {/* Amount summary */}
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <h3 className="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">Amount Summary</h3>
-              {/* Same stored totals as the header strip above (claim.totalClaimedAmount /
-                  approvedAmount / netPayable) — not a live recompute — so this card and the
-                  header never show two different "Net Payable" figures for the same claim. */}
+              {/* Total Claimed stays the STORED original submission amount (never live-recomputed
+                  — matches "View My Bills" so an untouched claim never shows two different
+                  "Claimed" figures). Eligible/Net Payable/Recoverable, however, must reflect any
+                  in-progress HR overrides (edited via the Edit buttons on individual DA/Travel/
+                  Misc rows below) the same way the Final Payment Summary box does — those
+                  overrides aren't written back to the claim record until HR actually clicks
+                  Approve/Partial-Approve, so falling back to the stored total here would show a
+                  number that contradicts the itemized rows HR is looking at right now. Bug fixed
+                  2026-08-20: TADA-2026-00004 (Wasiuddin) — HR had already edited two travel bills
+                  (900->650 approved, 859->0 rejected), Final Payment Summary correctly showed the
+                  live 650, but this card still showed the stored 3,659 as if nothing changed. */}
               <AmountSummary
                 claimedAmount={Math.round(claim.totalClaimedAmount ?? 0)}
-                eligibleAmount={Math.round(claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))}
+                eligibleAmount={Math.round(liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
                 approvedAmount={Math.round(claim.approvedAmount ?? 0)}
                 deductionAmount={Math.round(claim.deductionAmount ?? 0)}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
-                recoverableAmount={Math.round(claim.recoverableAmount ?? 0)}
-                netPayable={Math.round(claim.netPayable ?? computedFinalSettlement)}
+                recoverableAmount={Math.round(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
+                netPayable={Math.round(liveGrandTotalINR > 0 ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement))}
                 currency="INR"
               />
-              {/* Net payable banner — mirrors the stored totals, not a live recompute */}
-              {(claim.netPayable ?? 0) > 0 && (
-                <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${(claim.recoverableAmount ?? 0) > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
+              {/* Net payable banner — same live-first logic as above */}
+              {(liveGrandTotalINR > 0 ? liveNetPayableINR : (claim.netPayable ?? 0)) > 0 && (
+                <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)) > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
                   <div>
                     <p className="text-xs font-semibold text-white uppercase tracking-wide">
-                      {(claim.recoverableAmount ?? 0) > 0 ? '⚠️ Recoverable from Trainer (Final)' : '✅ Net Payable to Trainer (Final)'}
+                      {(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)) > 0 ? '⚠️ Recoverable from Trainer (Final)' : '✅ Net Payable to Trainer (Final)'}
                     </p>
                     <p className="text-[10px] text-white/70 mt-0.5">
-                      {(claim.recoverableAmount ?? 0) > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
+                      {(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)) > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
                     </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{Math.round((claim.recoverableAmount ?? 0) > 0 ? claim.recoverableAmount! : claim.netPayable!).toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{Math.round(liveGrandTotalINR > 0 ? (liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR) : ((claim.recoverableAmount ?? 0) > 0 ? claim.recoverableAmount! : (claim.netPayable ?? 0))).toLocaleString('en-IN')}</span>
                 </div>
               )}
 
@@ -2911,10 +2919,18 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       <span className="text-sm font-bold text-violet-700">− ₹{advanceAdjusted.toLocaleString('en-IN')}</span>
                     </div>
                   )}
-                  {/* Grand total */}
+                  {/* Grand total — must be the SUM OF THIS BOX'S OWN ROWS (live DA/Travel/
+                      Lodging/Misc, including any in-progress HR overrides), not the stored
+                      claim total. Those overrides only get written back to the claim record
+                      when HR clicks Approve/Partial-Approve, so this box would otherwise show
+                      a total that doesn't add up to the very line items it just listed above
+                      it — exactly what happened for TADA-2026-00004 (Wasiuddin): HR had already
+                      edited two travel bills (900->650 approved, 859->0 rejected) via the Edit
+                      button, the DA/Travel rows above correctly showed 1,900 + 650, but this
+                      total still showed the old stored 3,659 instead of 2,550. */}
                   <div className="flex items-center justify-between px-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 mt-1">
                     <span className="text-sm font-bold text-white">NET PAYABLE TO TRAINER</span>
-                    <span className="text-xl font-extrabold text-white">₹{Math.round(claim.netPayable ?? claim.totalClaimedAmount ?? 0).toLocaleString('en-IN')}</span>
+                    <span className="text-xl font-extrabold text-white">₹{Math.round(liveNetPayableINR).toLocaleString('en-IN')}</span>
                   </div>
                   {(() => {
                     const hasConversion = effectiveDaItemsFinal.some(li => li.currency !== 'INR');
