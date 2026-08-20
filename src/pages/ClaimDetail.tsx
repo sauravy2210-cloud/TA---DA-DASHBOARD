@@ -1961,6 +1961,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         : (asgn.country || cityCountry || 'India');
       // NOTE: do NOT early-return for India here — stored item may have wrong international country
       // and must be corrected to India below.
+      if (claimId === 'CLAIM-1787050886941') {
+        (window as unknown as { __dbgPT: unknown[] }).__dbgPT = (window as unknown as { __dbgPT?: unknown[] }).__dbgPT ?? [];
+        (window as unknown as { __dbgPT: unknown[] }).__dbgPT.push({ date, asgnCity: asgn.city, asgnCountry: asgn.country, cityCountry, destCountry, isDepartureDay, isReturnDay });
+      }
 
       let effectiveCountry = destCountry;
 
