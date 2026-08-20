@@ -4446,13 +4446,100 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             `DA: ${formatINR(Math.round(autoDATotal + foreignDATotalINR))} | Travel: ${formatINR(Math.round(travelTotal))} | ` +
             `Lodging: ${formatINR(Math.round(lodgingTotal))} | Misc: ${formatINR(Math.round(miscTotal))} | Grand Total: ${formatINR(Math.round(grandTotal))}`
           );
+
+          // RMS "From"/"To" must reflect the trainer's ACTUAL travel window from flight data —
+          // not the claim date range they happened to select in Step 1 — and must chase through
+          // connecting legs (same class of fix as the DA travel/return-day logic above) rather
+          // than stopping at the first leg's own date, so a transit layover never gets reported
+          // as the real departure/arrival.
+          const rmsActiveFlights = pmsFlights.filter(f => f.Is_cancelled !== 'Yes');
+          const sortedAsgns = assignments.slice().sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1);
+          const firstAsgn = sortedAsgns[0];
+          const lastAsgn = sortedAsgns[sortedAsgns.length - 1];
+
+          // Earliest outbound leg: the first flight departing in the days immediately before/on
+          // the first assignment's start — chase BACKWARD through same/previous-day connecting
+          // legs to find the leg that actually left India (or wherever the trainer started
+          // from), not just the last, most-visible-in-the-window leg.
+          let rmsFromDate = fromDate;
+          if (firstAsgn?.startDate) {
+            const outboundCandidates = rmsActiveFlights.filter(f => {
+              const fd = parseDT((f.departure_date || '').trim());
+              return fd ? fd >= addDays(firstAsgn.startDate!, -6) && fd <= firstAsgn.startDate! : false;
+            });
+            let earliestOutbound = outboundCandidates.length === 0 ? undefined
+              : outboundCandidates.reduce((earliest, f) => {
+                  const ed = parseDT((earliest.departure_date || '').trim()) || '';
+                  const fd = parseDT((f.departure_date || '').trim()) || '';
+                  if (fd < ed) return f;
+                  if (fd > ed) return earliest;
+                  return (f.departure_time || '').substring(0, 5) < (earliest.departure_time || '').substring(0, 5) ? f : earliest;
+                });
+            // Chase backward through connecting legs — a leg whose from_city matches an
+            // earlier leg's to_city, departing within 2 days before, is the same journey.
+            for (let hop = 0; hop < 5 && earliestOutbound; hop++) {
+              const curFromCity = (earliestOutbound.from_city || '').trim().toLowerCase();
+              const curDepDate = parseDT((earliestOutbound.departure_date || '').trim());
+              const prevLeg = rmsActiveFlights.find(f => {
+                if (f === earliestOutbound) return false;
+                const toCity = (f.to_city || '').trim().toLowerCase();
+                const fd = parseDT((f.departure_date || '').trim());
+                return !!toCity && toCity === curFromCity && !!fd && fd <= curDepDate && fd >= addDays(curDepDate, -2);
+              });
+              if (!prevLeg) break;
+              earliestOutbound = prevLeg;
+            }
+            if (earliestOutbound) rmsFromDate = parseDT((earliestOutbound.departure_date || '').trim()) || fromDate;
+          }
+
+          // Final return arrival: the earliest return leg departing FROM the last assignment's
+          // destination after it ends, then chase FORWARD through connecting legs — stopping
+          // the instant a leg lands in India (that's "home"; a later flight from that same city
+          // days afterward belongs to a different trip, not this connection) and capping each
+          // hop to a 2-day window so an unrelated future trip can never be picked up.
+          let rmsToDate = toDate;
+          if (lastAsgn?.endDate) {
+            const destCountryLast = (lastAsgn.country === 'India' && lastAsgn.city ? inferCountryFromCity(lastAsgn.city) : lastAsgn.country) || inferCountryFromCity(lastAsgn.city || '');
+            const returnCandidates = rmsActiveFlights.filter(f => {
+              const fd = parseDT((f.departure_date || '').trim());
+              return fd ? fd >= lastAsgn.endDate! && fd <= addDays(lastAsgn.endDate!, 5)
+                && (!destCountryLast || inferCountryFromCity((f.from_city || '').trim()) === destCountryLast) : false;
+            });
+            let returnLeg = returnCandidates.length === 0 ? undefined
+              : returnCandidates.reduce((earliest, f) => {
+                  const ed = parseDT((earliest.departure_date || '').trim()) || '';
+                  const fd = parseDT((f.departure_date || '').trim()) || '';
+                  if (fd < ed) return f;
+                  if (fd > ed) return earliest;
+                  return (f.departure_time || '').substring(0, 5) < (earliest.departure_time || '').substring(0, 5) ? f : earliest;
+                });
+            for (let hop = 0; hop < 5 && returnLeg; hop++) {
+              const curToCity = (returnLeg.to_city || '').trim().toLowerCase();
+              const curCountry = inferCountryFromCity((returnLeg.to_city || '').trim());
+              if (curCountry === 'India') break;
+              const curArrDate = parseDT((returnLeg.arrival_date || '').trim()) || parseDT((returnLeg.departure_date || '').trim());
+              const nextLeg = rmsActiveFlights.find(f => {
+                if (f === returnLeg) return false;
+                const fromCity = (f.from_city || '').trim().toLowerCase();
+                const fd = parseDT((f.departure_date || '').trim());
+                return !!fromCity && fromCity === curToCity && !!fd && fd >= curArrDate && fd <= addDays(curArrDate, 2);
+              });
+              if (!nextLeg) break;
+              returnLeg = nextLeg;
+            }
+            if (returnLeg) {
+              const arrDate = parseDT((returnLeg.arrival_date || '').trim()) || parseDT((returnLeg.departure_date || '').trim());
+              if (arrDate) rmsToDate = arrDate;
+            }
+          }
+
           const rmsRes = await fetch('/api/turso?type=create-tabill', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               EmpID: empIdNum,
-              From: `${fromDate} 00:00:00`,
-              To: `${toDate} 23:59:59`,
+              From: `${rmsFromDate} 00:00:00`,
+              To: `${rmsToDate} 23:59:59`,
               IsSubmitted: 1,
               Advance: advanceTotal || undefined,
               TADAAmt: grandTotal || undefined,

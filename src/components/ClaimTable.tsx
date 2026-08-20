@@ -325,6 +325,9 @@ export const ClaimTable: React.FC<ClaimTableProps> = ({
                     >
                       {claim.billNo}
                     </button>
+                    {(claim as unknown as { rmsTABillId?: number }).rmsTABillId && (
+                      <div className="text-[10px] text-gray-400 mt-0.5">RMS: {(claim as unknown as { rmsTABillId?: number }).rmsTABillId}</div>
+                    )}
                   </td>
 
                   {/* Trainer Name/ID — HRAdmin/SuperAdmin only */}

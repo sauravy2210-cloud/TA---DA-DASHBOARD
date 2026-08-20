@@ -2448,6 +2448,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           <div className="flex-1">
             <div className="flex flex-wrap items-center gap-2 mb-1">
               <h2 className="text-lg font-bold text-gray-900">{claim.billNo}</h2>
+              {claim.rmsTABillId && (
+                <span className="text-xs font-medium text-gray-500 bg-gray-100 border border-gray-200 rounded px-2 py-0.5">RMS TABillID: {claim.rmsTABillId}</span>
+              )}
               <StatusBadge status={claim.status} />
               {claim.pendingWith && <PendingBadge pendingWith={claim.pendingWith} />}
             </div>

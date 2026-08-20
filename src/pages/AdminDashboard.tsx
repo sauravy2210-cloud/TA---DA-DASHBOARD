@@ -1188,6 +1188,9 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                     >
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         <span className="font-medium text-blue-600">{c.billNo}</span>
+                        {(c as unknown as { rmsTABillId?: number }).rmsTABillId && (
+                          <div className="text-[10px] text-gray-400 mt-0.5">RMS: {(c as unknown as { rmsTABillId?: number }).rmsTABillId}</div>
+                        )}
                       </td>
                       <td className="px-4 py-2.5 whitespace-nowrap">
                         {c.assignmentIds && c.assignmentIds.length > 0 ? (
