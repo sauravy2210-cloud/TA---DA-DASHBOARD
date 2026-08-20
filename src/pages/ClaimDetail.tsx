@@ -2023,13 +2023,18 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               return { ...li, claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0,
                 description: `Not Eligible — Return Arrival Before 12:00 (arrives ${retArrHHMM})` };
             }
-            // Eligible (arrives after 12:00) and lands in India same day — she's simply "home"
-            // that day, so India DA applies regardless of what time she left the destination
-            // country. Bug fixed 2026-08-10: Bhavna Singh EMP-3505 flew KL→Chennai (arrives
-            // 06:55) then Chennai→Delhi, her actual base (arrives 13:55) — India DA, not
-            // Malaysia DA (the departure-time cutoff below is only for journeys that do NOT
-            // reach India the same day).
-            effectiveCountry = 'India';
+            // Eligible (arrives after 12:00) and lands in India same day — still apply the
+            // same >=04:00 departure-time cutoff used in the else-branch below, rather than
+            // always defaulting to India. Bug fixed 2026-08-20: Pratik Khuthia EMP-3214
+            // departed Manila (Philippines) at 12:30 local, a short (<4 hr) Hong Kong
+            // connection, landing Mumbai 21:05 the same day — he spent the working part of the
+            // day in the Philippines and should get Philippines DA, not India, just because the
+            // connecting flight landed in India before midnight. Only an early (<04:00 local)
+            // departure — negligible time actually spent in destCountry that day — falls back
+            // to India (still correct for Bhavna Singh EMP-3505, who departed KL before 04:00).
+            const retDepTimeSameDay = String(retFlight!.departure_time ?? '').substring(0, 5);
+            if (!retDepTimeSameDay || retDepTimeSameDay < '04:00') effectiveCountry = 'India';
+            // else: departs at/after 04:00 — keep destCountry (effectiveCountry already = destCountry)
           } else if (retToCountry && retToCountry !== 'India' && retToCountry !== destCountry) {
             // The flight is heading to a DIFFERENT international destination, not returning
             // home to India — this day genuinely belongs to that new assignment, not this
