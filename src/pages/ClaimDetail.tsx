@@ -2169,6 +2169,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         if (layoverInfo) effectiveCountry = layoverInfo.country;
       }
 
+      if (claimId === 'CLAIM-1787050886941') {
+        (window as unknown as { __dbgPT2: unknown[] }).__dbgPT2 = (window as unknown as { __dbgPT2?: unknown[] }).__dbgPT2 ?? [];
+        (window as unknown as { __dbgPT2: unknown[] }).__dbgPT2.push({ date, destCountry, effectiveCountry, liExpenseSubType: li.expenseSubType });
+      }
       if (effectiveCountry === li.expenseSubType) return li; // already correct, no change
       if (effectiveCountry === 'India') {
         // PMS confirms India — correct any wrong international DA stored in claim
