@@ -642,6 +642,16 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                       <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${STATUS_COLORS[claim.status] ?? 'bg-gray-100 text-gray-600'}`}>
                         {claim.status}
                       </span>
+                      {/* Flag right here, next to the badge, when the actual paid amount doesn't
+                          match the claim's current Approved/Net Payable shown a few columns to
+                          the left — visible without scrolling all the way to Payment Date.
+                          Happens legitimately when HR reopens a paid claim and corrects the
+                          approved amount before a follow-up payment is recorded. */}
+                      {claim.status === 'Paid' && rec && Math.round(rec.paidAmount) !== Math.round(claim.netPayable ?? claim.approvedAmount ?? 0) && (
+                        <div className="mt-1 text-[10px] font-semibold text-amber-600" title="The recorded payment doesn't match this claim's current Net Payable — see Payment Date column for full history">
+                          ⚠ Actually paid: {claim.currency === 'AED' ? 'AED' : '₹'}{rec.paidAmount.toLocaleString('en-IN')}
+                        </div>
+                      )}
                     </td>
                     {/* HR Remarks */}
                     <td className="px-4 py-3 max-w-[200px]">
