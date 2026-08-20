@@ -545,6 +545,9 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                       >
                         {claim.billNo}
                       </button>
+                      {(claim as unknown as { rmsTABillId?: number }).rmsTABillId && (
+                        <div className="text-[10px] text-gray-400 mt-0.5">RMS: {(claim as unknown as { rmsTABillId?: number }).rmsTABillId}</div>
+                      )}
                       {hasDaOverlap(claim) && (
                         <div className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-red-100 text-red-600 border border-red-200" title="Some DA dates in this claim were already paid in another approved/paid claim">
                           ⚠ DA Overlap
