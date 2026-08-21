@@ -157,9 +157,15 @@ export default async function handler(req, res) {
         From, To,
         IsSubmitted: IsSubmitted ?? 1,
         Source: Source || 'From the NEW TA DA Dashboard',
+        // Always send explicit numbers for Advance/TADAAmt, never omit them. Omitting a field
+        // when the caller passed `undefined` (e.g. `claim.advanceAdjusted || undefined`, which
+        // evaluates to undefined for a genuine 0) left RMS with a blank/NULL value even when we
+        // actually had a real 0 (or worse, a real nonzero amount that just hadn't been forwarded
+        // by the caller yet). RMS flagged this directly: "Advance amount missing in API data" /
+        // "TADA amount coming as 0/NULL despite an available claim" (2026-08-21).
+        Advance: Number(Advance) || 0,
+        TADAAmt: Number(TADAAmt) || 0,
       };
-      if (Advance != null)          body.Advance = Advance;
-      if (TADAAmt != null)          body.TADAAmt = TADAAmt;
       if (EmpRemark)                body.EmpRemark = EmpRemark;
       if (scids)                    body.scids = scids;
       if (IsSelfSponsored != null)  body.IsSelfSponsored = IsSelfSponsored;

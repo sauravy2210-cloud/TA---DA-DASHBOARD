@@ -2394,9 +2394,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         if (lastAsgn?.endDate) {
           const cityCountryLast = lastAsgn.city ? inferCountryFromCity(lastAsgn.city) : '';
           const destCountryLast = (lastAsgn.country === 'India' && cityCountryLast && cityCountryLast !== 'India') ? cityCountryLast : (lastAsgn.country || cityCountryLast || '');
+          // Widened from +5 to +45 days — a return flight is often rebooked (original ticket
+          // cancelled, a later one issued) well past the assignment's original end date. Bug
+          // fixed 2026-08-21: Kshitiz Raghuvanshi EMP-2707, TABill 82907 — assignment ended 31
+          // Jul, but the return was cancelled and rebooked to 15 Aug; the +5 day window missed
+          // the return leg entirely, so no TripID for it was ever sent to RMS's Approve API.
           const returnCandidates = activeFlightsForTrip.filter(f => {
             const fd = parseDT(String(f.departure_date ?? ''));
-            return fd ? fd >= lastAsgn.endDate! && fd <= addDLocal(lastAsgn.endDate!, 5)
+            return fd ? fd >= lastAsgn.endDate! && fd <= addDLocal(lastAsgn.endDate!, 45)
               && (!destCountryLast || inferCountryFromCity(String(f.from_city ?? '').trim()) === destCountryLast) : false;
           });
           let returnLeg = returnCandidates.length === 0 ? undefined

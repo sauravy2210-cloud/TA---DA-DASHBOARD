@@ -4531,9 +4531,18 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           let rmsToDate = toDate;
           if (lastAsgn?.endDate) {
             const destCountryLast = (lastAsgn.country === 'India' && lastAsgn.city ? inferCountryFromCity(lastAsgn.city) : lastAsgn.country) || inferCountryFromCity(lastAsgn.city || '');
+            // Widened from +5 to +45 days: a return flight is often rebooked (original ticket
+            // cancelled, a later one issued) well past the assignment's original end date. Bug
+            // fixed 2026-08-21: Kshitiz Raghuvanshi EMP-2707 -- assignment ended 31 Jul, but the
+            // original 01 Aug return was cancelled and rebooked to 15 Aug (14 days later); the
+            // +5 day window missed it entirely, so this claim registered with the wrong dates.
+            // Picking the EARLIEST active flight departing from destCountryLast within this
+            // window still correctly identifies the real return leg rather than a later
+            // unrelated trip, since a genuinely different assignment's own flights would need to
+            // depart from the SAME country even sooner to be picked up in error.
             const returnCandidates = rmsActiveFlights.filter(f => {
               const fd = parseDT((f.departure_date || '').trim());
-              return fd ? fd >= lastAsgn.endDate! && fd <= addDays(lastAsgn.endDate!, 5)
+              return fd ? fd >= lastAsgn.endDate! && fd <= addDays(lastAsgn.endDate!, 45)
                 && (!destCountryLast || inferCountryFromCity((f.from_city || '').trim()) === destCountryLast) : false;
             });
             let returnLeg = returnCandidates.length === 0 ? undefined
@@ -4564,29 +4573,58 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             }
           }
 
-          const rmsRes = await fetch('/api/turso?type=create-tabill', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              EmpID: empIdNum,
-              From: `${rmsFromDate} 00:00:00`,
-              To: `${rmsToDate} 23:59:59`,
-              IsSubmitted: 1,
-              Advance: advanceTotal || undefined,
-              TADAAmt: grandTotal || undefined,
-              EmpRemark: remarkParts.join(' — ').slice(0, 4000),
-              scids: scidList || undefined,
-            }),
-          });
-          if (rmsRes.ok) {
-            const rmsData = await rmsRes.json();
-            if (rmsData.TABillID) {
-              saveClaim({ ...claim, lineItems: lineItemsWithUrls, rmsTABillId: rmsData.TABillID } as import('../types').ClaimHeader);
-              fetch('/api/turso?type=claims', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim, rmsTABillId: rmsData.TABillID }),
-              }).catch(() => {});
+          // Reuse an existing RMS TA Bill instead of creating a new one when another claim by
+          // this same trainer already registered essentially the same journey (same or
+          // overlapping travel dates). Without this, a trainer submitting several separate
+          // bills that all cover part of one trip (e.g. DA in one bill, misc expenses in
+          // another) registered a SEPARATE RMS record for each — RMS flagged this directly:
+          // "For one round journey, we should receive a single claim entry" (2026-08-21).
+          let reusedTABillId: number | null = null;
+          try {
+            const otherClaimsRes = await fetch(`/api/turso?type=claims&trainerId=${encodeURIComponent(String(currentUser?.trainerId ?? ''))}`);
+            if (otherClaimsRes.ok) {
+              const { claims: otherClaims } = await otherClaimsRes.json() as { claims?: Array<{ claimId: string; claimStartDate?: string; claimEndDate?: string; rmsTABillId?: number }> };
+              const overlap = (otherClaims ?? []).find(c =>
+                c.claimId !== claimId && c.rmsTABillId &&
+                c.claimStartDate && c.claimEndDate &&
+                c.claimStartDate <= (claim.claimEndDate || rmsToDate) && (claim.claimStartDate || rmsFromDate) <= c.claimEndDate
+              );
+              if (overlap?.rmsTABillId) reusedTABillId = overlap.rmsTABillId;
+            }
+          } catch { /* dedup check is best-effort — fall through to creating a new record */ }
+
+          if (reusedTABillId) {
+            saveClaim({ ...claim, lineItems: lineItemsWithUrls, rmsTABillId: reusedTABillId } as import('../types').ClaimHeader);
+            fetch('/api/turso?type=claims', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim, rmsTABillId: reusedTABillId }),
+            }).catch(() => {});
+          } else {
+            const rmsRes = await fetch('/api/turso?type=create-tabill', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                EmpID: empIdNum,
+                From: `${rmsFromDate} 00:00:00`,
+                To: `${rmsToDate} 23:59:59`,
+                IsSubmitted: 1,
+                Advance: advanceTotal || 0,
+                TADAAmt: grandTotal || 0,
+                EmpRemark: remarkParts.join(' — ').slice(0, 4000),
+                scids: scidList || undefined,
+              }),
+            });
+            if (rmsRes.ok) {
+              const rmsData = await rmsRes.json();
+              if (rmsData.TABillID) {
+                saveClaim({ ...claim, lineItems: lineItemsWithUrls, rmsTABillId: rmsData.TABillID } as import('../types').ClaimHeader);
+                fetch('/api/turso?type=claims', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim, rmsTABillId: rmsData.TABillID }),
+                }).catch(() => {});
+              }
             }
           }
         }
