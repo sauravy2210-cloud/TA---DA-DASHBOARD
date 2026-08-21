@@ -1713,17 +1713,30 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           };
           const windowStart = addD(asgn.startDate!, -5);
           const windowEnd   = asgn.startDate!;
-          const found = activeFlights.find(f => {
+          // Find the overnight leg first (departs late enough, or has arrival_date set, to land
+          // the NEXT calendar day) WITHOUT requiring it to land directly in destC — it may only
+          // be a transit hop (e.g. Mumbai->Hongkong). Then chase FORWARD through same-day
+          // connecting legs (same as resolveFinalSameDayLeg elsewhere in this file) to find
+          // where the trainer actually ends up. Checking each leg in isolation missed the case
+          // where the overnight leg reaches a transit city and a SAME-DAY connecting leg then
+          // reaches the real destination — neither leg alone is "overnight AND arrives at destC".
+          // Bug fixed 2026-08-21: Pratik Khuthia EMP-3214, Asgn #261704 — Mumbai->Hongkong (dep
+          // 11 Aug 22:25, arrives Hongkong 12 Aug 06:55, overnight but NOT the destination) then
+          // Hongkong->Manila (dep 12 Aug 09:00, arrives 12 Aug 11:20, same-day but IS the
+          // destination) — 12 Aug got no DA at all because neither leg matched both conditions.
+          const overnightCandidate = activeFlights.find(f => {
             const arrDate = resolveArrDate(f);
             if (!arrDate) return false;
             const depDate = parseDT(String(f.departure_date ?? ''));
             if (!depDate || depDate >= arrDate) return false; // must be overnight (arrival later than departure)
             if (depDate < windowStart || depDate > windowEnd) return false;
-            const toCountry = inferCountryFromCity(String(f.to_city ?? '').trim());
-            return toCountry === destC;
+            return true;
           });
-          if (!found) return;
-          const arrIso = resolveArrDate(found);
+          if (!overnightCandidate) return;
+          const finalLeg = resolveFinalSameDayLeg(overnightCandidate);
+          const finalToCountry = inferCountryFromCity(String(finalLeg.to_city ?? '').trim());
+          if (finalToCountry !== destC) return;
+          const arrIso = resolveArrDate(finalLeg) || resolveArrDate(overnightCandidate);
           if (!arrIso || autoRaw.some(li => li.date === arrIso)) return;
           const { rate, currency } = getHrDaInfo(destC);
           if (rate <= 0) return;
