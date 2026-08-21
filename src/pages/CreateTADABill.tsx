@@ -4574,22 +4574,29 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           }
 
           // Reuse an existing RMS TA Bill instead of creating a new one when another claim by
-          // this same trainer already registered essentially the same journey (same or
-          // overlapping travel dates). Without this, a trainer submitting several separate
-          // bills that all cover part of one trip (e.g. DA in one bill, misc expenses in
-          // another) registered a SEPARATE RMS record for each — RMS flagged this directly:
-          // "For one round journey, we should receive a single claim entry" (2026-08-21).
+          // this same trainer already registered essentially the same journey. Without this, a
+          // trainer submitting several separate bills that all cover part of one trip (e.g. DA
+          // in one bill, misc expenses in another) registered a SEPARATE RMS record for each —
+          // RMS flagged this directly: "For one round journey, we should receive a single claim
+          // entry" (2026-08-21), and confirmed by example: 5 separate TABillIDs for one trainer
+          // all on assignment 264822. Matched primarily by SHARED ASSIGNMENT ID — the same
+          // batch/course is the clearest signal of "same journey", more precise than date-range
+          // overlap alone (two genuinely different trips can still have adjacent dates). Falls
+          // back to overlapping travel dates only when no assignment match exists.
           let reusedTABillId: number | null = null;
           try {
             const otherClaimsRes = await fetch(`/api/turso?type=claims&trainerId=${encodeURIComponent(String(currentUser?.trainerId ?? ''))}`);
             if (otherClaimsRes.ok) {
-              const { claims: otherClaims } = await otherClaimsRes.json() as { claims?: Array<{ claimId: string; claimStartDate?: string; claimEndDate?: string; rmsTABillId?: number }> };
-              const overlap = (otherClaims ?? []).find(c =>
-                c.claimId !== claimId && c.rmsTABillId &&
+              const { claims: otherClaims } = await otherClaimsRes.json() as { claims?: Array<{ claimId: string; assignmentIds?: string[]; claimStartDate?: string; claimEndDate?: string; rmsTABillId?: number }> };
+              const thisAsgnIds = new Set((claim.assignmentIds ?? []).map(String));
+              const others = (otherClaims ?? []).filter(c => c.claimId !== claimId && c.rmsTABillId);
+              const asgnMatch = others.find(c => (c.assignmentIds ?? []).some(aid => thisAsgnIds.has(String(aid))));
+              const dateMatch = !asgnMatch ? others.find(c =>
                 c.claimStartDate && c.claimEndDate &&
                 c.claimStartDate <= (claim.claimEndDate || rmsToDate) && (claim.claimStartDate || rmsFromDate) <= c.claimEndDate
-              );
-              if (overlap?.rmsTABillId) reusedTABillId = overlap.rmsTABillId;
+              ) : undefined;
+              const match = asgnMatch ?? dateMatch;
+              if (match?.rmsTABillId) reusedTABillId = match.rmsTABillId;
             }
           } catch { /* dedup check is best-effort — fall through to creating a new record */ }
 
