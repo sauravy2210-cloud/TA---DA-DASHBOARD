@@ -2257,6 +2257,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
 
   const liveNetPayableINR = Math.max(0, liveGrandTotalINR - advanceAdjusted);
   const liveRecoverableINR = Math.max(0, advanceAdjusted - liveGrandTotalINR);
+  // Whether the live recompute actually has data to work with, as opposed to `liveGrandTotalINR
+  // > 0` — a claim whose DA is fully deduped against another claim's already-paid days AND whose
+  // travel bills HR has legitimately zeroed out (both real, intentional cases, not missing data)
+  // can have a genuinely correct live total of exactly 0. Treating "> 0" as the readiness check
+  // made the header/Amount Summary fall back to the stale stored total instead of showing that
+  // correct 0. Bug fixed 2026-08-21: TADA-2026-00006 (Akshay Kumar) -- DA already paid via
+  // TADA-2026-00030, all 4 travel bills HR-zeroed as duplicates of the same trip, Final Payment
+  // Summary correctly showed Rs.0, but Amount Summary/header still showed the stale Rs.12,372.
+  const liveDataReady = effectiveDaItemsFinal.length > 0 || effectiveTravelItemsFinal.length > 0 || effectiveMiscItemsFinal.length > 0;
 
   const claimAttachments = useMemo(
     () => claimLineItems.filter(li => li.receiptData || li.receiptUploaded),
@@ -2285,7 +2294,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
 
     const now = new Date().toISOString();
     // Use live computed total (multi-currency converted to INR) when available
-    const computedTotal = liveGrandTotalINR > 0 ? liveGrandTotalINR : (base.totalClaimedAmount ?? 0);
+    const computedTotal = liveDataReady ? liveGrandTotalINR : (base.totalClaimedAmount ?? 0);
     // advanceAdjusted reflects whichever advance checkboxes are CURRENTLY ticked in the UI,
     // which start unchecked on every page load. Only Approve/Partial-Approve are actions
     // that are meant to (re)record which advances were used for this decision — every other
@@ -2522,7 +2531,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       billNo: claim.billNo,
       remarks: remarks || undefined,
       hrName: 'HR Admin',
-      approvedAmount: overrideApprovedAmount ?? (liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount ?? 0)),
+      approvedAmount: overrideApprovedAmount ?? (liveDataReady ? liveGrandTotalINR : (claim.approvedAmount ?? 0)),
       currency: 'INR',
     });
     if (!sent) {
@@ -2639,7 +2648,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Approved</div>
                 <div className="font-semibold text-green-700">
-                  ₹{Math.round(liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
+                  ₹{Math.round(liveDataReady ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2655,7 +2664,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Net Payable</div>
                 <div className="font-bold text-blue-700">
-                  ₹{Math.round(liveGrandTotalINR > 0 ? liveNetPayableINR : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
+                  ₹{Math.round(liveDataReady ? liveNetPayableINR : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2785,27 +2794,29 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   live 650, but this card still showed the stored 3,659 as if nothing changed. */}
               <AmountSummary
                 claimedAmount={Math.round(claim.totalClaimedAmount ?? 0)}
-                eligibleAmount={Math.round(liveGrandTotalINR > 0 ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
+                eligibleAmount={Math.round(liveDataReady ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
                 approvedAmount={Math.round(claim.approvedAmount ?? 0)}
                 deductionAmount={Math.round(claim.deductionAmount ?? 0)}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
-                recoverableAmount={Math.round(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
-                netPayable={Math.round(liveGrandTotalINR > 0 ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement))}
+                recoverableAmount={Math.round(liveDataReady ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
+                netPayable={Math.round(liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement))}
                 currency="INR"
               />
-              {/* Net payable banner — same live-first logic as above */}
-              {(liveGrandTotalINR > 0 ? liveNetPayableINR : (claim.netPayable ?? 0)) > 0 && (
-                <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)) > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
+              {/* Net payable banner — same live-first logic as above. Shown whenever live data
+                  is available at all, even if the true amount is 0 (e.g. fully deduped against
+                  another claim), so that correct 0 is visible rather than hidden. */}
+              {liveDataReady && (
+                <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${liveRecoverableINR > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
                   <div>
                     <p className="text-xs font-semibold text-white uppercase tracking-wide">
-                      {(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)) > 0 ? '⚠️ Recoverable from Trainer (Final)' : '✅ Net Payable to Trainer (Final)'}
+                      {liveRecoverableINR > 0 ? '⚠️ Recoverable from Trainer (Final)' : '✅ Net Payable to Trainer (Final)'}
                     </p>
                     <p className="text-[10px] text-white/70 mt-0.5">
-                      {(liveGrandTotalINR > 0 ? liveRecoverableINR : (claim.recoverableAmount ?? 0)) > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
+                      {liveRecoverableINR > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
                     </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{Math.round(liveGrandTotalINR > 0 ? (liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR) : ((claim.recoverableAmount ?? 0) > 0 ? claim.recoverableAmount! : (claim.netPayable ?? 0))).toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{Math.round(liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR).toLocaleString('en-IN')}</span>
                 </div>
               )}
 
@@ -4455,7 +4466,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 })()}
 
                 {/* ── Live Final Summary strip — visible to HR without scrolling up ── */}
-                {currentUser.role === 'HRAdmin' && liveGrandTotalINR > 0 && (
+                {currentUser.role === 'HRAdmin' && liveDataReady && (
                   <div className="mt-4 rounded-xl border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 px-5 py-4">
                     <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-widest mb-3">📊 Live Final Summary (reflects your edits above)</p>
                     <div className="flex flex-wrap gap-3">
