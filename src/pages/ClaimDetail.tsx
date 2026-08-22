@@ -1914,15 +1914,26 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       let isDepartureDay = false;
       let isReturnDay = false;
 
+      // Check return-day (immediately after a PRIOR assignment ends) BEFORE departure-day
+      // (anywhere in a looser 6-day window before a LATER assignment starts). A date can satisfy
+      // both when two assignments are close together — the tight, unambiguous "very next day
+      // after this assignment ended" match must win over the loose "somewhere in the 6 days
+      // before that OTHER assignment starts" match, or a genuine return day gets silently
+      // reclassified as an early-arrival departure day for a trip that hasn't even started yet.
+      // Bug fixed 2026-08-22: Nityanand Thakur EMP-760 — 11 Jul (the day after his Bangalore
+      // assignment ended 10 Jul, and the day he actually departed India for the Philippines) was
+      // being reclassified as a "departure day" for the Philippines assignment (starts 13 Jul,
+      // within its 6-day-early window) instead of the return day for Bangalore, overwriting a
+      // correct India ₹950 entry with an incorrect Philippines one.
+      if (!asgn) {
+        const byRet = enrichedSummaryAssignments.find(a => a.endDate && addD(a.endDate, 1) === date);
+        if (byRet) { asgn = byRet; isReturnDay = true; }
+      }
       if (!asgn) {
         // Check up to 6 days before startDate (matches the widened departure supplement range —
         // catches trainers who arrive several days early and stay locally before batch start)
         const byDep = enrichedSummaryAssignments.find(a => a.startDate && date >= addD(a.startDate, -6) && date < a.startDate);
         if (byDep) { asgn = byDep; isDepartureDay = true; }
-      }
-      if (!asgn) {
-        const byRet = enrichedSummaryAssignments.find(a => a.endDate && addD(a.endDate, 1) === date);
-        if (byRet) { asgn = byRet; isReturnDay = true; }
       }
       if (!asgn) {
         // Overnight arrival check: date is 2-5 days after an assignment end, trainer arrived
