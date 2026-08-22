@@ -1317,7 +1317,21 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       if (claimStart && claimEnd) {
         const autoRaw: ClaimLineItem[] = [];
         const cur = new Date(claimStart);
-        const fin = new Date(claimEnd);
+        // Extend the loop end past claimEnd when an assignment is ALREADY IN PROGRESS as of
+        // claimEnd (started on/before claimEnd) but its own real end date runs later — e.g. a
+        // trainer submits a partial-period claim (20 Aug) mid-way through a 17-21 Aug assignment.
+        // The trailing in-assignment days (21 Aug) must still get normal PMS-calculated DA, not be
+        // silently skipped just because this claim's own date range ends early. Akshay Kumar
+        // EMP-519, TADA-2026-00044, assignment 265769 (17-21 Aug Johannesburg): 21 Aug was missing
+        // entirely from the DA table because claimEnd=20 Aug stopped the loop one day short.
+        let fin = new Date(claimEnd);
+        enrichedSummaryAssignments.forEach(asgn => {
+          if (!asgn.startDate || !asgn.endDate) return;
+          if (asgn.startDate <= claimEnd && asgn.endDate > claimEnd) {
+            const candidateFin = new Date(asgn.endDate);
+            if (candidateFin > fin) fin = candidateFin;
+          }
+        });
         while (cur <= fin) {
           const iso = cur.toISOString().slice(0, 10);
           // Approved leave day → India ₹950 only if trainer has a domestic India flight on this day;
