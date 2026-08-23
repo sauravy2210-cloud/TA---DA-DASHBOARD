@@ -4591,10 +4591,17 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
               const thisAsgnIds = new Set((claim.assignmentIds ?? []).map(String));
               const others = (otherClaims ?? []).filter(c => c.claimId !== claimId && c.rmsTABillId);
               const asgnMatch = others.find(c => (c.assignmentIds ?? []).some(aid => thisAsgnIds.has(String(aid))));
-              const dateMatch = !asgnMatch ? others.find(c =>
-                c.claimStartDate && c.claimEndDate &&
-                c.claimStartDate <= (claim.claimEndDate || rmsToDate) && (claim.claimStartDate || rmsFromDate) <= c.claimEndDate
-              ) : undefined;
+              // Date-overlap fallback must NEVER fire when both claims have known, DIFFERENT
+              // assignment IDs — that is a separate assignment that happens to fall on adjacent
+              // dates (e.g. Akshay Kumar's back-to-back Johannesburg batches), not the same
+              // journey, and must get its own RMS TABillID on reopen/resubmit. Only fall back to
+              // date matching when assignment-ID data is missing on one side.
+              const dateMatch = !asgnMatch ? others.find(c => {
+                const cAsgnIds = new Set((c.assignmentIds ?? []).map(String));
+                if (cAsgnIds.size > 0 && thisAsgnIds.size > 0) return false;
+                return c.claimStartDate && c.claimEndDate &&
+                  c.claimStartDate <= (claim.claimEndDate || rmsToDate) && (claim.claimStartDate || rmsFromDate) <= c.claimEndDate;
+              }) : undefined;
               const match = asgnMatch ?? dateMatch;
               if (match?.rmsTABillId) reusedTABillId = match.rmsTABillId;
             }
