@@ -4583,6 +4583,14 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           // batch/course is the clearest signal of "same journey", more precise than date-range
           // overlap alone (two genuinely different trips can still have adjacent dates). Falls
           // back to overlapping travel dates only when no assignment match exists.
+          //
+          // 2026-08-23 (Prem Sharma EMP-1563, TADA-2026-00054 vs 00057 — assignments 264833 vs
+          // 264834 sharing RMS 82942): the OLD "any shared assignment ID" match let a combined
+          // multi-assignment claim (covering e.g. [264833, 264659, 264834] as one trip) act as a
+          // hub that transitively linked otherwise-unrelated single-assignment claims to the same
+          // RMS ID. Per explicit instruction: a DIFFERENT assignment ID (or batch ID) must ALWAYS
+          // get a DIFFERENT RMS TABillID — no exceptions. Match now requires the two claims'
+          // assignment-ID SETS to be EXACTLY equal (not just overlapping) before reusing an ID.
           let reusedTABillId: number | null = null;
           try {
             const otherClaimsRes = await fetch(`/api/turso?type=claims&trainerId=${encodeURIComponent(String(currentUser?.trainerId ?? ''))}`);
@@ -4590,15 +4598,13 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
               const { claims: otherClaims } = await otherClaimsRes.json() as { claims?: Array<{ claimId: string; assignmentIds?: string[]; claimStartDate?: string; claimEndDate?: string; rmsTABillId?: number }> };
               const thisAsgnIds = new Set((claim.assignmentIds ?? []).map(String));
               const others = (otherClaims ?? []).filter(c => c.claimId !== claimId && c.rmsTABillId);
-              const asgnMatch = others.find(c => (c.assignmentIds ?? []).some(aid => thisAsgnIds.has(String(aid))));
-              // Date-overlap fallback must NEVER fire when both claims have known, DIFFERENT
-              // assignment IDs — that is a separate assignment that happens to fall on adjacent
-              // dates (e.g. Akshay Kumar's back-to-back Johannesburg batches), not the same
-              // journey, and must get its own RMS TABillID on reopen/resubmit. Only fall back to
-              // date matching when assignment-ID data is missing on one side.
-              const dateMatch = !asgnMatch ? others.find(c => {
+              const setsEqual = (a: Set<string>, b: Set<string>) => a.size > 0 && a.size === b.size && [...a].every(x => b.has(x));
+              const asgnMatch = others.find(c => setsEqual(new Set((c.assignmentIds ?? []).map(String)), thisAsgnIds));
+              // Date-overlap fallback only for claims with NO assignment-ID data at all on either
+              // side — never used to bridge two claims with different known assignment IDs.
+              const dateMatch = !asgnMatch && thisAsgnIds.size === 0 ? others.find(c => {
                 const cAsgnIds = new Set((c.assignmentIds ?? []).map(String));
-                if (cAsgnIds.size > 0 && thisAsgnIds.size > 0) return false;
+                if (cAsgnIds.size > 0) return false;
                 return c.claimStartDate && c.claimEndDate &&
                   c.claimStartDate <= (claim.claimEndDate || rmsToDate) && (claim.claimStartDate || rmsFromDate) <= c.claimEndDate;
               }) : undefined;
