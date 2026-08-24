@@ -334,6 +334,22 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
     setClaimsVersion(v => v + 1);
   }
 
+  // Revert an accidental/incorrect "Paid" mark back to Payment Pending. The past payment
+  // record itself is NOT deleted — it stays in history exactly like every other payment record
+  // (see getPaymentRecords) — this only corrects the claim's current status so it re-appears in
+  // the payment queue and can be paid again correctly.
+  function markNotPaidDirect(claim: ClaimHeader) {
+    saveClaim({ ...claim, status: 'Payment Pending', paymentStatus: 'Unpaid', pendingWith: 'Finance', lastActionAt: new Date().toISOString() });
+    logAction({
+      claimId: claim.claimId, entityType: 'Payment', entityId: claim.billNo,
+      action: ACTION_TYPES.PAYMENT_PROCESSED,
+      newValue: { status: 'Not Paid' },
+      remarks: 'Reverted to Not Paid by HR Admin',
+      performedBy: currentUser.name, performedByRole: currentUser.role,
+    });
+    setClaimsVersion(v => v + 1);
+  }
+
   // A bill can legitimately be paid more than once against the same claimId — e.g. an initial
   // payment, then HR reopens/corrects the approved amount and a further payment covers the
   // difference. Return every entry (newest first), not just one, so past payments are never
@@ -761,7 +777,10 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                     <td className="px-4 py-3">
                       <select
                         value={paid ? 'paid' : 'not_paid'}
-                        onChange={e => { if (e.target.value === 'paid') markPaidDirect(claim); }}
+                        onChange={e => {
+                          if (e.target.value === 'paid') markPaidDirect(claim);
+                          else if (e.target.value === 'not_paid' && paid) markNotPaidDirect(claim);
+                        }}
                         className={`rounded-full border px-3 py-1 text-xs font-semibold cursor-pointer focus:outline-none focus:ring-2 focus:ring-offset-1 ${
                           paid
                             ? 'bg-green-100 text-green-700 border-green-300 focus:ring-green-400'
