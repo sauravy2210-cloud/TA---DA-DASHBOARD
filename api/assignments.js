@@ -92,7 +92,14 @@ export default async function handler(req, res) {
   try {
     const tok = await getToken(asgnUser, asgn208Pass, 'Get Trainer Assignment');
     const data = await callCommon(208, tok, { Startdate: fromDate, Enddate: toDate });
-    return res.status(200).json({ assignments: data, source: '208' });
+    // API 208 is date-range based and returns EVERY trainer's assignments in that window (seen:
+    // 380+ trainers, ~700KB for a single trainer's request) — the docstring always said "caller
+    // must filter by emp code" but nothing actually did. Left unfiltered this bloats the payload
+    // enough to risk hitting the 10s Vercel Hobby maxDuration on slow connections, which surfaces
+    // to HR Admin as "Live PMS data unavailable" even though the real data was in the response.
+    // Filter server-side to just this trainer so every caller gets what it always assumed it had.
+    const filtered = data.filter(a => String(a.trainer_emp_code ?? '') === String(empCodeValue));
+    return res.status(200).json({ assignments: filtered, source: '208' });
   } catch (e) {
     err208 = e instanceof Error ? e.message : String(e);
     console.warn('[API 208] failed:', err208);
