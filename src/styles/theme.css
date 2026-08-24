@@ -161,7 +161,12 @@ body {
 .koenig-sidebar {
   background-color: var(--brand-primary);
   color: var(--text-inverse);
+  /* 100vh on iOS Safari is the LARGEST possible viewport (address bar hidden), so a fixed
+     sidebar sized to it gets its bottom edge clipped under the address bar / home indicator
+     once the bar is shown. 100dvh tracks the actual visible viewport; kept as a fallback since
+     dvh isn't supported before iOS Safari 15.4 / older Firefox/Chrome. */
   height: 100vh;
+  height: 100dvh;
   width: var(--sidebar-width);
   display: flex;
   flex-direction: column;
