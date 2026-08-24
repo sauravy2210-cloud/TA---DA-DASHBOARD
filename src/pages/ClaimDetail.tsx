@@ -1573,6 +1573,37 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             return;
           }
 
+          // OVERNIGHT return flight landing in India the NEXT calendar day (retArrDate !== fd —
+          // e.g. London 22 Aug 20:55 -> Delhi 23 Aug 13:15). The logic below this point only ever
+          // dates its row at `fd` (the departure day), crediting destC for the day the trainer
+          // left — correct on its own, but the arrival day in India (23 Aug) then got NO row at
+          // all, silently skipped. Add it here as its own entry, using the same >12:00 eligibility
+          // cutoff as the same-day case above, then fall through (no `return`) so the fd-day
+          // destC/India row below is still generated as usual. Bug fixed 2026-08-24: Bhaskar
+          // Kumar Dixit EMP-1920, TADA-2026-00070 — 23 Aug (arrival, 13:15, after 12:00) was
+          // missing entirely from the DA table.
+          if (retToCountry === 'India' && retArrDate !== fd && !autoRaw.some(li => li.date === retArrDate)) {
+            const arrHHMM2 = String(finalRetLeg.arrival_time ?? '').substring(0, 5);
+            if (arrHHMM2 && arrHHMM2 <= '12:00') {
+              autoRaw.push({
+                lineItemId: `AUTO-DA-RETARR-${claimId}-${retArrDate}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'N/A', date: retArrDate,
+                description: `Not Eligible — Return Arrival Before 12:00 (arrives ${arrHHMM2})`,
+                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+            } else {
+              const { rate: indiaRate, currency: indiaCurrency } = getHrDaInfo('India');
+              autoRaw.push({
+                lineItemId: `AUTO-DA-RETARR-${claimId}-${retArrDate}`,
+                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'India', date: retArrDate,
+                description: `Daily Allowance — India (return arrival day, arrives ${arrHHMM2 || '?'} > 12:00)`,
+                claimedAmount: indiaRate, policyLimit: indiaRate, eligibleAmount: indiaRate, approvedAmount: 0, deductionAmount: 0,
+                currency: indiaCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+              });
+            }
+          }
+
           // If the flight is NOT heading to India — i.e. the trainer is continuing straight to
           // a DIFFERENT international destination, not returning home — this day genuinely
           // belongs to that new assignment/claim, not this one. Do not fabricate an "India"
