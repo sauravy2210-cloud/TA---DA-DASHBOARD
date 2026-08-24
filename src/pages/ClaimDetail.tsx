@@ -548,6 +548,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [miscEditIdx, setMiscEditIdx] = useState<number | null>(null);
   const [miscEditValues, setMiscEditValues] = useState<{ currency: string; amount: number }>({ currency: 'INR', amount: 0 });
 
+  // Already-Paid-for-this-assignment adjustment — HR reopening an already-Paid bill (e.g. to
+  // correct a mistake) needs to see, and deduct, whatever was already disbursed against the
+  // SAME assignment ID under other claims, so re-approving doesn't pay the trainer twice for
+  // the same work. Editable (HR can override the auto-detected total) and persisted to the
+  // claim record like the other HR override fields above.
+  const [alreadyPaidDeduction, setAlreadyPaidDeduction] = useState<number>(0);
+  const [alreadyPaidDeductionDirty, setAlreadyPaidDeductionDirty] = useState(false);
+
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
 
   // Post-submission misc expense upload — exempted trainers (and HR Admin on their behalf)
@@ -619,8 +627,46 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     if (savedTa) setTaHrOverrides(savedTa);
     const savedMisc = (claim as unknown as { miscHrOverrides?: Record<string, { currency: string; amount: number }> })?.miscHrOverrides;
     if (savedMisc) setMiscHrOverrides(savedMisc);
+    const savedAlreadyPaid = (claim as unknown as { alreadyPaidDeduction?: number })?.alreadyPaidDeduction;
+    if (savedAlreadyPaid != null) { setAlreadyPaidDeduction(savedAlreadyPaid); setAlreadyPaidDeductionDirty(true); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId]);
+
+  // Other claims for this SAME trainer, on the SAME assignment ID(s), that are already Paid —
+  // this is the money HR must not pay again when reopening/re-approving this claim.
+  const assignmentAlreadyPaidClaims = useMemo(() => {
+    if (!claim) return [] as import('../types').ClaimHeader[];
+    const thisAsgnIds = new Set(((claim as unknown as { assignmentIds?: string[] }).assignmentIds ?? []).map(String));
+    if (thisAsgnIds.size === 0) return [];
+    return getClaims().filter(c =>
+      c.claimId !== claimId &&
+      c.trainerId === (claim as unknown as { trainerId?: string }).trainerId &&
+      c.status === 'Paid' &&
+      (c.assignmentIds ?? []).some(aid => thisAsgnIds.has(String(aid)))
+    );
+  }, [claim, claimId, claimRefreshTick]);
+
+  const assignmentAlreadyPaidTotal = useMemo(
+    () => assignmentAlreadyPaidClaims.reduce((s, c) => s + (c.netPayable ?? c.totalClaimedAmount ?? 0), 0),
+    [assignmentAlreadyPaidClaims]
+  );
+
+  // Default the deduction input to the auto-detected total the first time it's known, unless
+  // HR has already set/saved a value for this claim (savedAlreadyPaid handled above).
+  useEffect(() => {
+    if (!alreadyPaidDeductionDirty && assignmentAlreadyPaidTotal > 0) {
+      setAlreadyPaidDeduction(Math.round(assignmentAlreadyPaidTotal));
+    }
+  }, [assignmentAlreadyPaidTotal, alreadyPaidDeductionDirty]);
+
+  const applyAlreadyPaidDeduction = (value: number) => {
+    if (!claimId) return;
+    const base = getClaims().find((c) => c.claimId === claimId);
+    if (!base) return;
+    setAlreadyPaidDeduction(value);
+    setAlreadyPaidDeductionDirty(true);
+    saveClaim({ ...base, alreadyPaidDeduction: value } as import('../types').ClaimHeader);
+  };
 
   // Persist an HR override field immediately to the claim record — so it survives navigation/
   // reload and appears identically in Payment Processing, Verification Queue, or any other
@@ -2342,7 +2388,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     // TADA-2026-80180 and others lost their recorded advance adjustment on Reopen.
     const isAdvanceRecordingAction = action.key === 'approve' || action.key === 'partial-approve';
     const effectiveAdvance = isAdvanceRecordingAction ? advanceAdjusted : (base.advanceAdjusted ?? 0);
-    const computedNet = computedTotal - effectiveAdvance - (base.deductionAmount ?? 0) - (base.recoverableAmount ?? 0);
+    // Already-Paid-for-this-assignment deduction (HR reopen safeguard, set via the "Already
+    // Paid — Same Assignment ID" panel) must also come off the amount actually approved/paid,
+    // not just the on-screen display, or reopening a paid bill would still let it be re-approved
+    // and re-paid in full.
+    const alreadyPaidDed = (base as unknown as { alreadyPaidDeduction?: number }).alreadyPaidDeduction ?? 0;
+    const computedNet = computedTotal - effectiveAdvance - (base.deductionAmount ?? 0) - (base.recoverableAmount ?? 0) - alreadyPaidDed;
     let patch: Partial<import('../types').ClaimHeader> = {
       lastActionAt: now,
       advanceAdjusted: effectiveAdvance,
@@ -2816,6 +2867,47 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               />
             </div>
 
+            {/* Already Paid (same assignment, other claims) — must be seen and adjustable BEFORE
+                Amount Summary, so HR reopening a paid bill can't miss it and re-approve the
+                trainer's full claimed amount a second time for work already disbursed. */}
+            {assignmentAlreadyPaidClaims.length > 0 && (
+              <div className="bg-red-50 rounded-xl border border-red-200 p-5">
+                <h3 className="text-sm font-semibold text-red-800 mb-1 uppercase tracking-wide flex items-center gap-2">
+                  ⚠️ Already Paid — Same Assignment ID
+                </h3>
+                <p className="text-xs text-red-700 mb-3">
+                  Found {assignmentAlreadyPaidClaims.length} other Paid claim{assignmentAlreadyPaidClaims.length !== 1 ? 's' : ''} for
+                  the same assignment ID under this trainer. Adjust the deduction below before approving, to avoid paying twice for the same work.
+                </p>
+                <div className="space-y-1.5 mb-3">
+                  {assignmentAlreadyPaidClaims.map(c => (
+                    <div key={c.claimId} className="flex items-center justify-between text-xs bg-white border border-red-100 rounded-lg px-3 py-2">
+                      <span className="font-medium text-gray-700">{c.billNo}</span>
+                      <span className="text-gray-500">{(c.assignmentIds ?? []).join(', ')}</span>
+                      <span className="font-semibold text-red-700">₹{Math.round(c.netPayable ?? c.totalClaimedAmount ?? 0).toLocaleString('en-IN')}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="text-xs font-medium text-gray-700">Deduct from this claim (₹)</label>
+                  <input
+                    type="number"
+                    className="w-36 px-2 py-1.5 text-sm border border-red-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400"
+                    value={alreadyPaidDeduction}
+                    onChange={(e) => setAlreadyPaidDeduction(Number(e.target.value) || 0)}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => applyAlreadyPaidDeduction(alreadyPaidDeduction)}
+                    className="px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg"
+                  >
+                    Apply Deduction
+                  </button>
+                  <span className="text-xs text-gray-500">Auto-detected total: ₹{Math.round(assignmentAlreadyPaidTotal).toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            )}
+
             {/* Amount summary */}
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <h3 className="text-sm font-semibold text-gray-700 mb-4 uppercase tracking-wide">Amount Summary</h3>
@@ -2834,11 +2926,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 claimedAmount={Math.round(claim.totalClaimedAmount ?? 0)}
                 eligibleAmount={Math.round(liveDataReady ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
                 approvedAmount={Math.round(claim.approvedAmount ?? 0)}
-                deductionAmount={Math.round(claim.deductionAmount ?? 0)}
+                deductionAmount={Math.round((claim.deductionAmount ?? 0) + alreadyPaidDeduction)}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
                 recoverableAmount={Math.round(liveDataReady ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
-                netPayable={Math.round(liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement))}
+                netPayable={Math.round((liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement)) - alreadyPaidDeduction)}
                 currency="INR"
               />
               {/* Net payable banner — same live-first logic as above. Shown whenever live data
@@ -2854,7 +2946,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       {liveRecoverableINR > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
                     </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{Math.round(liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR).toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{Math.round((liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR) - alreadyPaidDeduction).toLocaleString('en-IN')}</span>
                 </div>
               )}
 

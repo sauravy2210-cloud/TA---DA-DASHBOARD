@@ -289,6 +289,10 @@ export interface ClaimHeader {
   daHrOverrides?: Record<string, { country: string; currency: string; amount: number }>;
   taHrOverrides?: Record<string, { currency: string; amount: number }>;
   miscHrOverrides?: Record<string, { currency: string; amount: number }>;
+  // Amount HR is deducting from this claim because the same assignment ID was already paid
+  // under a different claim — set via the "Already Paid — Same Assignment ID" panel shown when
+  // reopening a Paid bill, so re-approving never double-pays the same assignment.
+  alreadyPaidDeduction?: number;
 }
 
 export type ExpenseType = 'TA' | 'DA' | 'Lodging' | 'Cab' | 'Other';
