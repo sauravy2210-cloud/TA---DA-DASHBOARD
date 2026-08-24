@@ -1706,12 +1706,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             // EMP-2361, TADA-2026-00071 — Vienna->Amsterdam (23 Aug) then Amsterdam->Doha 13 days
             // later wrongly voided the whole day; the trainer was verifiably in Austria (destC)
             // until departure that day regardless of where the onward journey eventually led.
-            const hasNewAssignmentThere = enrichedNearbyAssignments.some(a =>
+            const matchedNewAssignment = enrichedNearbyAssignments.find(a =>
               a.assignmentId !== asgn.assignmentId && a.startDate &&
               a.startDate >= fd && a.startDate <= addD(fd, 10) &&
               a.city && inferCountryFromCity(a.city) === retToCountryFinal
             );
-            if (hasNewAssignmentThere) return;
+            if (claimId === 'CLAIM-1787572016860') console.log('[DBG-RET5]', matchedNewAssignment, enrichedNearbyAssignments.length);
+            if (matchedNewAssignment) return;
           }
 
           const depHHMM = String(retFlight.departure_time ?? '').substring(0, 5);
