@@ -1692,7 +1692,23 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             return inferCountryFromCity(String(current.to_city ?? '').trim());
           };
           const retToCountryFinal = resolveFinalDestCountry(retFlight);
-          if (retToCountryFinal && retToCountryFinal !== 'India' && retToCountryFinal !== destC) return;
+          if (retToCountryFinal && retToCountryFinal !== 'India' && retToCountryFinal !== destC) {
+            // Only skip this day entirely when there's a genuine NEW assignment starting at that
+            // other country shortly after — the original Ankur Kumar case (Dubai->Nairobi, an
+            // actual next assignment). Without a matching assignment, this is just an unconfirmed/
+            // ambiguous later leg (e.g. a stopover country with the next flight two+ weeks later,
+            // well past the 2-day connection window resolveFinalDestCountry itself uses) — not
+            // proof the day belongs to someone else's claim. Bug fixed 2026-08-24: Vaibhav Gupta
+            // EMP-2361, TADA-2026-00071 — Vienna->Amsterdam (23 Aug) then Amsterdam->Doha 13 days
+            // later wrongly voided the whole day; the trainer was verifiably in Austria (destC)
+            // until departure that day regardless of where the onward journey eventually led.
+            const hasNewAssignmentThere = enrichedNearbyAssignments.some(a =>
+              a.assignmentId !== asgn.assignmentId && a.startDate &&
+              a.startDate >= fd && a.startDate <= addD(fd, 10) &&
+              a.city && inferCountryFromCity(a.city) === retToCountryFinal
+            );
+            if (hasNewAssignmentThere) return;
+          }
 
           const depHHMM = String(retFlight.departure_time ?? '').substring(0, 5);
           if (destC !== 'India' && depHHMM && depHHMM >= '04:00') {
