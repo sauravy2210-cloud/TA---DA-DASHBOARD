@@ -1500,12 +1500,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         // destination-country DA. If they depart before 04:00, they didn't spend meaningful time
         // there on the return day → India DA instead.
         enrichedSummaryAssignments.forEach(asgn => {
+          if (claimId === 'CLAIM-1787572016860') console.log('[DBG-RET]', asgn.assignmentId, asgn.startDate, asgn.endDate, asgn.deliveryMode, asgn.batchType, asgn.city, asgn.country);
           if (!asgn.startDate || !asgn.endDate) return;
           if (asgn.deliveryMode === 'Online' || asgn.batchType === 'ILO') return;
           const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
           const destC = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
             ? cityCountry : (asgn.country || cityCountry || 'India');
           const { rate, currency: destCurrency } = getHrDaInfo(destC);
+          if (claimId === 'CLAIM-1787572016860') console.log('[DBG-RET2]', destC, rate);
           if (rate <= 0) return;
           // Find the EARLIEST return flight departing FROM the destination city/country after
           // assignment ends — .find() alone picks unsorted API array order, not chronological
@@ -1524,6 +1526,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 const ft = String(f.departure_time ?? '').substring(0, 5);
                 return ft < et ? f : earliest;
               });
+          if (claimId === 'CLAIM-1787572016860') console.log('[DBG-RET3]', retFlightCandidates.length, retFlight);
           if (!retFlight) return;
           const fd = parseDT(String(retFlight.departure_date ?? ''));
           if (!fd) return;
