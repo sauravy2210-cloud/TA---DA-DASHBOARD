@@ -345,6 +345,12 @@ export default async function handler(req, res) {
       });
       return res.status(200).json({ ok: true });
     }
+    if (req.method === 'DELETE') {
+      const { paymentId } = req.query;
+      if (!paymentId) return res.status(400).json({ error: 'Missing paymentId' });
+      await db.execute({ sql: 'DELETE FROM payments WHERE id = ?', args: [paymentId] });
+      return res.status(200).json({ ok: true });
+    }
   }
 
   // ── Line Items ──────────────────────────────────────────────────────────────
