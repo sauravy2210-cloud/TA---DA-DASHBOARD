@@ -1719,6 +1719,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           }
 
           const depHHMM = String(retFlight.departure_time ?? '').substring(0, 5);
+          if (claimId === 'CLAIM-1787572016860') console.log('[DBG-X]', 'about to push', fd, destC, depHHMM);
           if (destC !== 'India' && depHHMM && depHHMM >= '04:00') {
             // Departs destination country at/after 04:00 — spent most of the day there
             autoRaw.push({
@@ -2009,6 +2010,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             });
         }
 
+        if (claimId === 'CLAIM-1787572016860') console.log('[DBG-Y]', 'final autoRaw dates', autoRaw.map(li=>li.date));
         if (autoRaw.length > 0) effectiveRaw = autoRaw;
       }
     }
