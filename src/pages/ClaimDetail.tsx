@@ -1695,6 +1695,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             return inferCountryFromCity(String(current.to_city ?? '').trim());
           };
           const retToCountryFinal = resolveFinalDestCountry(retFlight);
+          if (claimId === 'CLAIM-1787572016860') console.log('[DBG-RET4]', retToCountryFinal, 'autoRawHasFd', autoRaw.some(li => li.date === fd), autoRaw.map(li=>li.date));
           if (retToCountryFinal && retToCountryFinal !== 'India' && retToCountryFinal !== destC) {
             // Only skip this day entirely when there's a genuine NEW assignment starting at that
             // other country shortly after — the original Ankur Kumar case (Dubai->Nairobi, an
