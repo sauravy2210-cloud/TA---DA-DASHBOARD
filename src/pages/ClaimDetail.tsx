@@ -1116,7 +1116,22 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         const matched = assignmentIds.length > 0
           ? all.filter(a => assignmentIds.includes(String((a as Record<string,unknown>).AssignmentId ?? '')))
           : all;
-        setSummaryAssignments(matched.map(a => mapRawToAssignment(a as Record<string, unknown>)));
+        // API 208 (the date-range fallback used whenever the emp-code API 258 fails for a
+        // trainer) carries no city/country fields at all, unlike 258. mapRawToAssignment then
+        // has nothing to infer a country from and silently defaults to India — wrong whenever
+        // the trainer was actually abroad. Bug fixed 2026-08-24: Prem Sharma EMP-1563, assignment
+        // 264833 (Kuala Lumpur) showed as India because 258 was down for this trainer and the
+        // 208 fallback payload has no location data. Since every item here already belongs to
+        // THIS claim (matched by assignmentIds), the trainer's own submitted trainingLocation is
+        // reliable ground truth to fall back on when the live PMS record has no city at all.
+        const trainingLoc = (claim as unknown as { trainingLocation?: string }).trainingLocation ?? '';
+        setSummaryAssignments(matched.map(a => {
+          const parsed = mapRawToAssignment(a as Record<string, unknown>);
+          if (!parsed.city && trainingLoc) {
+            return { ...parsed, city: trainingLoc, country: parsed.country || inferCountryFromCity(trainingLoc) || parsed.country };
+          }
+          return parsed;
+        }));
       })
       .catch(() => setSummaryAssignments([]))
       .finally(() => setSummaryAssignmentsLoading(false));
