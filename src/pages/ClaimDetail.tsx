@@ -1715,6 +1715,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               a.startDate >= fd && a.startDate <= addD(fd, 10) &&
               a.city && inferCountryFromCity(a.city) === retToCountryFinal
             );
+            if (claimId === 'CLAIM-1787572016860') console.log('[DBG-Z]', matchedNewAssignment);
             if (matchedNewAssignment) return;
           }
 
