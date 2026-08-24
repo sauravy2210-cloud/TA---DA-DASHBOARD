@@ -339,7 +339,9 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
   // (see getPaymentRecords) — this only corrects the claim's current status so it re-appears in
   // the payment queue and can be paid again correctly.
   function markNotPaidDirect(claim: ClaimHeader) {
+    console.log('[DBG-NP] markNotPaidDirect called for', claim.claimId, claim.status);
     saveClaim({ ...claim, status: 'Payment Pending', paymentStatus: 'Unpaid', pendingWith: 'Finance', lastActionAt: new Date().toISOString() });
+    console.log('[DBG-NP] after saveClaim, getClaims status=', getClaims().find(c=>c.claimId===claim.claimId)?.status);
     logAction({
       claimId: claim.claimId, entityType: 'Payment', entityId: claim.billNo,
       action: ACTION_TYPES.PAYMENT_PROCESSED,
@@ -778,6 +780,7 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                       <select
                         value={paid ? 'paid' : 'not_paid'}
                         onChange={e => {
+                          console.log('[DBG-NP] onChange fired', e.target.value, 'paid=', paid, 'claimId=', claim.claimId);
                           if (e.target.value === 'paid') markPaidDirect(claim);
                           else if (e.target.value === 'not_paid' && paid) markNotPaidDirect(claim);
                         }}
