@@ -1700,25 +1700,19 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             return inferCountryFromCity(String(current.to_city ?? '').trim());
           };
           const retToCountryFinal = resolveFinalDestCountry(retFlight);
-          if (retToCountryFinal && retToCountryFinal !== 'India' && retToCountryFinal !== destC) {
-            // Only skip this day entirely when there's a genuine NEW assignment starting at that
-            // other country shortly after — the original Ankur Kumar case (Dubai->Nairobi, an
-            // actual next assignment). Without a matching assignment, this is just an unconfirmed/
-            // ambiguous later leg (e.g. a stopover country with the next flight two+ weeks later,
-            // well past the 2-day connection window resolveFinalDestCountry itself uses) — not
-            // proof the day belongs to someone else's claim. Bug fixed 2026-08-24: Vaibhav Gupta
-            // EMP-2361, TADA-2026-00071 — Vienna->Amsterdam (23 Aug) then Amsterdam->Doha 13 days
-            // later wrongly voided the whole day; the trainer was verifiably in Austria (destC)
-            // until departure that day regardless of where the onward journey eventually led.
-            const matchedNewAssignment = enrichedNearbyAssignments.find(a =>
-              a.assignmentId !== asgn.assignmentId && a.startDate &&
-              a.startDate >= fd && a.startDate <= addD(fd, 10) &&
-              a.city && inferCountryFromCity(a.city) === retToCountryFinal
-            );
-            if (matchedNewAssignment) return;
-          }
-
           const depHHMM = String(retFlight.departure_time ?? '').substring(0, 5);
+
+          // The trainer PHYSICALLY spent this day in destC (Austria) until departure — that fact
+          // holds regardless of where the flight ultimately leads (a return to India, or the
+          // start of an entirely new assignment). Crediting destC for a >=04:00 departure is
+          // always safe and matches the trainer's own CreateTADABill.tsx submission. What is NOT
+          // safe is fabricating an "India" credit when the trainer never actually went to India —
+          // that fabrication only matters in the dep<04:00 branch below, so the "different
+          // assignment" check only needs to guard THAT branch. Bug fixed 2026-08-24: Vaibhav
+          // Gupta EMP-2361, TADA-2026-00071 — Vienna->Amsterdam dep 14:20 (his next assignment,
+          // #265591, starts 31 Aug) was voiding the ENTIRE day instead of just skipping the
+          // India-guess; HR Admin showed no row at all for 23 Aug while the trainer's own bill
+          // correctly showed Austria.
           if (destC !== 'India' && depHHMM && depHHMM >= '04:00') {
             // Departs destination country at/after 04:00 — spent most of the day there
             autoRaw.push({
@@ -1728,6 +1722,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
               currency: destCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
             });
+          } else if (retToCountryFinal && retToCountryFinal !== 'India' && retToCountryFinal !== destC &&
+            enrichedNearbyAssignments.some(a =>
+              a.assignmentId !== asgn.assignmentId && a.startDate &&
+              a.startDate >= fd && a.startDate <= addD(fd, 10) &&
+              a.city && inferCountryFromCity(a.city) === retToCountryFinal
+            )) {
+            // Ankur Kumar EMP-2485 case: dep < 04:00 heading toward a genuine NEW assignment in a
+            // different country, not India — do not fabricate an India credit for this day.
           } else {
             // Departs before 04:00 (or destC already India) — India DA for the return travel day
             const { rate: indiaRate, currency: indiaCurrency } = getHrDaInfo('India');
