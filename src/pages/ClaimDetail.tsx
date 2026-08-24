@@ -1527,6 +1527,34 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           if (!retFlight) return;
           const fd = parseDT(String(retFlight.departure_date ?? ''));
           if (!fd) return;
+
+          // Post-batch interim days: fill every day strictly between assignment end and the
+          // return travel day with destination-country DA — the trainer is still in-country,
+          // awaiting the return flight (e.g. batch ends 20 Aug, return flight isn't until 23
+          // Aug — 21 and 22 Aug are missing entirely without this). Mirrors CreateTADABill.tsx's
+          // "Post-Batch In-Country" days and the existing pre-batch fill above. Bug fixed
+          // 2026-08-24: Vaibhav Gupta EMP-2361, TADA-2026-00071, Asgn #263197 (Austria) — HR
+          // Admin's DA table had no rows at all for 21-23 Aug, even though the trainer's own
+          // submission correctly showed them as Austria days.
+          {
+            const postCur = new Date(asgn.endDate!);
+            postCur.setDate(postCur.getDate() + 1);
+            const postEndExclusive = new Date(fd);
+            while (postCur < postEndExclusive) {
+              const iso = postCur.toISOString().slice(0, 10);
+              if (!autoRaw.some(li => li.date === iso)) {
+                autoRaw.push({
+                  lineItemId: `AUTO-DA-POSTBATCH-${claimId}-${iso}`,
+                  claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: iso,
+                  description: `Daily Allowance — ${destC} (post-batch, in-country)`,
+                  claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+                  currency: destCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+                });
+              }
+              postCur.setDate(postCur.getDate() + 1);
+            }
+          }
+
           if (autoRaw.some(li => li.date === fd)) return;
 
           // If this return leg lands in India the SAME calendar day (a direct flight home,
