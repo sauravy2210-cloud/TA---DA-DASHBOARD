@@ -1398,14 +1398,36 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         // silently skipped just because this claim's own date range ends early. Akshay Kumar
         // EMP-519, TADA-2026-00044, assignment 265769 (17-21 Aug Johannesburg): 21 Aug was missing
         // entirely from the DA table because claimEnd=20 Aug stopped the loop one day short.
+        // Only the LATEST-dated claim among sibling claims for this same assignment should
+        // extend — otherwise every sibling independently extends all the way to the
+        // assignment's end date, each generating its own "PMS auto-calculated" rows for days
+        // that already belong to ANOTHER claim (paid, pending, or rejected). The dedup greyout
+        // only catches days genuinely paid elsewhere, so a rejected/unclaimed day (e.g. 20 Aug,
+        // rejected in a different bill) would show as live claimable DA on this earlier claim
+        // too, alongside the correctly-greyed paid days from a third claim — confusing and
+        // wrong: this claim never covered that day and never should. Bug fixed 2026-08-24:
+        // Akshay Kumar EMP-519, Asgn #265769 — TADA-2026-00006 (16-17 Aug) was showing DA rows
+        // through 23 Aug, duplicating what TADA-2026-00030/00044 already own.
+        const thisClaimAsgnIds = new Set(((claim as unknown as { assignmentIds?: string[] }).assignmentIds ?? []).map(String));
+        const siblingClaims = thisClaimAsgnIds.size > 0
+          ? getClaims().filter(c =>
+              c.claimId !== claimId &&
+              c.trainerId === (claim as unknown as { trainerId?: string }).trainerId &&
+              (c.assignmentIds ?? []).some(aid => thisClaimAsgnIds.has(String(aid)))
+            )
+          : [];
+        const isLatestClaimForAssignment = !siblingClaims.some(c => (c.claimEndDate ?? '') > claimEnd);
+
         let fin = new Date(claimEnd);
-        enrichedSummaryAssignments.forEach(asgn => {
-          if (!asgn.startDate || !asgn.endDate) return;
-          if (asgn.startDate <= claimEnd && asgn.endDate > claimEnd) {
-            const candidateFin = new Date(asgn.endDate);
-            if (candidateFin > fin) fin = candidateFin;
-          }
-        });
+        if (isLatestClaimForAssignment) {
+          enrichedSummaryAssignments.forEach(asgn => {
+            if (!asgn.startDate || !asgn.endDate) return;
+            if (asgn.startDate <= claimEnd && asgn.endDate > claimEnd) {
+              const candidateFin = new Date(asgn.endDate);
+              if (candidateFin > fin) fin = candidateFin;
+            }
+          });
+        }
         while (cur <= fin) {
           const iso = cur.toISOString().slice(0, 10);
           // Approved leave day → India ₹950 only if trainer has a domestic India flight on this day;
