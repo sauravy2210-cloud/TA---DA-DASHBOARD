@@ -128,11 +128,18 @@ export default async function handler(req, res) {
     }
   }
 
-  // ── Create TA Bill (Koenig RMS, api_id=342) — no local DB needed ────────────
+  // ── Create OR Update TA Bill (Koenig RMS, api_id=354) — no local DB needed ──
+  // Single upsert endpoint per Koenig's "Upsert_TABill_API_Guide" (2026-08-25): omit TABillID
+  // (or pass one that doesn't exist) to CREATE a new record; pass an existing TABillID to
+  // UPDATE it — only TADAAmt/Advance/ModifiedOn/ModifiedBy actually change in update mode, per
+  // the guide. Replaces the old api_id=342 create-only call, which had no update path — that
+  // forced every resubmission of the same assignment to either skip RMS entirely (stale amount)
+  // or fabricate a second RMS record for the same journey. Kept the `create-tabill` type name
+  // for backward compatibility with existing callers; behavior is now upsert.
   if (type === 'create-tabill') {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     const {
-      EmpID, From, To, IsSubmitted, Advance, TADAAmt, EmpRemark, scids,
+      TABillID, EmpID, From, To, IsSubmitted, Advance, TADAAmt, EmpRemark, scids,
       IsSelfSponsored, FreelancerID, Source,
     } = req.body || {};
     if (!EmpID || !From || !To) {
@@ -166,26 +173,31 @@ export default async function handler(req, res) {
         Advance: Number(Advance) || 0,
         TADAAmt: Number(TADAAmt) || 0,
       };
+      // Presence of TABillID is what switches this call from Create to Update mode — omit the
+      // key entirely (not just null) when absent, since some backends treat an explicit
+      // `"TABillID": null` differently from the key being missing.
+      if (TABillID != null) body.TABillID = Number(TABillID);
       if (EmpRemark)                body.EmpRemark = EmpRemark;
       if (scids)                    body.scids = scids;
       if (IsSelfSponsored != null)  body.IsSelfSponsored = IsSelfSponsored;
       if (FreelancerID != null)     body.FreelancerID = FreelancerID;
 
       const url = `https://api.koenig-solutions.com/api/Kites/Operator/common` +
-        `?apikey=342&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
+        `?apikey=354&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
       const billRes = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
-      if (!billRes.ok) return res.status(502).json({ error: `Create TA Bill HTTP ${billRes.status}` });
+      if (!billRes.ok) return res.status(502).json({ error: `Create/Update TA Bill HTTP ${billRes.status}` });
       const billData = await billRes.json();
-      if (billData.statuscode !== 200) return res.status(502).json({ error: billData.message || 'Create TA Bill failed' });
+      if (billData.statuscode !== 200) return res.status(502).json({ error: billData.message || 'Create/Update TA Bill failed' });
       let content = billData.content;
       if (typeof content === 'string') { try { content = JSON.parse(content); } catch { content = []; } }
       const row = Array.isArray(content) ? content[0] : content;
-      const TABillID = row && row.TABillID != null ? row.TABillID : null;
-      return res.status(200).json({ TABillID });
+      const returnedTABillID = row && row.TABillID != null ? row.TABillID : null;
+      const message = row && row.Message != null ? row.Message : null;
+      return res.status(200).json({ TABillID: returnedTABillID, Message: message, mode: message ? 'update' : 'create' });
     } catch (err) {
       return res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
     }

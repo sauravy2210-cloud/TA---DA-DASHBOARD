@@ -4613,39 +4613,49 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
             }
           } catch { /* dedup check is best-effort — fall through to creating a new record */ }
 
-          if (reusedTABillId) {
+          // api_id=354 (Koenig "Upsert TA Bill") decides Create vs Update purely on whether
+          // TABillID is passed: omit it to insert a new RMS record, pass an existing one to
+          // update ONLY its Advance/TADAAmt in place. Reopening/resubmitting the SAME assignment
+          // must always land on the SAME TABillID (per explicit instruction), but the updated
+          // claim/advance amount must still reach RMS — previously this branch skipped the RMS
+          // call entirely on reuse, so RMS silently kept the FIRST submission's stale amount
+          // forever even after the trainer added more expenses or HR adjusted an advance. Bug
+          // fixed 2026-08-25 per Koenig's Upsert_TABill_API_Guide.
+          const rmsRes = await fetch('/api/turso?type=create-tabill', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              TABillID: reusedTABillId || undefined,
+              EmpID: empIdNum,
+              From: `${rmsFromDate} 00:00:00`,
+              To: `${rmsToDate} 23:59:59`,
+              IsSubmitted: 1,
+              Advance: advanceTotal || 0,
+              TADAAmt: grandTotal || 0,
+              EmpRemark: remarkParts.join(' — ').slice(0, 4000),
+              scids: scidList || undefined,
+            }),
+          });
+          if (rmsRes.ok) {
+            const rmsData = await rmsRes.json();
+            if (rmsData.TABillID) {
+              saveClaim({ ...claim, lineItems: lineItemsWithUrls, rmsTABillId: rmsData.TABillID } as import('../types').ClaimHeader);
+              fetch('/api/turso?type=claims', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim, rmsTABillId: rmsData.TABillID }),
+              }).catch(() => {});
+            }
+          } else if (reusedTABillId) {
+            // RMS call failed but we already know the correct TABillID to reuse locally —
+            // still tag the claim with it so the dashboard stays internally consistent even if
+            // the RMS sync retries later.
             saveClaim({ ...claim, lineItems: lineItemsWithUrls, rmsTABillId: reusedTABillId } as import('../types').ClaimHeader);
             fetch('/api/turso?type=claims', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim, rmsTABillId: reusedTABillId }),
             }).catch(() => {});
-          } else {
-            const rmsRes = await fetch('/api/turso?type=create-tabill', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                EmpID: empIdNum,
-                From: `${rmsFromDate} 00:00:00`,
-                To: `${rmsToDate} 23:59:59`,
-                IsSubmitted: 1,
-                Advance: advanceTotal || 0,
-                TADAAmt: grandTotal || 0,
-                EmpRemark: remarkParts.join(' — ').slice(0, 4000),
-                scids: scidList || undefined,
-              }),
-            });
-            if (rmsRes.ok) {
-              const rmsData = await rmsRes.json();
-              if (rmsData.TABillID) {
-                saveClaim({ ...claim, lineItems: lineItemsWithUrls, rmsTABillId: rmsData.TABillID } as import('../types').ClaimHeader);
-                fetch('/api/turso?type=claims', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ ...claim, lineItems: lineItemsForClaim, rmsTABillId: rmsData.TABillID }),
-                }).catch(() => {});
-              }
-            }
           }
         }
       } catch {
