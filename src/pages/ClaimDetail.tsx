@@ -553,14 +553,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // SAME assignment ID under other claims, so re-approving doesn't pay the trainer twice for
   // the same work. Editable (HR can override the auto-detected total) and persisted to the
   // claim record like the other HR override fields above.
+  // Live-follows whatever HR actually types here — Amount Summary, the Net Payable banner, the
+  // header, and the Live Final Summary strip all reflect this value immediately as it's edited.
+  // No auto-fill: it starts at 0 unless a value was previously saved for this claim. "Apply
+  // Deduction" persists the current value to the claim record (so it survives reload and feeds
+  // the actual Approve-time calculation) — it is not a gate on the live on-screen totals.
   const [alreadyPaidDeduction, setAlreadyPaidDeduction] = useState<number>(0);
-  const [alreadyPaidDeductionDirty, setAlreadyPaidDeductionDirty] = useState(false);
   const [alreadyPaidDeductionSavedValue, setAlreadyPaidDeductionSavedValue] = useState<number | null>(null);
-  // The auto-detected/edited value in the input above must NOT affect Amount Summary, the Net
-  // Payable banner, the header, or the Live Final Summary strip until HR actually clicks "Apply
-  // Deduction" — otherwise every one of those numbers changes the instant the panel loads, with
-  // no action taken yet, which looked like the deduction was being silently forced through.
-  const appliedDeduction = alreadyPaidDeductionSavedValue ?? 0;
 
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
 
@@ -634,7 +633,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     const savedMisc = (claim as unknown as { miscHrOverrides?: Record<string, { currency: string; amount: number }> })?.miscHrOverrides;
     if (savedMisc) setMiscHrOverrides(savedMisc);
     const savedAlreadyPaid = (claim as unknown as { alreadyPaidDeduction?: number })?.alreadyPaidDeduction;
-    if (savedAlreadyPaid != null) { setAlreadyPaidDeduction(savedAlreadyPaid); setAlreadyPaidDeductionDirty(true); setAlreadyPaidDeductionSavedValue(savedAlreadyPaid); }
+    if (savedAlreadyPaid != null) { setAlreadyPaidDeduction(savedAlreadyPaid); setAlreadyPaidDeductionSavedValue(savedAlreadyPaid); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId]);
 
@@ -662,13 +661,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     [assignmentAlreadyPaidClaims]
   );
 
-  // Default the deduction input to the auto-detected total the first time it's known, unless
-  // HR has already set/saved a value for this claim (savedAlreadyPaid handled above).
-  useEffect(() => {
-    if (!alreadyPaidDeductionDirty && assignmentAlreadyPaidTotal > 0) {
-      setAlreadyPaidDeduction(Math.round(assignmentAlreadyPaidTotal));
-    }
-  }, [assignmentAlreadyPaidTotal, alreadyPaidDeductionDirty]);
+  // HR types the deduction amount themselves — the input starts at 0 (or whatever was
+  // previously saved for this claim) and is never silently pre-filled with the auto-detected
+  // total. The total is still shown alongside the input as a reference figure only.
 
   const [alreadyPaidDeductionSaving, setAlreadyPaidDeductionSaving] = useState(false);
   const applyAlreadyPaidDeduction = async (value: number) => {
@@ -679,7 +674,6 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       return;
     }
     setAlreadyPaidDeduction(value);
-    setAlreadyPaidDeductionDirty(true);
     setAlreadyPaidDeductionSaving(true);
     try {
       // Awaited (unlike the fire-and-forget saveClaim used for cosmetic overrides elsewhere) —
@@ -2901,7 +2895,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Approved</div>
                 <div className="font-semibold text-green-700">
-                  ₹{Math.round(liveDataReady ? liveGrandTotalINR - appliedDeduction : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
+                  ₹{Math.round(liveDataReady ? liveGrandTotalINR - alreadyPaidDeduction : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -2925,7 +2919,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       the stored claim.netPayable fallback is already net-of-deduction once a
                       claim has actually been Approved (persistAction's computedNet already
                       subtracts it), so applying it again there would double-count. */}
-                  ₹{Math.round(liveDataReady ? liveNetPayableINR - appliedDeduction : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
+                  ₹{Math.round(liveDataReady ? liveNetPayableINR - alreadyPaidDeduction : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -3103,11 +3097,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 claimedAmount={Math.round(claim.totalClaimedAmount ?? 0)}
                 eligibleAmount={Math.round(liveDataReady ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
                 approvedAmount={Math.round(claim.approvedAmount ?? 0)}
-                deductionAmount={Math.round((claim.deductionAmount ?? 0) + appliedDeduction)}
+                deductionAmount={Math.round((claim.deductionAmount ?? 0) + alreadyPaidDeduction)}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
                 recoverableAmount={Math.round(liveDataReady ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
-                netPayable={Math.round((liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement)) - appliedDeduction)}
+                netPayable={Math.round((liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement)) - alreadyPaidDeduction)}
                 currency="INR"
               />
               {/* Net payable banner — same live-first logic as above. Shown whenever live data
@@ -3123,7 +3117,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       {liveRecoverableINR > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
                     </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{Math.round((liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR) - appliedDeduction).toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{Math.round((liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR) - alreadyPaidDeduction).toLocaleString('en-IN')}</span>
                 </div>
               )}
 
@@ -3326,7 +3320,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       total still showed the old stored 3,659 instead of 2,550. */}
                   <div className="flex items-center justify-between px-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 mt-1">
                     <span className="text-sm font-bold text-white">NET PAYABLE TO TRAINER</span>
-                    <span className="text-xl font-extrabold text-white">₹{Math.round(liveNetPayableINR - appliedDeduction).toLocaleString('en-IN')}</span>
+                    <span className="text-xl font-extrabold text-white">₹{Math.round(liveNetPayableINR - alreadyPaidDeduction).toLocaleString('en-IN')}</span>
                   </div>
                   {(() => {
                     const hasConversion = effectiveDaItemsFinal.some(li => li.currency !== 'INR');
@@ -4807,7 +4801,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                         // THIS strip's figures — it was reading the raw liveNetPayableINR /
                         // liveRecoverableINR directly, so approving off of this box alone still
                         // showed the full pre-deduction amount even after HR applied a deduction.
-                        const netAfterDeduction = liveNetPayableINR - appliedDeduction;
+                        const netAfterDeduction = liveNetPayableINR - alreadyPaidDeduction;
                         const recoverableAfterDeduction = liveRecoverableINR + Math.max(0, -netAfterDeduction);
                         const payableAfterDeduction = Math.max(0, netAfterDeduction);
                         return recoverableAfterDeduction > 0 ? (
