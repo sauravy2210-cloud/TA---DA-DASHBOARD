@@ -641,7 +641,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     return getClaims().filter(c =>
       c.claimId !== claimId &&
       c.trainerId === (claim as unknown as { trainerId?: string }).trainerId &&
-      c.status === 'Paid' &&
+      // paymentStatus survives a Reopen (which only changes `status`) — a claim that WAS paid
+      // and got reopened for correction is still money already disbursed, not un-paid. Checking
+      // status alone hid this exact panel for a reopened-but-paid sibling claim. Bug fixed
+      // 2026-08-24: Akshay Kumar EMP-519, Asgn #265769 — TADA-2026-00030 (paid, then reopened)
+      // no longer triggered the "Already Paid" panel on TADA-2026-00006.
+      (c.status === 'Paid' || (c as unknown as { paymentStatus?: string }).paymentStatus === 'Paid') &&
       (c.assignmentIds ?? []).some(aid => thisAsgnIds.has(String(aid)))
     );
   }, [claim, claimId, claimRefreshTick]);

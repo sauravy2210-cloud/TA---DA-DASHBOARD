@@ -323,7 +323,13 @@ export function getPaidDADates(trainerId: string, excludeClaimId: string): Map<s
   for (const c of _claims) {
     if (c.claimId === excludeClaimId) continue;
     if (c.trainerId !== trainerId) continue;
-    if (!paidStatuses.has(c.status)) continue;
+    // A claim's `status` moves to 'Reopened' (or back to 'Submitted') when HR reopens it for
+    // correction, but `paymentStatus` is untouched by that action and stays 'Paid' — money was
+    // genuinely disbursed and reopening doesn't undo that. Checking status alone let a reopened-
+    // but-actually-paid claim's dates silently stop being greyed out elsewhere. Bug fixed
+    // 2026-08-24: Akshay Kumar EMP-519, assignment 265769 — TADA-2026-00030 was paid (₹15,320,
+    // 21 Aug) then reopened, and TADA-2026-00006 stopped showing its dates as already paid.
+    if (!paidStatuses.has(c.status) && (c as unknown as { paymentStatus?: string }).paymentStatus !== 'Paid') continue;
 
     // Prefer embedded lineItems (set at submit time), fall back to in-memory cache
     const items = (c.lineItems && c.lineItems.length > 0)
