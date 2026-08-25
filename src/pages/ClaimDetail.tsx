@@ -2,7 +2,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User, ClaimStatus, UserRole, ClaimAdvanceItem } from '../types';
 import { mockClaims, mockStatusHistory } from '../data/mockClaims';
-import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims, getFromStorage, getPaidDADates, getPaidNonDaLineItems } from '../services/storageService';
+import { getClaims, saveClaim, saveClaimAsync, getLineItems, getAdvanceRemaining, refreshClaims, getFromStorage, getPaidDADates, getPaidNonDaLineItems } from '../services/storageService';
 import { sendActionEmail } from '../services/emailService';
 import { mapRawToAssignment, fmtAssignmentDate, normalizeLeave, isApprovedLeave, isPendingLeave, isCancelledLeave, parseDT, parseTM, inferCountryFromCity, type ParsedAssignment, type ParsedLeave } from '../lib/assignmentMapper';
 import { useLiveRates, convertToINR } from '../lib/currencyRates';
@@ -555,6 +555,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // claim record like the other HR override fields above.
   const [alreadyPaidDeduction, setAlreadyPaidDeduction] = useState<number>(0);
   const [alreadyPaidDeductionDirty, setAlreadyPaidDeductionDirty] = useState(false);
+  const [alreadyPaidDeductionSavedValue, setAlreadyPaidDeductionSavedValue] = useState<number | null>(null);
 
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
 
@@ -628,7 +629,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     const savedMisc = (claim as unknown as { miscHrOverrides?: Record<string, { currency: string; amount: number }> })?.miscHrOverrides;
     if (savedMisc) setMiscHrOverrides(savedMisc);
     const savedAlreadyPaid = (claim as unknown as { alreadyPaidDeduction?: number })?.alreadyPaidDeduction;
-    if (savedAlreadyPaid != null) { setAlreadyPaidDeduction(savedAlreadyPaid); setAlreadyPaidDeductionDirty(true); }
+    if (savedAlreadyPaid != null) { setAlreadyPaidDeduction(savedAlreadyPaid); setAlreadyPaidDeductionDirty(true); setAlreadyPaidDeductionSavedValue(savedAlreadyPaid); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId]);
 
@@ -664,13 +665,30 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     }
   }, [assignmentAlreadyPaidTotal, alreadyPaidDeductionDirty]);
 
-  const applyAlreadyPaidDeduction = (value: number) => {
+  const [alreadyPaidDeductionSaving, setAlreadyPaidDeductionSaving] = useState(false);
+  const applyAlreadyPaidDeduction = async (value: number) => {
     if (!claimId) return;
     const base = getClaims().find((c) => c.claimId === claimId);
-    if (!base) return;
+    if (!base) {
+      window.alert('Could not apply the deduction — claim record not found. Please reload the page and try again.');
+      return;
+    }
     setAlreadyPaidDeduction(value);
     setAlreadyPaidDeductionDirty(true);
-    saveClaim({ ...base, alreadyPaidDeduction: value } as import('../types').ClaimHeader);
+    setAlreadyPaidDeductionSaving(true);
+    try {
+      // Awaited (unlike the fire-and-forget saveClaim used for cosmetic overrides elsewhere) —
+      // this deduction directly affects what gets paid, so HR needs a real confirmation the
+      // server write succeeded, not just an optimistic UI update. Previously this used the
+      // fire-and-forget saveClaim with no visible feedback at all, which made the button look
+      // broken even when it silently worked.
+      await saveClaimAsync({ ...base, alreadyPaidDeduction: value } as import('../types').ClaimHeader);
+      setAlreadyPaidDeductionSavedValue(value);
+    } catch {
+      window.alert('Failed to save the deduction to the server. Please check your connection and try again.');
+    } finally {
+      setAlreadyPaidDeductionSaving(false);
+    }
   };
 
   // Persist an HR override field immediately to the claim record — so it survives navigation/
@@ -3039,12 +3057,17 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   />
                   <button
                     type="button"
+                    disabled={alreadyPaidDeductionSaving}
                     onClick={() => applyAlreadyPaidDeduction(alreadyPaidDeduction)}
-                    className="px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 text-white rounded-lg"
+                    className="px-3 py-1.5 text-xs font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg"
                   >
-                    Apply Deduction
+                    {alreadyPaidDeductionSaving ? 'Saving…' : 'Apply Deduction'}
                   </button>
-                  <span className="text-xs text-gray-500">Auto-detected total: ₹{Math.round(assignmentAlreadyPaidTotal).toLocaleString('en-IN')}</span>
+                  {alreadyPaidDeductionSavedValue === alreadyPaidDeduction && !alreadyPaidDeductionSaving ? (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-green-700">✓ Applied &amp; saved</span>
+                  ) : (
+                    <span className="text-xs text-gray-500">Auto-detected total: ₹{Math.round(assignmentAlreadyPaidTotal).toLocaleString('en-IN')}</span>
+                  )}
                 </div>
               </div>
             )}
