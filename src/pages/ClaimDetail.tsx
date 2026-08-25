@@ -1966,7 +1966,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         // adjacent neighbor (from enrichedNearbyAssignments) at the same country with ≤ 7-day gap.
         // We only pair a current-claim assignment with its nearest neighbor — never
         // do all-pairs across the entire nearby list (that would pull in historical gaps).
-        {
+        // Same "only the latest claim for this assignment" scoping as the extend-past-claimEnd
+        // fix above — otherwise an EARLIER claim for this assignment keeps filling the same
+        // between-assignments gap that a newer, later-dated claim already legitimately owns.
+        // Bug fixed 2026-08-25: Akshay Kumar EMP-519, Asgn #265769 — TADA-2026-00044 (ends 20
+        // Aug) kept showing 22-23 Aug as 'between consecutive assignments' even after
+        // TADA-2026-00083 (21-25 Aug) was submitted and already covers that exact gap.
+        if (isLatestClaimForAssignment) {
           const getDestC = (a: { country?: string; city?: string }) => {
             const cc = a.city ? inferCountryFromCity(a.city) : '';
             return (a.country === 'India' && cc && cc !== 'India') ? cc : (a.country || cc || 'India');
