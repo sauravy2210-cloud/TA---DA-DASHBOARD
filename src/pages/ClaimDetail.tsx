@@ -2912,7 +2912,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Net Payable</div>
                 <div className="font-bold text-blue-700">
-                  ₹{Math.round(liveDataReady ? liveNetPayableINR : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
+                  {/* Must reflect the "Already Paid — Same Assignment ID" deduction too — this
+                      header is the FIRST number HR sees, and it previously showed the full
+                      pre-deduction amount even after the Amount Summary card, Net Payable
+                      banner, and Live Final Summary strip below it were all already correctly
+                      showing the reduced figure. Only subtract in the live-computed branch —
+                      the stored claim.netPayable fallback is already net-of-deduction once a
+                      claim has actually been Approved (persistAction's computedNet already
+                      subtracts it), so applying it again there would double-count. */}
+                  ₹{Math.round(liveDataReady ? liveNetPayableINR - alreadyPaidDeduction : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
