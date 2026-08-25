@@ -4788,17 +4788,27 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                           <span className="text-sm font-bold text-rose-700">₹{liveMiscTotalINR.toLocaleString('en-IN')}</span>
                         </div>
                       )}
-                      {liveRecoverableINR > 0 ? (
-                        <div className="flex items-center gap-2 bg-red-600 rounded-lg px-3 py-2">
-                          <span className="text-xs font-semibold text-red-100">RECOVERABLE FROM TRAINER</span>
-                          <span className="text-base font-extrabold text-white">₹{liveRecoverableINR.toLocaleString('en-IN')}</span>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-2 bg-emerald-600 rounded-lg px-3 py-2">
-                          <span className="text-xs font-semibold text-emerald-100">NET PAYABLE</span>
-                          <span className="text-base font-extrabold text-white">₹{liveNetPayableINR.toLocaleString('en-IN')}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        // Same "Already Paid — Same Assignment ID" adjustment applied to the
+                        // Amount Summary card and the Net Payable banner above must also reduce
+                        // THIS strip's figures — it was reading the raw liveNetPayableINR /
+                        // liveRecoverableINR directly, so approving off of this box alone still
+                        // showed the full pre-deduction amount even after HR applied a deduction.
+                        const netAfterDeduction = liveNetPayableINR - alreadyPaidDeduction;
+                        const recoverableAfterDeduction = liveRecoverableINR + Math.max(0, -netAfterDeduction);
+                        const payableAfterDeduction = Math.max(0, netAfterDeduction);
+                        return recoverableAfterDeduction > 0 ? (
+                          <div className="flex items-center gap-2 bg-red-600 rounded-lg px-3 py-2">
+                            <span className="text-xs font-semibold text-red-100">RECOVERABLE FROM TRAINER</span>
+                            <span className="text-base font-extrabold text-white">₹{recoverableAfterDeduction.toLocaleString('en-IN')}</span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 bg-emerald-600 rounded-lg px-3 py-2">
+                            <span className="text-xs font-semibold text-emerald-100">NET PAYABLE</span>
+                            <span className="text-base font-extrabold text-white">₹{payableAfterDeduction.toLocaleString('en-IN')}</span>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
