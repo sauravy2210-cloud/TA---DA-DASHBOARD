@@ -2901,7 +2901,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Approved</div>
                 <div className="font-semibold text-green-700">
-                  ₹{Math.round(liveDataReady ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
+                  ₹{Math.round(liveDataReady ? liveGrandTotalINR - appliedDeduction : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
