@@ -1293,6 +1293,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
 
   // ── DA correction — mirrors full daRows logic from CreateTADABill, including departure/return travel days ──
   const correctedDaItems = useMemo(() => {
+    // `claim` is genuinely undefined for one render pass whenever this page is opened directly
+    // on a claim that isn't in the local cache yet (e.g. a bill just submitted by the trainer,
+    // before the refreshClaims() effect above has resolved) — every read below assumes claim
+    // exists via `(claim as unknown as {...})` casts, which throw immediately on undefined and
+    // crash the whole page before the refresh can even complete. Bail out safely here; the
+    // claimRefreshTick-triggered re-render once refreshClaims() resolves picks this back up.
+    // Bug fixed 2026-08-25: TADA-2026-00083 crashed with "Cannot read properties of undefined
+    // (reading 'claimStartDate')" on first load.
+    if (!claim) return [];
     const raw = claimLineItems.filter(li => li.expenseType === 'DA');
     const activeFlights = summaryFlights.filter(f => f.Is_cancelled !== 'Yes');
     const addD = (iso: string, n: number) => { if (!iso) return ''; const d = new Date(iso); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
