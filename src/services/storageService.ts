@@ -359,6 +359,39 @@ export function getPaidDADates(trainerId: string, excludeClaimId: string): Map<s
 }
 
 /**
+ * Returns a Map<"date|expenseType|amount", billNo> of Travel/Cab/Misc line items already paid
+ * for the given assignment ID(s) — scoped by ASSIGNMENT (not just trainer), since the same
+ * trainer can have unrelated paid claims for a different assignment that must never grey out
+ * this one. Matched strictly on date + expenseType + amount so a genuinely different expense on
+ * the same day (e.g. two different cab legs) is never wrongly hidden. Mirrors getPaidDADates —
+ * same 'paymentStatus survives Reopen' rule, since a reopened-but-paid claim still represents
+ * money already disbursed.
+ */
+export function getPaidNonDaLineItems(assignmentIds: string[], excludeClaimId: string): Map<string, string> {
+  const result = new Map<string, string>();
+  if (assignmentIds.length === 0) return result;
+  const asgnSet = new Set(assignmentIds.map(String));
+  for (const c of _claims) {
+    if (c.claimId === excludeClaimId) continue;
+    if (!(c.assignmentIds ?? []).some(aid => asgnSet.has(String(aid)))) continue;
+    const isPaid = c.status === 'Paid' || (c as unknown as { paymentStatus?: string }).paymentStatus === 'Paid';
+    if (!isPaid) continue;
+
+    const items = (c.lineItems && c.lineItems.length > 0)
+      ? c.lineItems
+      : _lineItems.filter(li => li.claimId === c.claimId);
+    items
+      .filter(li => (li.expenseType === 'TA' || li.expenseType === 'Cab' || li.expenseType === 'Other') && li.date)
+      .forEach(li => {
+        const amt = Math.max(li.claimedAmount ?? 0, li.eligibleAmount ?? 0, li.approvedAmount ?? 0);
+        const key = `${li.date}|${li.expenseType}|${amt}`;
+        if (!result.has(key)) result.set(key, c.billNo ?? c.claimId);
+      });
+  }
+  return result;
+}
+
+/**
  * Returns true if any DA date in the claim overlaps with already-paid DA
  * from another approved/paid claim for the same trainer.
  * For claims without stored DA items, checks against the claim date range.

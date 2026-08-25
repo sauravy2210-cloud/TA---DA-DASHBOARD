@@ -2,7 +2,7 @@
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User, ClaimStatus, UserRole, ClaimAdvanceItem } from '../types';
 import { mockClaims, mockStatusHistory } from '../data/mockClaims';
-import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims, getFromStorage, getPaidDADates } from '../services/storageService';
+import { getClaims, saveClaim, getLineItems, getAdvanceRemaining, refreshClaims, getFromStorage, getPaidDADates, getPaidNonDaLineItems } from '../services/storageService';
 import { sendActionEmail } from '../services/emailService';
 import { mapRawToAssignment, fmtAssignmentDate, normalizeLeave, isApprovedLeave, isPendingLeave, isCancelledLeave, parseDT, parseTM, inferCountryFromCity, type ParsedAssignment, type ParsedLeave } from '../lib/assignmentMapper';
 import { useLiveRates, convertToINR } from '../lib/currencyRates';
@@ -2403,6 +2403,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     return getPaidDADates(claim.trainerId, claimId ?? '');
   }, [claim, claimId]);
 
+  // Travel/Cab and Misc line items already paid under the SAME ASSIGNMENT ID in another
+  // paid claim — greyed out below exactly like DA, so re-opening or resubmitting the same
+  // assignment can never double-pay a travel bill or misc expense either.
+  const paidNonDaItems = useMemo(() => {
+    const assignmentIds = (claim as unknown as { assignmentIds?: string[] })?.assignmentIds ?? [];
+    return getPaidNonDaLineItems(assignmentIds, claimId ?? '');
+  }, [claim, claimId, claimRefreshTick]);
+
   // Apply HR Admin overrides on top of auto-corrected DA items — keyed by DATE so the
   // override sticks to the correct calendar day even if the underlying PMS-computed array's
   // order/length shifts across reloads.
@@ -2444,15 +2452,21 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // Best available amount for a line item (some stored claims have claimedAmount=0, eligibleAmount=actual)
   const bestAmt = (li: ClaimLineItem) => Math.max(li.claimedAmount ?? 0, li.eligibleAmount ?? 0, li.approvedAmount ?? 0);
 
+  // Matches getPaidNonDaLineItems' key exactly (date|expenseType|amount) so a Travel/Cab or
+  // Misc item already paid under this same assignment in another claim is recognized here too.
+  const nonDaPaidKey = (li: ClaimLineItem) => `${li.date}|${li.expenseType}|${bestAmt(li)}`;
+  const isPaidElsewhere = (li: ClaimLineItem) => paidNonDaItems.has(nonDaPaidKey(li));
+
   // Derive TA/Misc totals directly from the effective arrays (which already have
   // HR overrides applied as claimedAmount). This is the single source of truth —
-  // no separate idx-remapping that could fall out of sync.
+  // no separate idx-remapping that could fall out of sync. Items already paid under the same
+  // assignment in another claim are excluded here too, same as already-paid DA days.
   const liveTATotalINR = effectiveTravelItemsFinal.reduce(
-    (s, li) => s + toINR(li.claimedAmount ?? 0, li.currency ?? 'INR'), 0
+    (s, li) => isPaidElsewhere(li) ? s : s + toINR(li.claimedAmount ?? 0, li.currency ?? 'INR'), 0
   );
 
   const liveMiscTotalINR = effectiveMiscItemsFinal.reduce(
-    (s, li) => s + toINR(li.claimedAmount ?? 0, li.currency ?? 'INR'), 0
+    (s, li) => isPaidElsewhere(li) ? s : s + toINR(li.claimedAmount ?? 0, li.currency ?? 'INR'), 0
   );
 
   // Grand total in INR — DA (multi-currency) + TA/Cab + Lodging + Misc, all converted to INR
@@ -4249,6 +4263,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                           const isApproved = approved > 0 && approved >= eligible;
                                           const isReduced  = approved > 0 && approved < eligible;
                                           const isEditing  = taEditIdx === idx && currentUser.role === 'HRAdmin';
+                                          const alreadyPaidBill = isPaidElsewhere(li) ? paidNonDaItems.get(nonDaPaidKey(li)) : undefined;
 
                                           if (isEditing) {
                                             return (
@@ -4319,9 +4334,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                           }
 
                                           return (
-                                            <tr key={idx} className={`${ov ? 'bg-amber-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'} hover:bg-indigo-50/30`}>
+                                            <tr key={idx} className={`${alreadyPaidBill ? 'bg-gray-100 opacity-60' : ov ? 'bg-amber-50/40' : idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'} hover:bg-indigo-50/30`}>
                                               <td className="px-3 py-2.5 whitespace-nowrap">
-                                                <span className="px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 font-semibold text-[11px]">{fmtD(li.date ?? '')}</span>
+                                                <span className={`px-2 py-0.5 rounded-md border font-semibold text-[11px] ${alreadyPaidBill ? 'bg-gray-100 border-gray-300 text-gray-400 line-through' : 'bg-teal-50 border-teal-200 text-teal-800'}`}>{fmtD(li.date ?? '')}</span>
                                               </td>
                                               <td className="px-3 py-2.5 whitespace-nowrap">
                                                 {journey ? <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200">{journey}</span> : <span className="text-gray-400">—</span>}
@@ -4332,14 +4347,16 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                               <td className="px-3 py-2.5 font-medium whitespace-nowrap text-gray-800">{li.fromLocation || '—'}</td>
                                               <td className="px-3 py-2.5 font-medium whitespace-nowrap text-gray-800">{li.toLocation || '—'}</td>
                                               <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap text-[11px]">{dist || '—'}</td>
-                                              <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-gray-800">
+                                              <td className={`px-3 py-2.5 whitespace-nowrap font-semibold ${alreadyPaidBill ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                                                 {fmtAmt(li.claimedAmount, li.currency)}
-                                                {ov && <span className="ml-1 text-[10px] text-amber-600 font-semibold">(HR)</span>}
+                                                {ov && !alreadyPaidBill && <span className="ml-1 text-[10px] text-amber-600 font-semibold">(HR)</span>}
                                               </td>
                                               <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{eligible > 0 ? fmtAmt(eligible, li.currency) : '—'}</td>
                                               <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-green-700">{approved > 0 ? fmtAmt(approved, li.currency) : '—'}</td>
                                               <td className="px-3 py-2.5 whitespace-nowrap">
-                                                {isApproved
+                                                {alreadyPaidBill
+                                                  ? <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-semibold text-[10px]">Already Paid — {alreadyPaidBill}</span>
+                                                  : isApproved
                                                   ? <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold text-[10px]">✓ Approved</span>
                                                   : isReduced
                                                   ? <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold text-[10px]">~ Reduced</span>
@@ -4385,6 +4402,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                         </a>
                                                       );
                                                     })()}
+                                                    {!alreadyPaidBill && (
                                                     <button
                                                       onClick={() => {
                                                         setTaEditIdx(idx);
@@ -4395,6 +4413,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                     >
                                                       ✏️ Edit
                                                     </button>
+                                                    )}
                                                   </div>
                                                 </td>
                                               )}
@@ -4516,10 +4535,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                         const isApproved = approved > 0 && approved >= eligible;
                                         const isReduced  = approved > 0 && approved < eligible;
                                         const isEditing  = miscEditIdx === idx && currentUser.role === 'HRAdmin';
+                                        const alreadyPaidBill = isPaidElsewhere(li) ? paidNonDaItems.get(nonDaPaidKey(li)) : undefined;
                                         return (
-                                          <tr key={idx} className={`${idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'} ${ov ? 'ring-1 ring-inset ring-amber-300' : ''} hover:bg-rose-50/30`}>
+                                          <tr key={idx} className={`${alreadyPaidBill ? 'bg-gray-100 opacity-60' : idx % 2 === 0 ? 'bg-white' : 'bg-gray-50/40'} ${ov && !alreadyPaidBill ? 'ring-1 ring-inset ring-amber-300' : ''} hover:bg-rose-50/30`}>
                                             <td className="px-3 py-2.5 whitespace-nowrap">
-                                              <span className="px-2 py-0.5 rounded-md bg-teal-50 border border-teal-200 text-teal-800 font-semibold text-[11px]">{fmtD(li.date ?? '')}</span>
+                                              <span className={`px-2 py-0.5 rounded-md border font-semibold text-[11px] ${alreadyPaidBill ? 'bg-gray-100 border-gray-300 text-gray-400 line-through' : 'bg-teal-50 border-teal-200 text-teal-800'}`}>{fmtD(li.date ?? '')}</span>
                                             </td>
                                             <td className="px-3 py-2.5 whitespace-nowrap">
                                               <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">{expType}</span>
@@ -4534,13 +4554,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">{li.currency || 'INR'}</span>
                                               )}
                                             </td>
-                                            <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-gray-800">
+                                            <td className={`px-3 py-2.5 whitespace-nowrap font-semibold ${alreadyPaidBill ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                                               {isEditing ? (
                                                 <input type="number" min={0} value={miscEditValues.amount}
                                                   onChange={e => setMiscEditValues(v => ({ ...v, amount: Number(e.target.value) }))}
                                                   className="w-24 border border-amber-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400" />
                                               ) : (
-                                                <span className={ov ? 'text-amber-700 font-bold' : ''}>{fmtAmt(li.claimedAmount, li.currency)}</span>
+                                                <span className={ov && !alreadyPaidBill ? 'text-amber-700 font-bold' : ''}>{fmtAmt(li.claimedAmount, li.currency)}</span>
                                               )}
                                             </td>
                                             <td className="px-3 py-2.5 max-w-[200px]">
@@ -4549,7 +4569,9 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                             <td className="px-3 py-2.5 whitespace-nowrap text-gray-700">{eligible > 0 ? fmtAmt(eligible, li.currency) : '—'}</td>
                                             <td className="px-3 py-2.5 whitespace-nowrap font-semibold text-green-700">{approved > 0 ? fmtAmt(approved, li.currency) : '—'}</td>
                                             <td className="px-3 py-2.5 whitespace-nowrap">
-                                              {isApproved
+                                              {alreadyPaidBill
+                                                ? <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-600 border border-red-200 font-semibold text-[10px]">Already Paid — {alreadyPaidBill}</span>
+                                                : isApproved
                                                 ? <span className="px-2 py-0.5 rounded-full bg-green-100 text-green-700 font-semibold text-[10px]">✓ Approved</span>
                                                 : isReduced
                                                 ? <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-semibold text-[10px]">~ Reduced</span>
@@ -4604,11 +4626,13 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                         </a>
                                                       );
                                                     })()}
+                                                    {!alreadyPaidBill && (
                                                     <button onClick={() => { setMiscEditIdx(idx); setMiscEditValues({ currency: li.currency || 'INR', amount: li.claimedAmount }); }}
                                                       title="Edit amount" className="p-1 rounded hover:bg-amber-100 text-amber-600 transition-colors">
                                                       ✏️
                                                     </button>
-                                                    {ov && (
+                                                    )}
+                                                    {ov && !alreadyPaidBill && (
                                                       <button onClick={() => {
                                                           const next = { ...miscHrOverrides };
                                                           delete next[li.lineItemId];
