@@ -23,7 +23,11 @@ function computeNetPayable(claim: ClaimHeader): number {
   const base = claim.approvedAmount && claim.approvedAmount > 0
     ? claim.approvedAmount
     : claim.totalClaimedAmount ?? 0;
-  return base - (claim.advanceAdjusted ?? 0) - (claim.deductionAmount ?? 0) - (claim.recoverableAmount ?? 0);
+  // Same "Already Paid — Same Assignment ID" deduction ClaimDetail.tsx applies to Approved
+  // Amount/Net Payable must also apply here — this table showed the pre-deduction ₹15,890 for
+  // TADA-2026-00044 even after HR applied a ₹15,320 deduction on the claim detail page.
+  const alreadyPaidDeduction = (claim as unknown as { alreadyPaidDeduction?: number }).alreadyPaidDeduction ?? 0;
+  return base - (claim.advanceAdjusted ?? 0) - (claim.deductionAmount ?? 0) - (claim.recoverableAmount ?? 0) - alreadyPaidDeduction;
 }
 
 function pick(obj: Record<string, unknown>, ...keys: string[]): string {
