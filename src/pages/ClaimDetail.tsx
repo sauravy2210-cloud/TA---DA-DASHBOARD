@@ -3326,7 +3326,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       total still showed the old stored 3,659 instead of 2,550. */}
                   <div className="flex items-center justify-between px-5 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 mt-1">
                     <span className="text-sm font-bold text-white">NET PAYABLE TO TRAINER</span>
-                    <span className="text-xl font-extrabold text-white">₹{Math.round(liveNetPayableINR).toLocaleString('en-IN')}</span>
+                    <span className="text-xl font-extrabold text-white">₹{Math.round(liveNetPayableINR - appliedDeduction).toLocaleString('en-IN')}</span>
                   </div>
                   {(() => {
                     const hasConversion = effectiveDaItemsFinal.some(li => li.currency !== 'INR');
