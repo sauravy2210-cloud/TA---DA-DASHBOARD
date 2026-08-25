@@ -48,8 +48,15 @@ function buildRows(
   claims: ClaimHeader[],
   bankInfoMap: Record<string, BankInfo>
 ): KoenigRow[] {
+  const INELIGIBLE_STATUSES = new Set(['Rejected', 'Draft', 'Cancelled']);
   return claims
     .filter((c) => {
+      // A Rejected/Draft/Cancelled claim must never enter the actual bank-transfer file, no
+      // matter what its computed amount is — net>0 alone isn't a status check. Caught while
+      // fixing the Akshay Kumar 15,890-vs-570 bug: TADA-2026-00083 (Rejected) was passing this
+      // filter with its full 46,990 claimed amount since Rejected isn't a "decided" status the
+      // netPayable-trust logic above recognizes, so it fell through to the raw recompute.
+      if (INELIGIBLE_STATUSES.has(c.status)) return false;
       const net = computeNetPayable(c);
       return net > 0; // only include claims with positive net payable
     })
