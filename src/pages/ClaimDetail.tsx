@@ -556,6 +556,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [alreadyPaidDeduction, setAlreadyPaidDeduction] = useState<number>(0);
   const [alreadyPaidDeductionDirty, setAlreadyPaidDeductionDirty] = useState(false);
   const [alreadyPaidDeductionSavedValue, setAlreadyPaidDeductionSavedValue] = useState<number | null>(null);
+  // The auto-detected/edited value in the input above must NOT affect Amount Summary, the Net
+  // Payable banner, the header, or the Live Final Summary strip until HR actually clicks "Apply
+  // Deduction" — otherwise every one of those numbers changes the instant the panel loads, with
+  // no action taken yet, which looked like the deduction was being silently forced through.
+  const appliedDeduction = alreadyPaidDeductionSavedValue ?? 0;
 
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
 
@@ -2920,7 +2925,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       the stored claim.netPayable fallback is already net-of-deduction once a
                       claim has actually been Approved (persistAction's computedNet already
                       subtracts it), so applying it again there would double-count. */}
-                  ₹{Math.round(liveDataReady ? liveNetPayableINR - alreadyPaidDeduction : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
+                  ₹{Math.round(liveDataReady ? liveNetPayableINR - appliedDeduction : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -3098,11 +3103,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 claimedAmount={Math.round(claim.totalClaimedAmount ?? 0)}
                 eligibleAmount={Math.round(liveDataReady ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
                 approvedAmount={Math.round(claim.approvedAmount ?? 0)}
-                deductionAmount={Math.round((claim.deductionAmount ?? 0) + alreadyPaidDeduction)}
+                deductionAmount={Math.round((claim.deductionAmount ?? 0) + appliedDeduction)}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
                 recoverableAmount={Math.round(liveDataReady ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
-                netPayable={Math.round((liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement)) - alreadyPaidDeduction)}
+                netPayable={Math.round((liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement)) - appliedDeduction)}
                 currency="INR"
               />
               {/* Net payable banner — same live-first logic as above. Shown whenever live data
@@ -3118,7 +3123,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       {liveRecoverableINR > 0 ? 'Advance adjusted exceeds approved amount — trainer owes back the difference' : 'All currencies converted to INR · includes HR overrides'}
                     </p>
                   </div>
-                  <span className="text-2xl font-extrabold text-white">₹{Math.round((liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR) - alreadyPaidDeduction).toLocaleString('en-IN')}</span>
+                  <span className="text-2xl font-extrabold text-white">₹{Math.round((liveRecoverableINR > 0 ? liveRecoverableINR : liveNetPayableINR) - appliedDeduction).toLocaleString('en-IN')}</span>
                 </div>
               )}
 
@@ -4802,7 +4807,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                         // THIS strip's figures — it was reading the raw liveNetPayableINR /
                         // liveRecoverableINR directly, so approving off of this box alone still
                         // showed the full pre-deduction amount even after HR applied a deduction.
-                        const netAfterDeduction = liveNetPayableINR - alreadyPaidDeduction;
+                        const netAfterDeduction = liveNetPayableINR - appliedDeduction;
                         const recoverableAfterDeduction = liveRecoverableINR + Math.max(0, -netAfterDeduction);
                         const payableAfterDeduction = Math.max(0, netAfterDeduction);
                         return recoverableAfterDeduction > 0 ? (
