@@ -21,15 +21,26 @@ export interface KoenigRow {
 }
 
 function computeNetPayable(claim: ClaimHeader): number {
+  // Same bug/fix as PaymentProcessing.tsx's computeNetPayable: once HR has decided a claim,
+  // claim.netPayable is the AUTHORITATIVE figure computed at approval time — it already accounts
+  // for DA-overlap exclusion and the "Already Paid — Same Assignment ID" deduction, neither of
+  // which can be reconstructed from the flat fields below. Recomputing independently here sent
+  // Akshay Kumar's actual bank-transfer file the pre-deduction 15,890 instead of the approved 570
+  // (TADA-2026-00044, after HR applied a 15,320 already-paid deduction).
+  const decidedStatuses = new Set(['Approved', 'Partially Approved', 'Payment Pending', 'Paid']);
+  if (decidedStatuses.has(claim.status) && claim.netPayable != null) return claim.netPayable;
+
   const base =
     claim.approvedAmount && claim.approvedAmount > 0
       ? claim.approvedAmount
       : claim.totalClaimedAmount ?? 0;
+  const alreadyPaidDeduction = (claim as unknown as { alreadyPaidDeduction?: number }).alreadyPaidDeduction ?? 0;
   return (
     base -
     (claim.advanceAdjusted ?? 0) -
     (claim.deductionAmount ?? 0) -
-    (claim.recoverableAmount ?? 0)
+    (claim.recoverableAmount ?? 0) -
+    alreadyPaidDeduction
   );
 }
 
