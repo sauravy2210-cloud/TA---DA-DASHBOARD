@@ -1424,36 +1424,21 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         // silently skipped just because this claim's own date range ends early. Akshay Kumar
         // EMP-519, TADA-2026-00044, assignment 265769 (17-21 Aug Johannesburg): 21 Aug was missing
         // entirely from the DA table because claimEnd=20 Aug stopped the loop one day short.
-        // Only the LATEST-dated claim among sibling claims for this same assignment should
-        // extend — otherwise every sibling independently extends all the way to the
-        // assignment's end date, each generating its own "PMS auto-calculated" rows for days
-        // that already belong to ANOTHER claim (paid, pending, or rejected). The dedup greyout
-        // only catches days genuinely paid elsewhere, so a rejected/unclaimed day (e.g. 20 Aug,
-        // rejected in a different bill) would show as live claimable DA on this earlier claim
-        // too, alongside the correctly-greyed paid days from a third claim — confusing and
-        // wrong: this claim never covered that day and never should. Bug fixed 2026-08-24:
-        // Akshay Kumar EMP-519, Asgn #265769 — TADA-2026-00006 (16-17 Aug) was showing DA rows
-        // through 23 Aug, duplicating what TADA-2026-00030/00044 already own.
-        const thisClaimAsgnIds = new Set(((claim as unknown as { assignmentIds?: string[] }).assignmentIds ?? []).map(String));
-        const siblingClaims = thisClaimAsgnIds.size > 0
-          ? getClaims().filter(c =>
-              c.claimId !== claimId &&
-              c.trainerId === (claim as unknown as { trainerId?: string }).trainerId &&
-              (c.assignmentIds ?? []).some(aid => thisClaimAsgnIds.has(String(aid)))
-            )
-          : [];
-        const isLatestClaimForAssignment = !siblingClaims.some(c => (c.claimEndDate ?? '') > claimEnd);
-
+        // Every claim sharing this assignment extends through the assignment's own end date and
+        // fills between-assignment gaps, regardless of other claims covering the same
+        // assignment — per explicit instruction, dedup relies solely on the "Already Paid"
+        // greyout (paid-status based), never on hiding rows on an earlier/other claim. An
+        // earlier attempt scoped this to only the latest-dated sibling claim, which caused HR
+        // to see date ranges vanish from a claim they were actively reviewing whenever a newer
+        // claim was later submitted for the same assignment. Reverted 2026-08-25.
         let fin = new Date(claimEnd);
-        if (isLatestClaimForAssignment) {
-          enrichedSummaryAssignments.forEach(asgn => {
-            if (!asgn.startDate || !asgn.endDate) return;
-            if (asgn.startDate <= claimEnd && asgn.endDate > claimEnd) {
-              const candidateFin = new Date(asgn.endDate);
-              if (candidateFin > fin) fin = candidateFin;
-            }
-          });
-        }
+        enrichedSummaryAssignments.forEach(asgn => {
+          if (!asgn.startDate || !asgn.endDate) return;
+          if (asgn.startDate <= claimEnd && asgn.endDate > claimEnd) {
+            const candidateFin = new Date(asgn.endDate);
+            if (candidateFin > fin) fin = candidateFin;
+          }
+        });
         while (cur <= fin) {
           const iso = cur.toISOString().slice(0, 10);
           // Approved leave day → India ₹950 only if trainer has a domestic India flight on this day;
@@ -1966,13 +1951,11 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         // adjacent neighbor (from enrichedNearbyAssignments) at the same country with ≤ 7-day gap.
         // We only pair a current-claim assignment with its nearest neighbor — never
         // do all-pairs across the entire nearby list (that would pull in historical gaps).
-        // Same "only the latest claim for this assignment" scoping as the extend-past-claimEnd
-        // fix above — otherwise an EARLIER claim for this assignment keeps filling the same
-        // between-assignments gap that a newer, later-dated claim already legitimately owns.
-        // Bug fixed 2026-08-25: Akshay Kumar EMP-519, Asgn #265769 — TADA-2026-00044 (ends 20
-        // Aug) kept showing 22-23 Aug as 'between consecutive assignments' even after
-        // TADA-2026-00083 (21-25 Aug) was submitted and already covers that exact gap.
-        if (isLatestClaimForAssignment) {
+        // Reverted 2026-08-25 per explicit instruction (see extend-past-claimEnd block above):
+        // every claim sharing this assignment shows the full gap-fill too, regardless of other
+        // claims covering the same assignment — dedup relies solely on the "Already Paid"
+        // greyout, not on hiding rows here.
+        {
           const getDestC = (a: { country?: string; city?: string }) => {
             const cc = a.city ? inferCountryFromCity(a.city) : '';
             return (a.country === 'India' && cc && cc !== 'India') ? cc : (a.country || cc || 'India');
