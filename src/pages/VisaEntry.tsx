@@ -1,6 +1,32 @@
 import { useState, useEffect, useRef } from 'react';
 import type { User } from '../types';
 
+// All currencies the app can actually convert to INR (matches lib/currencyRates.ts's
+// FALLBACK_RATES) — keeping this list in sync with that one so every option here always has a
+// real conversion rate, live or offline, rather than just decoration in the dropdown.
+const CURRENCY_OPTIONS: { code: string; label: string }[] = [
+  { code: 'INR', label: 'INR ₹' },
+  { code: 'USD', label: 'USD' },
+  { code: 'AED', label: 'AED' },
+  { code: 'EUR', label: 'EUR' },
+  { code: 'GBP', label: 'GBP' },
+  { code: 'SGD', label: 'SGD' },
+  { code: 'AUD', label: 'AUD' },
+  { code: 'CAD', label: 'CAD' },
+  { code: 'JPY', label: 'JPY' },
+  { code: 'SAR', label: 'SAR' },
+  { code: 'QAR', label: 'QAR' },
+  { code: 'KWD', label: 'KWD' },
+  { code: 'BHD', label: 'BHD' },
+  { code: 'OMR', label: 'OMR' },
+  { code: 'MYR', label: 'MYR' },
+  { code: 'THB', label: 'THB' },
+  { code: 'ZAR', label: 'ZAR' },
+  { code: 'NPR', label: 'NPR' },
+  { code: 'BDT', label: 'BDT' },
+  { code: 'LKR', label: 'LKR' },
+];
+
 // ── Location autocomplete (OpenStreetMap Nominatim via the app's existing /api/turso?type=geo
 // proxy — no Google Maps API key configured in this project). Deliberately a self-contained
 // copy rather than importing CreateTADABill.tsx's internal component, per the instruction to
@@ -476,11 +502,7 @@ export default function VisaEntry({ currentUser }: VisaEntryProps) {
           </div>
           <div className="flex gap-2">
             <select value={travelDraft.currency} onChange={e => setTravelDraft(v => ({ ...v, currency: e.target.value }))} className="border border-gray-300 rounded-lg px-2 py-2 text-sm">
-              <option value="INR">INR ₹</option>
-              <option value="USD">USD</option>
-              <option value="AED">AED</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
+              {CURRENCY_OPTIONS.map(o => <option key={o.code} value={o.code}>{o.label}</option>)}
             </select>
             <input type="number" min={0} value={travelDraft.amount || ''} onChange={e => setTravelDraft(v => ({ ...v, amount: Number(e.target.value) }))} placeholder="Amount" className={inputCls} />
           </div>
@@ -564,11 +586,7 @@ export default function VisaEntry({ currentUser }: VisaEntryProps) {
           </div>
           <div className="flex gap-2">
             <select value={miscDraft.currency} onChange={e => setMiscDraft(v => ({ ...v, currency: e.target.value }))} className="border border-gray-300 rounded-lg px-2 py-2 text-sm">
-              <option value="INR">INR ₹</option>
-              <option value="USD">USD</option>
-              <option value="AED">AED</option>
-              <option value="EUR">EUR</option>
-              <option value="GBP">GBP</option>
+              {CURRENCY_OPTIONS.map(o => <option key={o.code} value={o.code}>{o.label}</option>)}
             </select>
             <input type="number" min={0} value={miscDraft.amount || ''} onChange={e => setMiscDraft(v => ({ ...v, amount: Number(e.target.value) }))} placeholder="Amount" className={inputCls} />
           </div>
