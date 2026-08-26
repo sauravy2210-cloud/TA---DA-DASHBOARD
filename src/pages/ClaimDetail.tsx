@@ -681,7 +681,25 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       // server write succeeded, not just an optimistic UI update. Previously this used the
       // fire-and-forget saveClaim with no visible feedback at all, which made the button look
       // broken even when it silently worked.
-      await saveClaimAsync({ ...base, alreadyPaidDeduction: value } as import('../types').ClaimHeader);
+      //
+      // Also refresh the STORED netPayable/approvedAmount to the current live-computed figure
+      // right now, not just the raw alreadyPaidDeduction number. Payment Processing and the
+      // Koenig export can't re-run the live PMS/DA-overlap calculation themselves — they trust
+      // whatever netPayable was stored at the last Approve action. If the live DA-overlap dedup
+      // logic corrects itself (or the count of already-paid days changes) AFTER that Approve
+      // click, the stored figure goes stale and those other screens keep showing an outdated
+      // number until HR happens to re-Approve. Bug fixed 2026-08-26: Mayur Bhushan Kotoky
+      // TADA-2026-00082 — Payment Processing showed a ₹2,511 recovery from a stale stored
+      // netPayable of -2,511, while the live-recomputed figure (with the 6 already-paid days
+      // correctly excluded from the DA total) was actually a positive ₹6,421, no recovery at all.
+      const correctedTotal = liveDataReady ? liveGrandTotalINR : (base.totalClaimedAmount ?? 0);
+      const correctedNet = correctedTotal - (base.advanceAdjusted ?? 0) - (base.deductionAmount ?? 0) - value;
+      await saveClaimAsync({
+        ...base,
+        alreadyPaidDeduction: value,
+        approvedAmount: correctedTotal,
+        netPayable: correctedNet,
+      } as import('../types').ClaimHeader);
       setAlreadyPaidDeductionSavedValue(value);
     } catch {
       window.alert('Failed to save the deduction to the server. Please check your connection and try again.');
