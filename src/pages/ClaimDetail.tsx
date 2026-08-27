@@ -2575,6 +2575,23 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       totalClaimedAmount: computedTotal,
     };
 
+    // On Approve/Partial-Approve, replace the claim's STORED DA line items with the current
+    // live-corrected set (HR overrides applied, already-paid-elsewhere days excluded) — not just
+    // update the numeric totals. Without this, a claim's original-submission DA line items stay
+    // frozen forever even after a policy fix changes what the live recompute produces, so a LATER
+    // sibling claim's "already paid" dedup check (which reads stored line items, not a live
+    // recompute) keeps trusting stale data indefinitely. Bug fixed 2026-08-27: Prem Sharma
+    // EMP-1563, assignment gap 264659->264834 — TADA-2026-00057's stored line items still had a
+    // stale 09-Aug entry from before a fix changed its live table to correctly start at 10-Aug;
+    // TADA-2026-00055's own (correct) 09-Aug gap-fill day was wrongly deduped against that stale
+    // entry, so 09-Aug ended up paid nowhere. Persisting the live set here at Approve time keeps
+    // stored data from silently drifting out of sync with what HR is actually deciding.
+    if (isAdvanceRecordingAction) {
+      const unpaidDaItemsForSave = effectiveDaItemsFinal.filter(li => !paidDaDates.has(li.date ?? ''));
+      const nonDaLineItems = (base.lineItems ?? []).filter(li => li.expenseType !== 'DA');
+      patch = { ...patch, lineItems: [...nonDaLineItems, ...unpaidDaItemsForSave] };
+    }
+
     switch (action.key) {
       case 'send-clarification':
         patch = { ...patch, status: 'Clarification Required', pendingWith: 'Trainer', adminRemark: reason };
