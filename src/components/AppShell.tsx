@@ -241,6 +241,13 @@ export default function AppShell({
         >
           <div className="p-6">
             {currentUser.role === 'Trainer' && (
+              <div className="mb-4 rounded-xl border-2 border-amber-300 bg-amber-50 px-5 py-3 text-center">
+                <p className="text-sm font-bold text-amber-800">
+                  ⚠️ Avoid Delays &amp; Rework: Upload all required mail approvals from travel desk, bills, and supporting documents with your claim to ensure a smooth one-time settlement.
+                </p>
+              </div>
+            )}
+            {currentUser.role === 'Trainer' && (
               <div className="mb-4 rounded-xl border-2 border-red-300 bg-red-50 px-5 py-4">
                 <div className="flex items-center gap-2 mb-3">
                   <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 shrink-0 text-red-600" viewBox="0 0 20 20" fill="currentColor">
@@ -264,15 +271,6 @@ export default function AppShell({
           </div>
         </main>
       </div>
-
-      {/* Fixed bottom-center settlement reminder — only for Trainer role, on every page */}
-      {currentUser.role === 'Trainer' && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 max-w-2xl w-[calc(100%-2rem)] px-5 py-3 rounded-xl border-2 border-amber-300 bg-amber-50 shadow-lg text-center">
-          <p className="text-sm font-bold text-amber-800">
-            ⚠️ Avoid Delays &amp; Rework: Upload all required mail approvals from travel desk, bills, and supporting documents with your claim to ensure a smooth one-time settlement.
-          </p>
-        </div>
-      )}
 
       {/* Floating chatbot — only for Trainer role */}
       {currentUser.role === 'Trainer' && <ChatBot />}
