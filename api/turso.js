@@ -52,6 +52,7 @@ async function ensureTablesOnce(db) {
     `CREATE TABLE IF NOT EXISTS visa_entries (id TEXT PRIMARY KEY, trainer_id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS bill_counters (year INTEGER PRIMARY KEY, seq INTEGER NOT NULL DEFAULT 0)`,
     `CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, bill_no TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS approval_history (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, bill_no TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
   ], 'write');
   _tablesReady = true;
 }
@@ -271,7 +272,7 @@ export default async function handler(req, res) {
   // with "no such table" under the write-only check below. Force creation on GET too, but only
   // for this one still-new type; every other type already exists in production.
   const isWrite = req.method === 'POST' || req.method === 'DELETE';
-  if ((isWrite || type === 'payments') && !_tablesReady) {
+  if ((isWrite || type === 'payments' || type === 'approval-history') && !_tablesReady) {
     try {
       await ensureTablesOnce(db);
     } catch (err) {
@@ -361,6 +362,29 @@ export default async function handler(req, res) {
       const { paymentId } = req.query;
       if (!paymentId) return res.status(400).json({ error: 'Missing paymentId' });
       await db.execute({ sql: 'DELETE FROM payments WHERE id = ?', args: [paymentId] });
+      return res.status(200).json({ ok: true });
+    }
+  }
+
+  // Every distinct Approved/Partially-Approved amount a claim has ever had, so HR editing a
+  // bill's amount down (or up) after an earlier approval never looks like money silently
+  // vanished — the prior decision stays visible here instead of being overwritten in place.
+  if (type === 'approval-history') {
+    if (req.method === 'GET') {
+      const { claimId } = req.query;
+      const result = claimId
+        ? await db.execute({ sql: 'SELECT data FROM approval_history WHERE claim_id = ? ORDER BY created_at DESC', args: [claimId] })
+        : await db.execute('SELECT data FROM approval_history ORDER BY created_at DESC');
+      return res.status(200).json({ approvals: result.rows.map(r => JSON.parse(r.data)) });
+    }
+    if (req.method === 'POST') {
+      const record = req.body;
+      if (!record?.approvalId || !record?.claimId) return res.status(400).json({ error: 'Missing approvalId or claimId' });
+      await db.execute({
+        sql: `INSERT INTO approval_history (id, claim_id, bill_no, data, created_at) VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
+        args: [record.approvalId, record.claimId, record.billNo ?? null, JSON.stringify(record), record.approvedAt || new Date().toISOString()],
+      });
       return res.status(200).json({ ok: true });
     }
   }

@@ -117,6 +117,16 @@ interface LocalPaymentRecord {
   processedAt: string;
 }
 
+// Every distinct prior Approved/Partially-Approved amount a claim has had — so HR editing a
+// bill's DA rows down (or up) and re-approving never makes an earlier decision look like it was
+// silently deleted. Written by ClaimDetail.tsx's persistAction whenever a re-approval actually
+// changes the amount.
+interface ApprovalHistoryRecord {
+  approvalId: string; claimId: string; billNo?: string; trainerName?: string;
+  previousAmount: number; previousApprovedAmount?: number | null; newAmount: number;
+  changedBy: string; approvedAt: string;
+}
+
 function fmt(n: number | null | undefined, currency = 'INR') {
   if (n === null || n === undefined) return '—';
   if (currency === 'AED') return `AED ${n.toLocaleString('en-IN')}`;
@@ -186,6 +196,18 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
   const [bankEditId, setBankEditId] = useState<string | null>(null);
   const [bankEditValues, setBankEditValues] = useState<{ bankName: string; accountNumber: string; ifsc: string }>({ bankName: '', accountNumber: '', ifsc: '' });
   const [claimsVersion, setClaimsVersion] = useState(0);
+  const [approvalHistory, setApprovalHistory] = useState<ApprovalHistoryRecord[]>([]);
+  useEffect(() => {
+    fetch('/api/turso?type=approval-history')
+      .then(r => r.ok ? r.json() : { approvals: [] })
+      .then((d: { approvals?: ApprovalHistoryRecord[] }) => setApprovalHistory(Array.isArray(d.approvals) ? d.approvals : []))
+      .catch(() => {});
+  }, [claimsVersion]);
+  function getApprovalHistory(claimId: string) {
+    return approvalHistory
+      .filter(a => a.claimId === claimId)
+      .sort((a, b) => (b.approvedAt || '').localeCompare(a.approvedAt || ''));
+  }
   const [recoveryStatus, setRecoveryStatus] = useState<Record<string, 'idle' | 'loading' | 'done' | 'error'>>(
     () => getFromStorage<Record<string, 'idle' | 'loading' | 'done' | 'error'>>('tada_recovery_status', {})
   );
@@ -633,7 +655,23 @@ const bank = bankInfoMap[claim.trainerId] ?? bankInfoMap[claim.claimId] ?? { ban
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-gray-500">{claim.assignmentIds[0] ?? '—'}</td>
                     <td className="px-4 py-3 text-gray-700">{claim.clientName}</td>
-                    <td className="px-4 py-3 text-right font-medium text-gray-900">{fmt(claim.approvedAmount, claim.currency)}</td>
+                    <td className="px-4 py-3 text-right font-medium text-gray-900">
+                      {fmt(claim.approvedAmount, claim.currency)}
+                      {(() => {
+                        const history = getApprovalHistory(claim.claimId);
+                        if (history.length === 0) return null;
+                        return (
+                          <div className="mt-1 space-y-0.5 text-left" title="Earlier approved amounts on this same bill — not lost, just superseded">
+                            <div className="text-[10px] font-semibold text-amber-600">{history.length} earlier approval{history.length > 1 ? 's' : ''}:</div>
+                            {history.map(h => (
+                              <div key={h.approvalId} className="text-[10px] text-gray-400 font-normal">
+                                {fmt(h.previousAmount, claim.currency)} → {fmt(h.newAmount, claim.currency)} by {h.changedBy}
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
+                    </td>
                     <td className="px-4 py-3 text-right text-gray-500">{fmt(claim.advanceAdjusted || 0, claim.currency)}</td>
                     <td className="px-4 py-3 text-right text-gray-500">—</td>
                     {(() => {

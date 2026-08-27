@@ -2568,6 +2568,36 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     // and re-paid in full.
     const alreadyPaidDed = (base as unknown as { alreadyPaidDeduction?: number }).alreadyPaidDeduction ?? 0;
     const computedNet = computedTotal - effectiveAdvance - (base.deductionAmount ?? 0) - (base.recoverableAmount ?? 0) - alreadyPaidDed;
+
+    // If HR is RE-approving a claim that already had a real prior decision (e.g. editing DA rows
+    // down/up after an earlier Approve), and the amount is actually changing, record the OLD
+    // amount as its own approval-history entry before it gets overwritten below. Otherwise the
+    // earlier decision just silently disappears from view — Payment Processing (and this page)
+    // only ever show the single current netPayable/approvedAmount, with no trace of what it used
+    // to be. Bug fixed 2026-08-27: Prem Sharma EMP-1563, TADA-2026-00055 — HR zeroed 5 of 6 DA
+    // days via override and re-approved; the claim's original ~15,900 approval vanished with no
+    // record, looking exactly like money had been silently removed.
+    const wasAlreadyDecided = isAdvanceRecordingAction &&
+      (base.status === 'Approved' || base.status === 'Partially Approved') &&
+      base.netPayable != null;
+    if (wasAlreadyDecided && Math.round(base.netPayable!) !== Math.round(computedNet)) {
+      fetch('/api/turso?type=approval-history', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approvalId: `appr_${Date.now()}`,
+          claimId,
+          billNo: base.billNo,
+          trainerName: base.trainerName,
+          previousAmount: base.netPayable,
+          previousApprovedAmount: base.approvedAmount ?? null,
+          newAmount: computedNet,
+          changedBy: currentUser.name,
+          approvedAt: now,
+        }),
+      }).catch(() => { /* best-effort — never block the actual approval on this */ });
+    }
+
     let patch: Partial<import('../types').ClaimHeader> = {
       lastActionAt: now,
       advanceAdjusted: effectiveAdvance,
