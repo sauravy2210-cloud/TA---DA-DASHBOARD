@@ -4274,10 +4274,18 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       eligibleAmount: grandTotal,
       approvedAmount: 0,
       deductionAmount: 0,
-      advanceAdjusted: advanceTotal,
+      // advanceAdjusted must stay 0 at submission — it is an HR-only decision, made explicitly
+      // via the "Deductions — Advance Taken" checkboxes in ClaimDetail.tsx's persistAction, never
+      // auto-applied. advanceTotal here is only ever a blanket sum of every INR advance found in
+      // the PMS date range (line ~4708) — shown to the trainer as an informational preview, but
+      // storing it as the claim's actual advanceAdjusted meant a brand-new "Submitted" claim
+      // (never touched by HR) already carried a real deduction and could show a false Recoverable
+      // amount before HR had reviewed anything. Bug fixed 2026-08-27: Saurabh Kohli EMP-3922,
+      // TADA-2026-00091 — advanceAdjusted was 75,000 with 0 boxes checked in the HR panel.
+      advanceAdjusted: 0,
       miscAdjustments: 0,
       recoverableAmount: 0,
-      netPayable: grandTotal - advanceTotal,
+      netPayable: grandTotal,
       currency: 'INR',
       exceptionFlag: false,
       missingDocumentFlag: false,
