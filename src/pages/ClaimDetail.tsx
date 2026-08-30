@@ -528,7 +528,19 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [summaryAccomLoading, setSummaryAccomLoading] = useState(false);
   // Live FX rates from XE-equivalent API (open.er-api.com)
   const { rates: liveRates } = useLiveRates();
-  const toINR = (amount: number, currency: string) => convertToINR(amount, currency, liveRates);
+  // Once a claim is Paid, its DA/Travel/Misc breakup must never change again just because
+  // today's XE rate differs from the rate used when it was actually approved/paid — HR
+  // reopening a Paid bill from Payment Processing must see the exact same numbers every time.
+  // fxRatesSnapshot is captured at Approve/Partial-Approve time (see persistAction) precisely so
+  // a Paid claim can keep using the rate that was actually in effect, instead of today's live one.
+  // `claim` isn't declared until further down this component — computed lazily inside toINR
+  // (called only later in render, well after `claim` exists) rather than eagerly here, to avoid
+  // a temporal-dead-zone reference.
+  const toINR = (amount: number, currency: string) => {
+    const snapshot = (claim as unknown as { fxRatesSnapshot?: Record<string, number> } | undefined)?.fxRatesSnapshot;
+    const effectiveRates = (claim?.status === 'Paid' && snapshot) ? snapshot : liveRates;
+    return convertToINR(amount, currency, effectiveRates);
+  };
 
   // HR Admin DA override state — keyed by DATE (not row index, which shifts across reloads
   // as PMS data changes) and persisted to the claim record so an edit survives navigation/
@@ -2525,6 +2537,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // Summary correctly showed Rs.0, but Amount Summary/header still showed the stale Rs.12,372.
   const liveDataReady = effectiveDaItemsFinal.length > 0 || effectiveTravelItemsFinal.length > 0 || effectiveMiscItemsFinal.length > 0;
 
+  // Same frozen-rate logic as toINR above, exposed here (now that `claim` exists) for the two
+  // spots that display the RATE NUMBER itself (e.g. "1 USD = ₹96"), not just a converted amount —
+  // those must stay consistent with the frozen conversions once a claim is Paid too.
+  const displayRates = (claim?.status === 'Paid' && (claim as unknown as { fxRatesSnapshot?: Record<string, number> })?.fxRatesSnapshot)
+    || liveRates;
+
   const claimAttachments = useMemo(
     () => claimLineItems.filter(li => li.receiptData || li.receiptUploaded),
     [claimLineItems]
@@ -2603,6 +2621,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       advanceAdjusted: effectiveAdvance,
       netPayable: computedNet,
       totalClaimedAmount: computedTotal,
+      // Freeze today's XE rates on the claim record at the moment of decision — once this claim
+      // reaches Paid, its DA/Travel/Misc INR breakup must keep using THIS rate forever, not
+      // whatever XE happens to return the next time HR reopens it from Payment Processing.
+      ...(isAdvanceRecordingAction ? { fxRatesSnapshot: liveRates } : {}),
     };
 
     // On Approve/Partial-Approve, replace the claim's STORED DA line items with the current
@@ -3319,7 +3341,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                           <span className="text-xs font-medium text-gray-700">DA Allowance</span>
                           <span className="text-[11px] text-gray-500">
                             {cur === 'INR' ? `₹${amount.toLocaleString('en-IN')}` : `${cur} ${amount.toLocaleString('en-IN')}`}
-                            {cur !== 'INR' && <span className="text-gray-400 ml-1">@ {(liveRates['INR'] && liveRates[cur] ? Math.round(liveRates['INR'] / liveRates[cur]) : FX_TO_INR[cur] ?? 84)} INR/{cur}</span>}
+                            {cur !== 'INR' && <span className="text-gray-400 ml-1">@ {(displayRates['INR'] && displayRates[cur] ? Math.round(displayRates['INR'] / displayRates[cur]) : FX_TO_INR[cur] ?? 84)} INR/{cur}</span>}
                           </span>
                         </div>
                         <span className="text-sm font-bold text-green-700">₹{inr.toLocaleString('en-IN')}</span>
@@ -3390,7 +3412,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                     if (!hasConversion) return null;
                     return (
                       <p className="text-[10px] text-gray-400 text-right mt-1 italic">
-                        Live rates (XE): {[...new Set(effectiveDaItemsFinal.filter(li => li.currency && li.currency !== 'INR').map(li => li.currency))].map(c => `1 ${c} = ₹${liveRates['INR'] && liveRates[c] ? Math.round(liveRates['INR'] / liveRates[c]) : (FX_TO_INR[c] ?? 84)}`).join(' · ')}
+                        Live rates (XE): {[...new Set(effectiveDaItemsFinal.filter(li => li.currency && li.currency !== 'INR').map(li => li.currency))].map(c => `1 ${c} = ₹${displayRates['INR'] && displayRates[c] ? Math.round(displayRates['INR'] / displayRates[c]) : (FX_TO_INR[c] ?? 84)}`).join(' · ')}
                       </p>
                     );
                   })()}

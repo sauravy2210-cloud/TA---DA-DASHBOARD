@@ -293,6 +293,11 @@ export interface ClaimHeader {
   // under a different claim — set via the "Already Paid — Same Assignment ID" panel shown when
   // reopening a Paid bill, so re-approving never double-pays the same assignment.
   alreadyPaidDeduction?: number;
+  // XE-equivalent foreign-currency rates in effect at the moment HR approved/partially approved
+  // this claim (1 USD = X units, etc. — same shape as useLiveRates()). Once a claim is Paid, its
+  // DA/Travel/Misc INR breakup must use this frozen snapshot instead of today's live rate, so
+  // reopening it later never shows different numbers just because exchange rates moved.
+  fxRatesSnapshot?: Record<string, number>;
 }
 
 export type ExpenseType = 'TA' | 'DA' | 'Lodging' | 'Cab' | 'Other';
