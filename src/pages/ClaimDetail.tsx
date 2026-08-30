@@ -1,4 +1,4 @@
-﻿import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+﻿import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import type { User, ClaimStatus, UserRole, ClaimAdvanceItem } from '../types';
 import { mockClaims, mockStatusHistory } from '../data/mockClaims';
@@ -2502,60 +2502,18 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const nonDaPaidKey = (li: ClaimLineItem) => `${li.date}|${li.expenseType}|${bestAmt(li)}`;
   const isPaidElsewhere = (li: ClaimLineItem) => paidNonDaItems.has(nonDaPaidKey(li));
 
-  // ── Self-healing sync: stored line items on a DECIDED claim must never permanently drift from
-  // what the live PMS recompute says is correct. Approve/Partial-Approve already refreshes
-  // stored line items going forward (see persistAction below) — but that alone leaves two real
-  // gaps: (1) claims that were already Approved/Paid BEFORE that refresh logic existed, and
-  // (2) any claim whose live calculation later changes because a DA policy fix improves what the
-  // engine computes for the SAME assignment (this has happened repeatedly this session). Either
-  // way, the claim's OWN stored DA/Travel/Misc data — which is what every SIBLING claim's
-  // "already paid" dedup check reads — silently goes stale, and nobody notices until a trainer
-  // resubmits and gets wrongly blocked (or wrongly NOT blocked). Bug fixed 2026-08-30: Aditi
-  // Diwan EMP-4865, TADA-2026-00075 — approved with remark "DA approve 24 and 25 aug" but only
-  // 24-Aug was ever persisted; TADA-2026-00111 couldn't see 25-Aug as already paid until it was
-  // manually patched. Rather than relying on more manual patches, this effect runs on EVERY page
-  // load of EVERY already-decided claim and silently re-syncs stored data to match the live
-  // recompute the instant HR (or anyone) opens it — closing the gap permanently, for legacy data
-  // and for any future recalculation-logic change, with no manual intervention ever required.
-  const healedOnceRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!claim || !claimId) return;
-    const decidedStatuses = new Set(['Approved', 'Partially Approved', 'Paid', 'Payment Pending']);
-    if (!decidedStatuses.has(claim.status)) return;
-    if (healedOnceRef.current === claimId) return; // once per claim per page load is enough
-    // Wait for the live PMS-backed data to actually be ready before comparing — an empty
-    // effectiveDaItemsFinal during initial load must never be mistaken for "this claim has zero
-    // DA days" and wipe out real stored data.
-    if (effectiveDaItemsFinal.length === 0 && effectiveTravelItemsFinal.length === 0 && effectiveMiscItemsFinal.length === 0) return;
-
-    const sig = (items: { date?: string; claimedAmount: number; currency?: string }[]) =>
-      items.map(li => `${li.date}|${Math.round((li.claimedAmount ?? 0) * 100)}|${li.currency ?? ''}`).sort().join(',');
-
-    const correctDa = effectiveDaItemsFinal.filter(li => !paidDaDates.has(li.date ?? ''));
-    const storedDa = (claim.lineItems ?? []).filter(li => li.expenseType === 'DA');
-    const correctTravel = effectiveTravelItemsFinal.filter(li => !isPaidElsewhere(li));
-    const storedTravel = (claim.lineItems ?? []).filter(li => li.expenseType === 'TA' || li.expenseType === 'Cab');
-    const correctMisc = effectiveMiscItemsFinal.filter(li => !isPaidElsewhere(li));
-    const storedMisc = (claim.lineItems ?? []).filter(li => li.expenseType === 'Other');
-
-    const daInSync = sig(correctDa) === sig(storedDa) || correctDa.length === 0;
-    const travelInSync = sig(correctTravel) === sig(storedTravel) || correctTravel.length === 0;
-    const miscInSync = sig(correctMisc) === sig(storedMisc) || correctMisc.length === 0;
-    if (daInSync && travelInSync && miscInSync) { healedOnceRef.current = claimId; return; }
-
-    healedOnceRef.current = claimId;
-    const otherLineItems = (claim.lineItems ?? []).filter(li =>
-      li.expenseType !== 'DA' && li.expenseType !== 'TA' && li.expenseType !== 'Cab' && li.expenseType !== 'Other'
-    );
-    const healedLineItems = [
-      ...otherLineItems,
-      ...(daInSync ? storedDa : correctDa),
-      ...(travelInSync ? storedTravel : correctTravel),
-      ...(miscInSync ? storedMisc : correctMisc),
-    ];
-    saveClaim({ ...claim, lineItems: healedLineItems } as import('../types').ClaimHeader);
-  }, [claim, claimId, effectiveDaItemsFinal, paidDaDates, effectiveTravelItemsFinal, effectiveMiscItemsFinal, paidNonDaItems]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // NOTE: an earlier version of this file had an automatic "self-healing" effect here that
+  // silently rewrote a decided claim's stored line items to match the live PMS recompute on
+  // every page load. It was reverted the same day it shipped: it overwrote Aditi Diwan's
+  // TADA-2026-00075 (a Paid claim) from its correct, manually-verified 24+25 Aug data down to
+  // 23+24 Aug, because the live recompute for that claim is itself sensitive to PMS/flight data
+  // that can shift over time — exactly the "wrong calculation" risk this whole codebase has been
+  // fighting all session. Once a claim is Paid, its stored record is a historical fact of what
+  // was actually disbursed and must never be silently rewritten by a live recompute, no matter
+  // how well-intentioned. Fixing staleness safely requires either (a) a human reviewing and
+  // confirming the correction (the manual-fix pattern used throughout this session), or (b) only
+  // ever refreshing stored data at the moment of a NEW HR decision (see persistAction's approve/
+  // partial-approve refresh below), never on a passive page view of an already-decided claim.
 
   // Derive TA/Misc totals directly from the effective arrays (which already have
   // HR overrides applied as claimedAmount). This is the single source of truth —
