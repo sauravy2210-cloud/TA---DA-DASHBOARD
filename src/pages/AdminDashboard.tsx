@@ -749,6 +749,8 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
     const submitted = liveClaims.filter((c) => c.status === 'Submitted' || c.status === 'Resubmitted').length;
     const rejected = liveClaims.filter((c) => c.status === 'Rejected').length;
     const paid = liveClaims.filter((c) => c.status === 'Paid').length;
+    const reopened = liveClaims.filter((c) => c.status === 'Reopened').length;
+    const resubmitted = liveClaims.filter((c) => c.status === 'Resubmitted').length;
     const missingDocs = liveClaims.filter((c) => c.missingDocumentFlag).length;
     const exceptions = liveClaims.filter((c) => c.exceptionFlag).length;
     const slaBreached = liveClaims.filter((c) => c.slaBreached).length;
@@ -757,7 +759,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
     const totalApproved = liveClaims.reduce((s, c) => s + c.approvedAmount, 0);
     const recoverable = liveClaims.reduce((s, c) => s + c.recoverableAmount, 0);
     const advanceAdjusted = liveClaims.reduce((s, c) => s + (c.advanceAdjusted || 0), 0);
-    return { newBills, underReview, clarification, approved, paymentPending, submitted, rejected, paid, missingDocs, exceptions, slaBreached, ledgerMismatch, totalClaimed, totalApproved, recoverable, advanceAdjusted };
+    return { newBills, underReview, clarification, approved, paymentPending, submitted, rejected, paid, reopened, resubmitted, missingDocs, exceptions, slaBreached, ledgerMismatch, totalClaimed, totalApproved, recoverable, advanceAdjusted };
   }, [liveClaims]);
 
   // ── Pie chart data ───────────────────────────────────────────────────────
@@ -963,6 +965,22 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
             icon={BadgeCheck}
             accentColor="purple"
             onClick={() => goToQueue('Paid')}
+          />
+          <KpiCard
+            title="Reopened"
+            value={kpis.reopened}
+            subtitle="Reopened for correction"
+            icon={RotateCcw}
+            accentColor="teal"
+            onClick={() => goToQueue('Reopened')}
+          />
+          <KpiCard
+            title="Resubmitted"
+            value={kpis.resubmitted}
+            subtitle="Trainer responded to clarification"
+            icon={FileText}
+            accentColor="indigo"
+            onClick={() => goToQueue('Resubmitted')}
           />
         </div>
 
