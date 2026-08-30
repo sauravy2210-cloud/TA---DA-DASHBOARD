@@ -272,7 +272,12 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
 
   const filtered = useMemo(() => {
     return paymentClaims.filter((c) => {
-      if (statusFilter && c.status !== statusFilter) return false;
+      // Pseudo-status: claims where auto-recovery (negative net payable -> deducted from the
+      // trainer) was attempted and the RMS recovery API call itself failed — not a real
+      // claim.status value, so it's checked against recoveryStatus instead of c.status.
+      if (statusFilter === 'RecoveryFailed') {
+        if ((recoveryStatus[c.claimId] ?? 'idle') !== 'error') return false;
+      } else if (statusFilter && c.status !== statusFilter) return false;
       if (trainerFilter && !c.trainerName.toLowerCase().includes(trainerFilter.toLowerCase())) return false;
       if (clientFilter && !c.clientName.toLowerCase().includes(clientFilter.toLowerCase())) return false;
       if (batchFilter && !c.assignmentIds.join(' ').toLowerCase().includes(batchFilter.toLowerCase())) return false;
@@ -280,7 +285,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
       if (dateTo && c.submittedAt && c.submittedAt > dateTo + 'T23:59:59') return false;
       return true;
     });
-  }, [paymentClaims, statusFilter, trainerFilter, clientFilter, batchFilter, dateFrom, dateTo]);
+  }, [paymentClaims, statusFilter, trainerFilter, clientFilter, batchFilter, dateFrom, dateTo, recoveryStatus]);
 
   // Auto-insert recovery for every claim with a negative net payable (recoverable amount)
   // that hasn't been inserted yet. Runs whenever the filtered list changes.
@@ -539,6 +544,7 @@ export default function PaymentProcessing({ currentUser }: PaymentProcessingProp
               <option value="Approved">Approved</option>
               <option value="Partially Approved">Partially Approved</option>
               <option value="ApprovedVisaFees">Approved Visa Fees</option>
+              <option value="RecoveryFailed">Recoverable (Recovery Failed)</option>
             </select>
           </div>
           <div>
