@@ -1,4 +1,5 @@
-﻿import type { ClaimHeader, PaymentRecord } from '../types';
+﻿import * as XLSX from 'xlsx';
+import type { ClaimHeader, PaymentRecord } from '../types';
 import { formatINR, formatDate } from './calculationEngine';
 
 // ── Core CSV export ────────────────────────────────────────────────────────
@@ -175,18 +176,30 @@ export function exportNegativeNetPayableSheet(rows: NegativeNetPayableRow[]): vo
     'Status',
   ];
 
-  const csvRows = rows.map(r => [
-    r.billNo,
-    r.trainerName,
-    formatINR(r.totalClaimedAmount),
-    formatINR(r.advanceAdjusted),
-    formatINR(r.deductionAmount),
-    formatINR(r.netPayable),
-    r.status,
-  ]);
+  // Real numbers, not "₹1,234" strings — CSV mangled the ₹ symbol's encoding in Excel, and a
+  // plain numeric column also lets HR sum/sort the sheet directly instead of retyping values.
+  const wsData: (string | number)[][] = [
+    headers,
+    ...rows.map(r => [
+      r.billNo,
+      r.trainerName,
+      r.totalClaimedAmount,
+      r.advanceAdjusted,
+      r.deductionAmount,
+      r.netPayable,
+      r.status,
+    ]),
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet(wsData);
+  ws['!cols'] = [
+    { wch: 20 }, { wch: 24 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 20 }, { wch: 14 },
+  ];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Negative Net Payable');
 
   const timestamp = new Date().toISOString().slice(0, 10);
-  exportToCSV(`Negative_Net_Payable_${timestamp}`, headers, csvRows);
+  XLSX.writeFile(wb, `Negative_Net_Payable_${timestamp}.xlsx`);
 }
 
 // ── Generic report export ──────────────────────────────────────────────────
