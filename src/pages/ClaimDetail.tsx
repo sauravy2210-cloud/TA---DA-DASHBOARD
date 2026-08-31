@@ -1852,6 +1852,48 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
           if (!depFlight) return;
           const fd = parseDT(String(depFlight.departure_date ?? ''));
           if (!fd) return;
+
+          // Domestic feeder leg: the chosen international/final departure leg (depFlight) may
+          // itself have been fed by an earlier-departing DOMESTIC leg (e.g. Bangalore->Delhi)
+          // landing at depFlight's own departure city, on an EARLIER calendar date. That earlier
+          // date is when the trainer actually left their home base and deserves its own India DA
+          // — it's a separate travel event from the international leg's own date, not covered by
+          // the departure day itself (different date) nor the pre-batch interim fill below (which
+          // only fills days AFTER fd, never before it). Bug fixed 2026-08-31: TADA-2026-00112
+          // (Abhishek Soni, Asgn #266767) — Bangalore->Delhi dep 21-Aug 16:30, then Delhi->Zurich
+          // dep 22-Aug 01:05 (after midnight); Priority 2 above correctly picked the Delhi->Zurich
+          // leg as the international travel day, but 21-Aug (when he actually left Bangalore) was
+          // silently dropped entirely.
+          const feederLeg = activeFlights
+            .filter(f => {
+              const ffd = parseDT(String(f.departure_date ?? ''));
+              if (!ffd || ffd >= fd) return false;
+              if (addD(ffd, 2) < fd) return false; // within 2 days before the main leg
+              return String(f.to_city ?? '').trim().toLowerCase() === String(depFlight.from_city ?? '').trim().toLowerCase();
+            })
+            .reduce((latest, f) => {
+              if (!latest) return f;
+              const ld = parseDT(String(latest.departure_date ?? '')) || '';
+              const fdd = parseDT(String(f.departure_date ?? '')) || '';
+              return fdd > ld ? f : latest;
+            }, undefined as typeof activeFlights[number] | undefined);
+          if (feederLeg) {
+            const feederDate = parseDT(String(feederLeg.departure_date ?? ''));
+            const feederHHMM = String(feederLeg.departure_time ?? '').substring(0, 5);
+            if (feederDate && !autoRaw.some(li => li.date === feederDate) && (!feederHHMM || feederHHMM < '17:00')) {
+              const { rate: feederRate, currency: feederCurrency } = getHrDaInfo('India');
+              if (feederRate > 0) {
+                autoRaw.push({
+                  lineItemId: `AUTO-DA-FEEDER-${claimId}-${feederDate}`,
+                  claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'India', date: feederDate,
+                  description: `Daily Allowance — India (departure day, connecting to international flight, dep ${feederHHMM || '?'} < 17:00)`,
+                  claimedAmount: feederRate, policyLimit: feederRate, eligibleAmount: feederRate, approvedAmount: 0, deductionAmount: 0,
+                  currency: feederCurrency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+                });
+              }
+            }
+          }
+
           if (autoRaw.some(li => li.date === fd)) return;
           // Policy: departure travel day DA only if departure is before 17:00. This must be
           // checked against the EARLIEST leg departing on THIS specific date (fd) — not
