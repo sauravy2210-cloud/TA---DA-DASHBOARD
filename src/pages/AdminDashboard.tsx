@@ -1487,7 +1487,22 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                             })()}
                           </td>
                           <td className="px-4 py-2.5 whitespace-nowrap">
-                            <span className="font-bold text-blue-700">{formatINR(c.netPayable)}</span>
+                            {(() => {
+                              // Stored netPayable is clamped to 0 (Math.max(0, ...)) once advance
+                              // exceeds the approved/claimed amount — the real shortfall is meant to
+                              // live in recoverableAmount instead. But that field isn't always
+                              // populated consistently, so recompute the TRUE signed figure here
+                              // directly from totalClaimedAmount - advanceAdjusted - deductions
+                              // rather than trusting either stored field alone. A negative result
+                              // means the trainer owes money back, not "nothing payable".
+                              const trueNet = (c.totalClaimedAmount ?? 0) - (c.advanceAdjusted ?? 0) - (c.deductionAmount ?? 0);
+                              const isNegative = trueNet < -0.5;
+                              return (
+                                <span className={`font-bold ${isNegative ? 'text-red-600' : 'text-blue-700'}`}>
+                                  {isNegative ? '-' : ''}{formatINR(Math.abs(trueNet))}
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td className="px-4 py-2.5 whitespace-nowrap">
                             <StatusBadge status={c.status} size="sm" />
@@ -1502,7 +1517,15 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                           <span className="font-bold text-amber-600">-{formatINR(advanceClaims.reduce((s, c) => s + c.advanceAdjusted, 0))}</span>
                         </td>
                         <td className="px-4 py-2.5 whitespace-nowrap">
-                          <span className="font-bold text-blue-700">{formatINR(advanceClaims.reduce((s, c) => s + c.netPayable, 0))}</span>
+                          {(() => {
+                            const totalNet = advanceClaims.reduce((s, c) => s + ((c.totalClaimedAmount ?? 0) - (c.advanceAdjusted ?? 0) - (c.deductionAmount ?? 0)), 0);
+                            const isNegative = totalNet < -0.5;
+                            return (
+                              <span className={`font-bold ${isNegative ? 'text-red-600' : 'text-blue-700'}`}>
+                                {isNegative ? '-' : ''}{formatINR(Math.abs(totalNet))}
+                              </span>
+                            );
+                          })()}
                         </td>
                         <td />
                       </tr>
