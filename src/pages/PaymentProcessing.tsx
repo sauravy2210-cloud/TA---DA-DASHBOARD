@@ -29,12 +29,26 @@ function computeNetPayable(claim: ClaimHeader): number {
   // but this formula — blind to the overlap — recomputed a plain positive 6,421 from
   // approvedAmount alone. Trust the stored decision instead of re-deriving it.
   const decidedStatuses = new Set(['Approved', 'Partially Approved', 'Payment Pending', 'Paid']);
-  if (decidedStatuses.has(claim.status) && claim.netPayable != null) return claim.netPayable;
+  const alreadyPaidDeduction = (claim as unknown as { alreadyPaidDeduction?: number }).alreadyPaidDeduction ?? 0;
+  if (decidedStatuses.has(claim.status) && claim.netPayable != null) {
+    // Stored netPayable can be clamped to 0 (Math.max(0, total - advance)) whenever the advance
+    // adjusted exceeds the approved/claimed amount, which silently hides a real recovery case —
+    // e.g. TADA-2026-19743 (advance ₹11,684 > claimed ₹11,523) was stored as netPayable: 0
+    // instead of -161, so this table's Recoverable column showed ₹0 too. Recompute the raw
+    // signed figure and prefer it ONLY when it reveals a shortfall the stored value is masking
+    // (stored >= 0 but the raw figure is meaningfully negative). A genuinely decided negative
+    // value (e.g. a DA-overlap recovery HR already recorded correctly) is untouched.
+    const base = claim.approvedAmount && claim.approvedAmount > 0
+      ? claim.approvedAmount
+      : claim.totalClaimedAmount ?? 0;
+    const rawNet = base - (claim.advanceAdjusted ?? 0) - (claim.deductionAmount ?? 0) - alreadyPaidDeduction;
+    if (claim.netPayable >= 0 && rawNet < -0.5) return rawNet;
+    return claim.netPayable;
+  }
 
   const base = claim.approvedAmount && claim.approvedAmount > 0
     ? claim.approvedAmount
     : claim.totalClaimedAmount ?? 0;
-  const alreadyPaidDeduction = (claim as unknown as { alreadyPaidDeduction?: number }).alreadyPaidDeduction ?? 0;
   return base - (claim.advanceAdjusted ?? 0) - (claim.deductionAmount ?? 0) - (claim.recoverableAmount ?? 0) - alreadyPaidDeduction;
 }
 
