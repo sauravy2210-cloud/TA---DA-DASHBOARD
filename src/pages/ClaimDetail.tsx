@@ -2280,7 +2280,25 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         return (a.country === 'India' && c && c !== 'India') ? c : (a.country || c || 'India');
       };
 
-      if (isDepartureDay) {
+      // A date inside the departure window whose ONLY flight is a domestic India-to-India leg
+      // (e.g. Bangalore->Delhi feeding a later international departure) must stay India DA — the
+      // trainer hasn't left India yet on this date. Without this check, the destCountry/outbound
+      // logic below re-derives the SAME international outbound flight for every date in the whole
+      // -6-day window (it searches the window, not this specific date) and wrongly stamps a purely
+      // domestic day with the destination country. Bug fixed 2026-08-31: TADA-2026-00112 (Abhishek
+      // Soni, Asgn #266767) — 21-Aug (Bangalore->Delhi only) was corrected from India to Germany
+      // because the Delhi->Zurich flight (22-Aug, arrives 06:20 <=17:00) was used as "the" outbound
+      // leg for 21-Aug too.
+      const dateHasDomesticOnly = isDepartureDay && activeFlights.some(f => {
+        const fd = parseDT(String(f.departure_date ?? ''));
+        if (fd !== date) return false;
+        const fromC = inferCountryFromCity(String(f.from_city ?? '').trim());
+        const toC   = inferCountryFromCity(String(f.to_city ?? '').trim());
+        return fromC === 'India' && toC === 'India';
+      });
+      if (dateHasDomesticOnly) {
+        effectiveCountry = 'India';
+      } else if (isDepartureDay) {
         // Before flight-time check: if previous assignment was in the same country, trainer was
         // already in-country (consecutive same-country assignments) — give full international DA.
         const prevAsgn = enrichedNearbyAssignments
