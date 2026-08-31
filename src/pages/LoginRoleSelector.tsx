@@ -221,11 +221,17 @@ function TrainerLoginCard({ onLogin, autoExpand, initialEmpCode }: TrainerCardPr
   const [error, setError]         = useState('');
 
   // Pre-fetch employee while trainer is typing — so PMS lookup is done by the time they click Send OTP
-  const prefetchCache = useRef<{ code: string; promise: Promise<PmsEmployee | null> } | null>(null);
+  const prefetchCache = useRef<{ code: string; promise: Promise<{ emp: PmsEmployee | null; failed: boolean }> } | null>(null);
 
-  function getPrefetchedEmployee(code: string): Promise<PmsEmployee | null> {
+  function getPrefetchedEmployee(code: string): Promise<{ emp: PmsEmployee | null; failed: boolean }> {
     if (prefetchCache.current?.code === code) return prefetchCache.current.promise;
-    const promise = fetchEmployeeFromPMS(code).catch(() => null);
+    // A transient PMS/network failure here must NOT be collapsed into "employee not found" — that
+    // message tells a real trainer their employee code is wrong, when the actual cause was a
+    // timeout on Koenig's side. Distinguish the two so submitCode can show the correct message
+    // and let the trainer retry, instead of them thinking they mistyped their code.
+    const promise = fetchEmployeeFromPMS(code)
+      .then(emp => ({ emp, failed: false }))
+      .catch(() => ({ emp: null, failed: true }));
     prefetchCache.current = { code, promise };
     return promise;
   }
@@ -294,17 +300,10 @@ function TrainerLoginCard({ onLogin, autoExpand, initialEmpCode }: TrainerCardPr
     setLoading(true);
     setError('');
 
-    let emp: PmsEmployee | null = null;
-    let apiReachable = false;
-    try {
-      // Use pre-fetched result if available (started as trainer typed) — avoids 2-5s PMS lookup
-      emp = await getPrefetchedEmployee(code);
-      apiReachable = true;
-    } catch {
-      // PMS unreachable
-    }
+    // Use pre-fetched result if available (started as trainer typed) — avoids 2-5s PMS lookup
+    const { emp, failed } = await getPrefetchedEmployee(code);
 
-    if (!apiReachable) {
+    if (failed) {
       setError('Unable to reach Koenig PMS. Please check your connection and try again.');
       setLoading(false);
       return;
