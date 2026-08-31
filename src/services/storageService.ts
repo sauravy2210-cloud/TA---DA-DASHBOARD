@@ -383,7 +383,17 @@ export function getPaidNonDaLineItems(assignmentIds: string[], excludeClaimId: s
     items
       .filter(li => (li.expenseType === 'TA' || li.expenseType === 'Cab' || li.expenseType === 'Other') && li.date)
       .forEach(li => {
-        const amt = Math.max(li.claimedAmount ?? 0, li.eligibleAmount ?? 0, li.approvedAmount ?? 0);
+        // Only a genuinely decided-and-paid amount can dedupe against a sibling claim's expense.
+        // Falling back to eligibleAmount (the policy ceiling, not what was actually approved)
+        // wrongly flagged an HR-zeroed/rejected expense as "already paid" at its ORIGINAL eligible
+        // amount, blocking a completely different claim's real expense at that same amount. Bug
+        // fixed 2026-08-31: TADA-2026-00081 zeroed two cab entries (claimedAmount 0, never
+        // approved, status Pending) but TADA-2026-00095 still showed them "Already Paid —
+        // TADA-2026-00081" because eligibleAmount (₹915/₹1,400) was used as the paid figure
+        // instead of what was actually paid — nothing.
+        if (li.adminDecision === 'Rejected' || li.adminDecision === 'Non-Payable') return;
+        const amt = (li.approvedAmount && li.approvedAmount > 0) ? li.approvedAmount : (li.claimedAmount ?? 0);
+        if (amt <= 0) return; // nothing was actually paid for this expense
         const key = `${li.date}|${li.expenseType}|${amt}`;
         if (!result.has(key)) result.set(key, c.billNo ?? c.claimId);
       });
