@@ -4608,18 +4608,21 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           // in one bill, misc expenses in another) registered a SEPARATE RMS record for each —
           // RMS flagged this directly: "For one round journey, we should receive a single claim
           // entry" (2026-08-21), and confirmed by example: 5 separate TABillIDs for one trainer
-          // all on assignment 264822. Matched primarily by SHARED ASSIGNMENT ID — the same
-          // batch/course is the clearest signal of "same journey", more precise than date-range
-          // overlap alone (two genuinely different trips can still have adjacent dates). Falls
-          // back to overlapping travel dates only when no assignment match exists.
+          // all on assignment 264822.
           //
-          // 2026-08-23 (Prem Sharma EMP-1563, TADA-2026-00054 vs 00057 — assignments 264833 vs
-          // 264834 sharing RMS 82942): the OLD "any shared assignment ID" match let a combined
-          // multi-assignment claim (covering e.g. [264833, 264659, 264834] as one trip) act as a
-          // hub that transitively linked otherwise-unrelated single-assignment claims to the same
-          // RMS ID. Per explicit instruction: a DIFFERENT assignment ID (or batch ID) must ALWAYS
-          // get a DIFFERENT RMS TABillID — no exceptions. Match now requires the two claims'
-          // assignment-ID SETS to be EXACTLY equal (not just overlapping) before reusing an ID.
+          // 2026-08-23 (Prem Sharma EMP-1563): tried requiring the two claims' assignment-ID SETS
+          // to be EXACTLY equal, to stop a combined multi-assignment claim from acting as a "hub"
+          // that transitively links unrelated single-assignment claims. That over-corrected: per
+          // explicit instruction ("check assignment ID, create only one TABillID, without fail"),
+          // ANY claim covering a given assignment ID must reuse THAT assignment ID's one TABillID
+          // — a combined claim [X,Y,Z] and later separate claims for X, for Y, and for Z should
+          // all land on the SAME TABillID, because X, Y, and Z were already billed together.
+          // Exact-set-equality broke exactly that: Sreemanta Das (asgn 262076), Prajakta Landge
+          // (asgn 265287/266254/265289), each got 3-4 separate TABillIDs instead of one, because
+          // no later single-assignment claim's set ever equaled the earlier combined claim's set.
+          // Reverted 2026-08-31 to the simple, correct rule: reuse the TABillID of ANY other claim
+          // that shares AT LEAST ONE assignment ID. Falls back to overlapping travel dates only
+          // when no assignment-ID data exists on either side.
           let reusedTABillId: number | null = null;
           try {
             const otherClaimsRes = await fetch(`/api/turso?type=claims&trainerId=${encodeURIComponent(String(currentUser?.trainerId ?? ''))}`);
@@ -4627,8 +4630,8 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
               const { claims: otherClaims } = await otherClaimsRes.json() as { claims?: Array<{ claimId: string; assignmentIds?: string[]; claimStartDate?: string; claimEndDate?: string; rmsTABillId?: number }> };
               const thisAsgnIds = new Set((claim.assignmentIds ?? []).map(String));
               const others = (otherClaims ?? []).filter(c => c.claimId !== claimId && c.rmsTABillId);
-              const setsEqual = (a: Set<string>, b: Set<string>) => a.size > 0 && a.size === b.size && [...a].every(x => b.has(x));
-              const asgnMatch = others.find(c => setsEqual(new Set((c.assignmentIds ?? []).map(String)), thisAsgnIds));
+              const shareAnyAssignment = (a: Set<string>, b: Set<string>) => a.size > 0 && [...a].some(x => b.has(x));
+              const asgnMatch = others.find(c => shareAnyAssignment(new Set((c.assignmentIds ?? []).map(String)), thisAsgnIds));
               // Date-overlap fallback only for claims with NO assignment-ID data at all on either
               // side — never used to bridge two claims with different known assignment IDs.
               const dateMatch = !asgnMatch && thisAsgnIds.size === 0 ? others.find(c => {
