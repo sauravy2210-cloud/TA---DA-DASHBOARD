@@ -380,19 +380,25 @@ export function getPaidNonDaLineItems(assignmentIds: string[], excludeClaimId: s
     const items = (c.lineItems && c.lineItems.length > 0)
       ? c.lineItems
       : _lineItems.filter(li => li.claimId === c.claimId);
+    // HR can override an individual Travel/Misc line item's amount (including zeroing it out) via
+    // the "HR Override" edit in ClaimDetail.tsx — that decision is stored in a SEPARATE overlay
+    // map (taHrOverrides / miscHrOverrides, keyed by lineItemId) and is never written back into
+    // li.claimedAmount/approvedAmount on the stored line item itself. Bug fixed 2026-08-31 (round
+    // 2): TADA-2026-00081 (Aastha Mehta) had both TA items HR-overridden to ₹0 (taHrOverrides),
+    // but li.claimedAmount still read 915/1400 in the raw stored data — round 1 of this fix fell
+    // back to claimedAmount whenever approvedAmount was 0, so it still wrongly flagged TADA-2026-
+    // 00095's real expenses at those amounts as "Already Paid — TADA-2026-00081".
+    const taOv = (c as unknown as { taHrOverrides?: Record<string, { amount: number }> }).taHrOverrides ?? {};
+    const miscOv = (c as unknown as { miscHrOverrides?: Record<string, { amount: number }> }).miscHrOverrides ?? {};
     items
       .filter(li => (li.expenseType === 'TA' || li.expenseType === 'Cab' || li.expenseType === 'Other') && li.date)
       .forEach(li => {
-        // Only a genuinely decided-and-paid amount can dedupe against a sibling claim's expense.
-        // Falling back to eligibleAmount (the policy ceiling, not what was actually approved)
-        // wrongly flagged an HR-zeroed/rejected expense as "already paid" at its ORIGINAL eligible
-        // amount, blocking a completely different claim's real expense at that same amount. Bug
-        // fixed 2026-08-31: TADA-2026-00081 zeroed two cab entries (claimedAmount 0, never
-        // approved, status Pending) but TADA-2026-00095 still showed them "Already Paid —
-        // TADA-2026-00081" because eligibleAmount (₹915/₹1,400) was used as the paid figure
-        // instead of what was actually paid — nothing.
         if (li.adminDecision === 'Rejected' || li.adminDecision === 'Non-Payable') return;
-        const amt = (li.approvedAmount && li.approvedAmount > 0) ? li.approvedAmount : (li.claimedAmount ?? 0);
+        const override = taOv[li.lineItemId] ?? miscOv[li.lineItemId];
+        // An explicit HR override (even to a lower or zero amount) is the authoritative final
+        // figure — it must never be second-guessed by falling back to the original claimedAmount.
+        // Only when NO override exists do we fall back to approvedAmount, then claimedAmount.
+        const amt = override ? override.amount : ((li.approvedAmount && li.approvedAmount > 0) ? li.approvedAmount : (li.claimedAmount ?? 0));
         if (amt <= 0) return; // nothing was actually paid for this expense
         const key = `${li.date}|${li.expenseType}|${amt}`;
         if (!result.has(key)) result.set(key, c.billNo ?? c.claimId);
