@@ -1,7 +1,7 @@
 ﻿import { useMemo, useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getClaims, deleteClaim, saveClaimAsync, refreshClaims } from '../services/storageService';
-import { exportClaimsQueue } from '../services/exportEngine';
+import { exportClaimsQueue, exportNegativeNetPayableSheet } from '../services/exportEngine';
 import {
   PieChart,
   Pie,
@@ -1393,6 +1393,19 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
             const advanceClaims = advQ
               ? allAdvanceClaims.filter(c => (c.trainerName ?? '').toLowerCase().includes(advQ))
               : allAdvanceClaims;
+            // True signed net — same formula as the Net Payable column below — so this export
+            // matches exactly what's shown on screen, not the stored (possibly clamped) netPayable.
+            const negativeNetClaims = allAdvanceClaims
+              .map(c => ({
+                billNo: c.billNo,
+                trainerName: c.trainerName,
+                totalClaimedAmount: c.totalClaimedAmount ?? 0,
+                advanceAdjusted: c.advanceAdjusted ?? 0,
+                deductionAmount: c.deductionAmount ?? 0,
+                netPayable: (c.totalClaimedAmount ?? 0) - (c.advanceAdjusted ?? 0) - (c.deductionAmount ?? 0),
+                status: c.status,
+              }))
+              .filter(r => r.netPayable < -0.5);
             return (
               <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
                 <div className="border-b border-gray-100 px-5 py-4">
@@ -1400,7 +1413,17 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                     <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
                       Advance Summary
                     </h2>
-                    <span className="text-xs text-gray-400">Advances deducted from final payable</span>
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs text-gray-400">Advances deducted from final payable</span>
+                      <button
+                        onClick={() => exportNegativeNetPayableSheet(negativeNetClaims)}
+                        disabled={negativeNetClaims.length === 0}
+                        title={negativeNetClaims.length === 0 ? 'No negative Net Payable claims to export' : 'Download claims with negative Net Payable (recoverable from trainer)'}
+                        className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-200 text-red-600 bg-red-50 hover:bg-red-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        ⬇ Download Negative Net Payable ({negativeNetClaims.length})
+                      </button>
+                    </div>
                   </div>
                   <div className="relative w-44">
                     <input

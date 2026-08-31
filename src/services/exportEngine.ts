@@ -149,6 +149,46 @@ export function exportPaymentSheet(
   exportToCSV(`Payment_Sheet_${timestamp}`, headers, rows);
 }
 
+// ── Negative Net Payable (Recoverable) export ──────────────────────────────
+// Claims where advanceAdjusted exceeds totalClaimedAmount/deductions — the trainer owes money
+// back. Mirrors the true signed figure computed in the Advance Summary UI (AdminDashboard.tsx),
+// NOT the stored claim.netPayable, which is clamped to 0 in these cases.
+
+export interface NegativeNetPayableRow {
+  billNo: string;
+  trainerName: string;
+  totalClaimedAmount: number;
+  advanceAdjusted: number;
+  deductionAmount: number;
+  netPayable: number; // true signed (negative) figure
+  status: string;
+}
+
+export function exportNegativeNetPayableSheet(rows: NegativeNetPayableRow[]): void {
+  const headers = [
+    'Bill No',
+    'Trainer Name',
+    'Total Claimed',
+    'Advance Adjusted',
+    'Deduction',
+    'Net Payable (Recoverable)',
+    'Status',
+  ];
+
+  const csvRows = rows.map(r => [
+    r.billNo,
+    r.trainerName,
+    formatINR(r.totalClaimedAmount),
+    formatINR(r.advanceAdjusted),
+    formatINR(r.deductionAmount),
+    formatINR(r.netPayable),
+    r.status,
+  ]);
+
+  const timestamp = new Date().toISOString().slice(0, 10);
+  exportToCSV(`Negative_Net_Payable_${timestamp}`, headers, csvRows);
+}
+
 // ── Generic report export ──────────────────────────────────────────────────
 
 export function exportReport(reportType: string, data: unknown[]): void {
