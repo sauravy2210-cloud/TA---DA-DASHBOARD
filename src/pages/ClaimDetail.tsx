@@ -1871,19 +1871,31 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               return ft < et ? f : earliest;
             }, depFlight);
           const depHHMM = String(earliestOnFd.departure_time ?? '').substring(0, 5);
-          if (depHHMM && depHHMM >= '17:00') return;
+          // Departure-day DA itself requires dep < 17:00, but that check must NOT skip the
+          // pre-batch interim-day fill below — those are separate, unrelated concerns. Bug fixed
+          // 2026-08-31: TADA-2026-02971 (Praveen Kumar, Asgn #261611) — dep Delhi->Tokyo 24-Jul
+          // 18:15 (overnight, arrives Tokyo 25-Jul, correctly picked up by the separate overnight-
+          // arrival rule below), assignment starts 27-Jul. Because 18:15 >= 17:00, this whole
+          // callback used to `return` here, so 26-Jul (the in-country gap day between the 25-Jul
+          // arrival and the 27-Jul batch start) never got filled by anything — a day the trainer
+          // was genuinely in Japan with no DA at all. The >=17:00 rule only disqualifies same-day
+          // departure DA (the trainer wasn't in destination yet at 18:15 on 24-Jul); it has no
+          // bearing on days AFTER arrival.
+          const grantDepartureDayDa = !(depHHMM && depHHMM >= '17:00');
           const cityCountry = asgn.city ? inferCountryFromCity(asgn.city) : '';
           const destC = (asgn.country === 'India' && cityCountry && cityCountry !== 'India')
             ? cityCountry : (asgn.country || cityCountry || 'India');
           const { rate, currency } = getHrDaInfo(destC);
           if (rate <= 0) return;
-          autoRaw.push({
-            lineItemId: `AUTO-DA-DEP-${claimId}-${fd}`,
-            claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: fd,
-            description: `Daily Allowance — ${destC} (departure travel day, dep ${depHHMM || '?'} < 17:00)`,
-            claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
-            currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
-          });
+          if (grantDepartureDayDa) {
+            autoRaw.push({
+              lineItemId: `AUTO-DA-DEP-${claimId}-${fd}`,
+              claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destC, date: fd,
+              description: `Daily Allowance — ${destC} (departure travel day, dep ${depHHMM || '?'} < 17:00)`,
+              claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+              currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+            });
+          }
 
           // Pre-batch interim days: fill every day strictly between the travel day (fd) and
           // assignment start with destination-country DA — the trainer is already in-country
