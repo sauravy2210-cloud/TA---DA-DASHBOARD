@@ -334,6 +334,27 @@ export default async function handler(req, res) {
     if (req.method === 'DELETE') {
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: 'Missing id' });
+      // A claim that already has an RMS TABillID is the ONLY local record of that RMS linkage —
+      // hard-deleting it permanently orphans the RMS record: no future resubmission for the same
+      // assignment can ever find it again to reuse/consolidate into, because the reuse lookup in
+      // CreateTADABill.tsx only scans THIS table. That's exactly what happened to Neda Fatima
+      // Mohammed (EMP-3742, scid 395193) — her claim was deleted after being pushed to RMS as
+      // TABillID 83385, so her next submission for the same assignment had no way to find 83385
+      // and created a brand-new 83386 instead, leaving RMS with two live duplicate records for
+      // one journey. Bug fixed 2026-08-31 per explicit instruction: one assignment ID must always
+      // map to exactly one RMS TABillID, no matter how many times it's resubmitted or reopened.
+      const existing = await db.execute({ sql: 'SELECT data FROM claims WHERE id = ?', args: [id] });
+      const row = existing.rows?.[0];
+      if (row) {
+        try {
+          const parsed = JSON.parse(row.data);
+          if (parsed.rmsTABillId) {
+            return res.status(409).json({
+              error: `This claim is already registered in RMS as TABillID ${parsed.rmsTABillId}. Deleting it would orphan that RMS record and cause a duplicate on the next resubmission. Reopen or reject the claim instead of deleting it.`,
+            });
+          }
+        } catch { /* malformed JSON — fall through and allow delete */ }
+      }
       await db.execute({ sql: 'DELETE FROM claims WHERE id = ?', args: [id] });
       return res.status(200).json({ ok: true });
     }
