@@ -3304,8 +3304,19 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         if (fd && (!flightRetDay.has(aEnd) || flightRetDayIsDefault.has(aEnd))) {
           flightRetDay.set(aEnd, fd);
           flightRetDayIsDefault.delete(aEnd);
-          // Chase to the FINAL same-day connecting leg — mirrors the primary block's logic.
-          const finalLeg = resolveFinalSameDayLeg(retFltFromDest);
+          // Chase to the FINAL same-day connecting leg — mirrors the primary block's logic. But
+          // only chase when this leg itself does NOT already land in India — once the trainer is
+          // back on Indian soil, any further onward domestic flight (e.g. Delhi->home city) is a
+          // separate personal trip, not part of resolving the international return arrival. Bug
+          // fixed 2026-08-31: TADA range check for Sreemanta Das EMP-2384, Asgn #262076/#263909 —
+          // London->Delhi arrives 05:10, but chasing continued into a same-day Delhi->Kolkata
+          // domestic flight (dep 07:30, arrives 09:50) purely because it departed from Delhi
+          // after 05:10, wrongly reporting "arrives India 09:50" in the remark text instead of
+          // the true 05:10 arrival (the actual eligibility check happened to read the flight list
+          // in the right order elsewhere and stayed correct, but this is fragile — same bug class
+          // as the "unsorted .find()" issue already fixed nearby).
+          const retLegAlreadyIndia = inferCountryFromCity((retFltFromDest.to_city || '').trim()) === 'India';
+          const finalLeg = retLegAlreadyIndia ? retFltFromDest : resolveFinalSameDayLeg(retFltFromDest);
           const finalArrCountry = inferCountryFromCity((finalLeg.to_city || '').trim());
           const finalArrDateForElig = resolveArrDate(finalLeg) || fd;
           const sameDayIndia = finalArrCountry === 'India' && finalArrDateForElig === fd;
@@ -3877,10 +3888,20 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       } else if (isOvernightArrival) {
         // Overnight return flight: trainer landed in India on this day
         const asgnTag2 = asgn?.assignmentId ? `Asgn #${asgn.assignmentId}` : (asgn?.courseName || '—');
-        const retFltArr = activeFlights.find(f => {
+        // Prefer the leg that actually arrives FROM abroad (international leg) over any same-day
+        // domestic onward flight that also happens to land this date — .find() alone would pick
+        // whichever the PMS API array order lists first, not necessarily the right one.
+        const retFltArrCandidates = activeFlights.filter(f => {
           const ad = parseDT(f.arrival_date);
           return ad ? ad === iso : false;
         });
+        const retFltArr = retFltArrCandidates.find(f => inferCountryFromCity((f.from_city || '').trim()) !== 'India')
+          ?? retFltArrCandidates.reduce((earliest, f) => {
+            if (!earliest) return f;
+            const et = (earliest.arrival_time || '').substring(0, 5);
+            const ft = (f.arrival_time || '').substring(0, 5);
+            return ft < et ? f : earliest;
+          }, undefined as typeof activeFlights[0] | undefined);
         const overnightArrHHMM = retFltArr
           ? (retFltArr.arrival_time || '').substring(0, 5)
           : (flightArrTime.get(asgn?.endDate || '') || '');
