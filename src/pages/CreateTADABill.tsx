@@ -3700,13 +3700,17 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           const finalArrDate = finalRetLeg2 ? (resolveArrDate(finalRetLeg2) || parseDT(returnFlight2!.departure_date)) : '';
           const finalDepDate = returnFlight2 ? parseDT(returnFlight2.departure_date) : '';
           const sameDayIndiaReturn = finalToCountry === 'India' && finalArrDate === finalDepDate;
-          const sameDayDepLocal = returnFlight2 ? (returnFlight2.departure_time || '').substring(0, 5) : '';
 
-          if (sameDayIndiaReturn && sameDayDepLocal && sameDayDepLocal >= '04:00') {
-            travelDayCountry = destCountry;
-          } else if (sameDayIndiaReturn) {
-            // Eligibility (arrival ≤ 12:00 → Not Eligible) is enforced separately via
-            // flightRetEligible; here we only need the correct COUNTRY when it IS eligible.
+          if (sameDayIndiaReturn) {
+            // The FINAL leg's arrival at the trainer's actual base is what decides the country,
+            // not how early they left the destination country. Bug fixed 2026-08-31: Vaibhav
+            // Doshi EMP-2624, TADA-2026-00138 — Singapore->Mumbai (dep 08:45, >=04:00) then
+            // Mumbai->Udaipur (his actual base, arrives 16:00) all same day. The old rule kept
+            // Singapore DA purely because the Singapore departure was >=04:00, ignoring that the
+            // SECOND leg is what actually gets him home. Eligibility (arrival <=12:00 -> Not
+            // Eligible) is enforced separately via flightRetEligible; here we only need the
+            // correct COUNTRY when it IS eligible — always India once the final same-day leg
+            // lands at the trainer's base.
             travelDayCountry = 'India';
           } else if (finalToCountry && finalToCountry !== 'India' && finalToCountry !== destCountry) {
             // Heading to a DIFFERENT international destination, not returning home to India —

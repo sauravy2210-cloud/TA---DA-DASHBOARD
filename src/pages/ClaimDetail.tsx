@@ -2415,18 +2415,17 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               return { ...li, claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0,
                 description: `Not Eligible — Return Arrival Before 12:00 (arrives ${retArrHHMM})` };
             }
-            // Eligible (arrives after 12:00) and lands in India same day — still apply the
-            // same >=04:00 departure-time cutoff used in the else-branch below, rather than
-            // always defaulting to India. Bug fixed 2026-08-20: Pratik Khuthia EMP-3214
-            // departed Manila (Philippines) at 12:30 local, a short (<4 hr) Hong Kong
-            // connection, landing Mumbai 21:05 the same day — he spent the working part of the
-            // day in the Philippines and should get Philippines DA, not India, just because the
-            // connecting flight landed in India before midnight. Only an early (<04:00 local)
-            // departure — negligible time actually spent in destCountry that day — falls back
-            // to India (still correct for Bhavna Singh EMP-3505, who departed KL before 04:00).
-            const retDepTimeSameDay = String(retFlight!.departure_time ?? '').substring(0, 5);
-            if (!retDepTimeSameDay || retDepTimeSameDay < '04:00') effectiveCountry = 'India';
-            // else: departs at/after 04:00 — keep destCountry (effectiveCountry already = destCountry)
+            // Eligible (arrives after 12:00) and lands in India same day — the FINAL leg's
+            // arrival at the trainer's actual base is what decides the country, not how early
+            // they left the destination country. Bug fixed 2026-08-31: Vaibhav Doshi EMP-2624,
+            // TADA-2026-00138 — Singapore->Mumbai (dep 08:45) -> Mumbai->Udaipur (his actual
+            // base, arrives 16:00) all on 29-Aug. The old rule only checked the Singapore
+            // departure time (08:45, >=04:00) and kept Singapore DA, ignoring that the SECOND
+            // leg (Mumbai->Udaipur) is what actually gets him home — arriving there after 12:00
+            // means the day is his return-to-base day and should be India DA. Per explicit
+            // instruction: once the final same-day leg lands at the trainer's base in India
+            // after 12:00, that day is always India DA — no departure-time exception.
+            effectiveCountry = 'India';
           } else if (retToCountry && retToCountry !== 'India' && retToCountry !== destCountry) {
             // The flight is heading to a DIFFERENT international destination, not returning
             // home to India — this day genuinely belongs to that new assignment, not this
