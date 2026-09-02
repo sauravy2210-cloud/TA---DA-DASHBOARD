@@ -336,11 +336,23 @@ export function getPaidDADates(trainerId: string, excludeClaimId: string): Map<s
       ? c.lineItems
       : _lineItems.filter(li => li.claimId === c.claimId);
     const daItems = items.filter(li => li.expenseType === 'DA' && li.date);
+    // HR can zero out a specific DA date via the "HR Override" edit (daHrOverrides, keyed by
+    // date) without ever approving any amount for it — that date must NOT block a sibling
+    // claim's legitimate DA just because it happens to appear in this claim's line items. Bug
+    // fixed 2026-08-31: TADA-2026-00138 (Vaibhav Doshi) HR-zeroed 22-25 Aug (daHrOverrides
+    // amount: 0, claimedAmount already 0 on the stored line items too) but TADA-2026-00137 still
+    // showed those dates "Already Paid — TADA-2026-00138" even though nothing was approved/paid
+    // for them.
+    const daOv = (c as unknown as { daHrOverrides?: Record<string, { amount: number }> }).daHrOverrides ?? {};
 
     if (daItems.length > 0) {
       // Precise: use actual stored DA line items
       for (const li of daItems) {
-        if (!result.has(li.date!)) result.set(li.date!, c.billNo ?? c.claimId);
+        const date = li.date!;
+        const override = daOv[date];
+        const amt = override ? override.amount : ((li.approvedAmount && li.approvedAmount > 0) ? li.approvedAmount : (li.claimedAmount ?? 0));
+        if (amt <= 0) continue; // HR zeroed it / nothing was ever claimed or approved for this date
+        if (!result.has(date)) result.set(date, c.billNo ?? c.claimId);
       }
     } else if (c.claimStartDate && c.claimEndDate) {
       // Fallback for old claims that predate lineItems storage:
