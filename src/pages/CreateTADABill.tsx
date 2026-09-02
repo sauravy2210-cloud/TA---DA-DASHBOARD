@@ -1796,6 +1796,7 @@ interface TravelBill {
   currency: string;
   receipt: string;       // filename (display)
   receiptData?: string;  // base64 data URL
+  source?: 'pms' | 'manual'; // 'pms' = auto-imported from a booked PMS flight, never manually added
 }
 
 /** Read a File as a base64 data URL */
@@ -4212,8 +4213,14 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     const stillUploading = travelBills.some(b => b.receiptData === '…uploading') || miscExpenses.some(m => m.receiptData === '…uploading');
     if (stillUploading) { setSubmitError('Please wait — file attachments are still uploading.'); return; }
 
-    // Strict receipt enforcement — block submission if ANY travel bill or misc expense is missing a receipt
-    const travelMissingReceipt = travelBills.filter(b => !b.receiptData || b.receiptData === '…uploading');
+    // Strict receipt enforcement — block submission if ANY travel bill or misc expense is missing a
+    // receipt. Exempt flights auto-imported from PMS (source: 'pms') — the booking is already a
+    // verified travel-desk record, and many PMS flight records have no ticket_path on file at all
+    // (a data gap on Koenig's side, not something the trainer can supply). Requiring the trainer to
+    // remove and somehow re-attach a receipt for a ticket they never personally booked/paid for
+    // made it impossible to submit at all. Bug fixed 2026-08-31: Sagnik Ghosh blocked from
+    // submitting by "4 travel bill(s) are missing a receipt" — all 4 were PMS-imported flights.
+    const travelMissingReceipt = travelBills.filter(b => b.source !== 'pms' && (!b.receiptData || b.receiptData === '…uploading'));
     const miscMissingReceipt = miscExpenses.filter(m => !m.receiptData || m.receiptData === '…uploading');
     if (travelMissingReceipt.length > 0) {
       setSubmitError(`Receipt is mandatory: ${travelMissingReceipt.length} travel bill(s) are missing a receipt. Please remove them and re-add with a receipt attached.`);
@@ -4765,6 +4772,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
       amount: 0,
       currency: 'INR',
       receipt: f.ticket_path ?? '',
+      source: 'pms',
     };
     setTravelBills(prev => [...prev, bill]);
     setImportedTripIds(prev => new Set([...prev, tripKey]));
