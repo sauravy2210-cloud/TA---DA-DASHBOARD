@@ -220,7 +220,7 @@ const MyBills: React.FC<MyBillsProps> = ({ currentUser = DEFAULT_USER }) => {
         deleteDraftClaim(deleteConfirmId);
         setAllClaims(prev => prev.filter(c => c.claimId !== deleteConfirmId));
       } else {
-        await deleteClaim(deleteConfirmId);
+        await deleteClaim(deleteConfirmId, { name: currentUser.name, role: currentUser.role });
         await refreshClaims();
         const submitted = getClaims();
         const remaining = getDraftClaims().filter(d => !submitted.some(c => c.claimId === d.claimId));

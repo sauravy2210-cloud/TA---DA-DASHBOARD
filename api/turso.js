@@ -2,6 +2,9 @@
 // (Hobby plan: max 12 serverless functions)
 //
 // Claims:         GET/POST/DELETE /api/turso?type=claims[&trainerId=x|&id=x]
+// Deleted Claims: GET /api/turso?type=deleted-claims — read-only snapshot log of every claim
+//                 deletion (trainer or HR), written by the claims DELETE handler before the row
+//                 is removed. Powers the "Deleted Bills" panel in the HR Admin dashboard.
 // Line Items:     GET/POST/DELETE /api/turso?type=lineitems[&claimId=x]
 // Payments:       GET/POST /api/turso?type=payments[&claimId=x] — HR/Finance "Mark Paid"
 //                 records, persisted server-side so payment history for a bill is visible
@@ -53,6 +56,7 @@ async function ensureTablesOnce(db) {
     `CREATE TABLE IF NOT EXISTS bill_counters (year INTEGER PRIMARY KEY, seq INTEGER NOT NULL DEFAULT 0)`,
     `CREATE TABLE IF NOT EXISTS payments (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, bill_no TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
     `CREATE TABLE IF NOT EXISTS approval_history (id TEXT PRIMARY KEY, claim_id TEXT NOT NULL, bill_no TEXT, data TEXT NOT NULL, created_at TEXT NOT NULL)`,
+    `CREATE TABLE IF NOT EXISTS deleted_claims (id TEXT PRIMARY KEY, trainer_id TEXT NOT NULL, bill_no TEXT, data TEXT NOT NULL, deleted_at TEXT NOT NULL)`,
   ], 'write');
   _tablesReady = true;
 }
@@ -317,7 +321,7 @@ export default async function handler(req, res) {
   // with "no such table" under the write-only check below. Force creation on GET too, but only
   // for this one still-new type; every other type already exists in production.
   const isWrite = req.method === 'POST' || req.method === 'DELETE';
-  if ((isWrite || type === 'payments' || type === 'approval-history') && !_tablesReady) {
+  if ((isWrite || type === 'payments' || type === 'approval-history' || type === 'deleted-claims') && !_tablesReady) {
     try {
       await ensureTablesOnce(db);
     } catch (err) {
@@ -377,7 +381,7 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'DELETE') {
-      const { id } = req.query;
+      const { id, deletedByName, deletedByRole } = req.query;
       if (!id) return res.status(400).json({ error: 'Missing id' });
       // A claim that already has an RMS TABillID is the ONLY local record of that RMS linkage —
       // if we just delete it locally, no future resubmission for the same assignment can ever
@@ -416,11 +420,42 @@ export default async function handler(req, res) {
               rmsVoidResult = `rms_void_failed: ${rmsErr instanceof Error ? rmsErr.message : String(rmsErr)}`;
             }
           }
+          // Record a snapshot BEFORE deleting, regardless of who deletes it (trainer or HR) or
+          // whether it ever reached RMS — this is what powers the "Deleted Bills" panel in the
+          // HR Admin dashboard so a trainer-side deletion is never silently invisible to HR.
+          await db.execute({
+            sql: 'INSERT INTO deleted_claims (id, trainer_id, bill_no, data, deleted_at) VALUES (?, ?, ?, ?, ?)',
+            args: [
+              `del_${id}_${Date.now()}`,
+              parsed.trainerId ?? '',
+              parsed.billNo ?? null,
+              JSON.stringify({
+                ...parsed,
+                deletedByName: deletedByName || 'Unknown',
+                deletedByRole: deletedByRole || 'Unknown',
+                rmsVoidResult,
+              }),
+              new Date().toISOString(),
+            ],
+          });
         } catch { /* malformed JSON — fall through and allow delete */ }
       }
       await db.execute({ sql: 'DELETE FROM claims WHERE id = ?', args: [id] });
       return res.status(200).json({ ok: true, rmsVoidResult });
     }
+  }
+
+  // ── Deleted Claims (HR Admin "Deleted Bills" panel) ──────────────────────────
+  // Read-only snapshot log — every claim deletion (trainer or HR-initiated) is recorded here by
+  // the claims DELETE handler above, regardless of role, before the row is actually removed.
+  if (type === 'deleted-claims') {
+    if (req.method === 'GET') {
+      const result = await db.execute('SELECT data, deleted_at FROM deleted_claims ORDER BY deleted_at DESC');
+      return res.status(200).json({
+        deletedClaims: result.rows.map(r => ({ ...JSON.parse(r.data), deletedAt: r.deleted_at })),
+      });
+    }
+    return res.status(405).json({ error: 'Method not allowed' });
   }
 
   // ── Payments (HR/Finance "Mark Paid" history) ────────────────────────────────

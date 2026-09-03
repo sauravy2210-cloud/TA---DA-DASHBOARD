@@ -258,8 +258,11 @@ export async function saveClaimAsync(claim: ClaimHeader): Promise<void> {
   if (!r.ok) throw new Error(`Failed to save claim: HTTP ${r.status}`);
 }
 
-export async function deleteClaim(claimId: string): Promise<void> {
-  const r = await fetch(`/api/turso?type=claims&id=${encodeURIComponent(claimId)}`, {
+export async function deleteClaim(claimId: string, deletedBy?: { name: string; role: string }): Promise<void> {
+  const params = new URLSearchParams({ id: claimId });
+  if (deletedBy?.name) params.set('deletedByName', deletedBy.name);
+  if (deletedBy?.role) params.set('deletedByRole', deletedBy.role);
+  const r = await fetch(`/api/turso?type=claims&${params.toString()}`, {
     method: 'DELETE',
   });
   if (!r.ok) throw new Error(`Delete failed: HTTP ${r.status}`);

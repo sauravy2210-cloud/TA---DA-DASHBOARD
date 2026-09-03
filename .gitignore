@@ -25,3 +25,13 @@ dist-ssr
 
 .vercel
 .env*
+
+# Ad-hoc data-correction scripts and dumps from Claude sessions — not part of the app
+scripts-scratch/
+*.json.bak
+/all_claims.json
+/claims_size_check.json
+/asgn*.json
+/surjeet_asgn.json
+/vaibhav_flights.json
+/vf.json

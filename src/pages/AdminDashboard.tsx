@@ -595,6 +595,36 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
   const [filterTrainer, setFilterTrainer] = useState('');
   const [filterAdvTrainer, setFilterAdvTrainer] = useState('');
   const [filterVisaTrainer, setFilterVisaTrainer] = useState('');
+  const [filterDeletedTrainer, setFilterDeletedTrainer] = useState('');
+
+  // ── Deleted Bills — every claim deletion (trainer or HR), logged server-side before removal ──
+  interface DeletedClaimRecord {
+    claimId?: string;
+    billNo?: string;
+    trainerName?: string;
+    trainerId?: string;
+    assignmentIds?: string[];
+    totalClaimedAmount?: number;
+    currency?: string;
+    status?: string;
+    rmsTABillId?: number;
+    rmsVoidResult?: string | null;
+    deletedByName?: string;
+    deletedByRole?: string;
+    deletedAt: string;
+  }
+  const [deletedClaims, setDeletedClaims] = useState<DeletedClaimRecord[]>([]);
+  const [deletedClaimsLoading, setDeletedClaimsLoading] = useState(false);
+  const reloadDeletedClaims = useCallback(async () => {
+    setDeletedClaimsLoading(true);
+    try {
+      const r = await fetch('/api/turso?type=deleted-claims');
+      const d = await r.json();
+      setDeletedClaims(Array.isArray(d.deletedClaims) ? d.deletedClaims : []);
+    } catch { /* keep previous list on transient failure */ }
+    finally { setDeletedClaimsLoading(false); }
+  }, []);
+  useEffect(() => { reloadDeletedClaims(); }, [reloadDeletedClaims]);
 
   // ── Visa Fees Submission — entries trainers add on the Visa Fees Entry page ─────────────
   const [visaEntries, setVisaEntries] = useState<VisaDbRecord[]>([]);
@@ -709,15 +739,16 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
     setDeleteLoading(true);
     setDeleteError(null);
     try {
-      await deleteClaim(deleteTarget.claimId);
+      await deleteClaim(deleteTarget.claimId, { name: currentUser.name, role: currentUser.role });
       setDeleteTarget(null);
       await reloadClaims();
+      await reloadDeletedClaims();
     } catch {
       setDeleteError('Failed to delete. Please try again.');
     } finally {
       setDeleteLoading(false);
     }
-  }, [deleteTarget, reloadClaims]);
+  }, [deleteTarget, reloadClaims, reloadDeletedClaims]);
 
   const handleReopen = useCallback(async () => {
     if (!reopenTarget) return;
@@ -1553,6 +1584,89 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                         <td />
                       </tr>
                     </tfoot>
+                  </table>
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Deleted Bills — every claim deletion, trainer or HR-initiated, logged before removal */}
+          {(() => {
+            const dq = filterDeletedTrainer.trim().toLowerCase();
+            const filtered = dq
+              ? deletedClaims.filter(d => (d.trainerName ?? '').toLowerCase().includes(dq))
+              : deletedClaims;
+            return (
+              <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+                <div className="border-b border-gray-100 px-5 py-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">
+                      Deleted Bills
+                    </h2>
+                    <span className="text-xs text-gray-400">
+                      Bills deleted by trainers or HR from their login panel{deletedClaimsLoading ? ' · loading…' : ''}
+                    </span>
+                  </div>
+                  <div className="relative w-44">
+                    <input
+                      type="text"
+                      placeholder="Filter by Trainer…"
+                      value={filterDeletedTrainer}
+                      onChange={e => setFilterDeletedTrainer(e.target.value)}
+                      className="pl-3 pr-8 py-1.5 text-xs border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-300 focus:border-blue-400 w-full"
+                    />
+                    {filterDeletedTrainer && (
+                      <button onClick={() => setFilterDeletedTrainer('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">✕</button>
+                    )}
+                  </div>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-50 text-xs">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Bill No</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Trainer</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Assignment(s)</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Amount</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">RMS TABillID</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">RMS Status</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Deleted By</th>
+                        <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap">Deleted At</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50 bg-white">
+                      {filtered.length === 0 ? (
+                        <tr>
+                          <td colSpan={8} className="px-4 py-6 text-center text-xs text-gray-400">
+                            {deletedClaimsLoading ? 'Loading…' : 'No deleted bills.'}
+                          </td>
+                        </tr>
+                      ) : filtered.map((d, idx) => (
+                        <tr key={`${d.claimId ?? idx}-${d.deletedAt}`} className="hover:bg-red-50/30">
+                          <td className="px-4 py-2.5 whitespace-nowrap font-medium text-gray-700">{d.billNo ?? '—'}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">{d.trainerName ?? '—'}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-500 font-mono">{(d.assignmentIds ?? []).join(', ') || '—'}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-800 font-medium">
+                            {d.totalClaimedAmount != null ? formatINR(d.totalClaimedAmount) : '—'}
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{d.rmsTABillId ?? '—'}</td>
+                          <td className="px-4 py-2.5 whitespace-nowrap">
+                            {!d.rmsTABillId ? (
+                              <span className="text-gray-400">Never in RMS</span>
+                            ) : d.rmsVoidResult === 'voided' ? (
+                              <span className="px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-semibold">Voided in RMS</span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200 text-[10px] font-semibold" title={d.rmsVoidResult ?? ''}>Void failed</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">
+                            {d.deletedByName ?? 'Unknown'}
+                            {d.deletedByRole ? <span className="text-gray-400"> ({d.deletedByRole})</span> : null}
+                          </td>
+                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{formatDate(d.deletedAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
                   </table>
                 </div>
               </div>
