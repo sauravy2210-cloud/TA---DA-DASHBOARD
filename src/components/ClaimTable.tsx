@@ -173,7 +173,13 @@ function fmtDate(iso: string) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-const DELETABLE_STATUSES = new Set(['Draft', 'Submitted', 'Pending']);
+// Trainers may only delete a claim that has never been submitted (local Draft). Once a claim is
+// Submitted, it has already been pushed to RMS and is visible to HR — deleting it from here would
+// let a trainer silently withdraw a bill HR is actively reviewing, with no trace anywhere (this is
+// the "onDeleteClaim" path used only by MyBills.tsx / Trainer login; HR Admin's own delete button
+// lives entirely separately in AdminDashboard.tsx and is unaffected by this set). Per explicit
+// instruction 2026-09-03: trainers must not be able to delete a submitted bill at all.
+const DELETABLE_STATUSES = new Set(['Draft']);
 const EDITABLE_STATUSES = new Set(['Submitted', 'Clarification Required', 'Resubmitted']);
 
 interface ClaimTableProps {
