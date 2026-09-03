@@ -1,4 +1,4 @@
-﻿import { useMemo, useState, useCallback, useEffect } from 'react';
+﻿import { useMemo, useState, useCallback, useEffect, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getClaims, deleteClaim, saveClaimAsync, refreshClaims } from '../services/storageService';
 import { exportClaimsQueue, exportNegativeNetPayableSheet } from '../services/exportEngine';
@@ -612,6 +612,8 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
     deletedByName?: string;
     deletedByRole?: string;
     deletedAt: string;
+    reconstructed?: boolean;
+    reconstructionNote?: string;
   }
   const [deletedClaims, setDeletedClaims] = useState<DeletedClaimRecord[]>([]);
   const [deletedClaimsLoading, setDeletedClaimsLoading] = useState(false);
@@ -1642,29 +1644,45 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
                           </td>
                         </tr>
                       ) : filtered.map((d, idx) => (
-                        <tr key={`${d.claimId ?? idx}-${d.deletedAt}`} className="hover:bg-red-50/30">
-                          <td className="px-4 py-2.5 whitespace-nowrap font-medium text-gray-700">{d.billNo ?? '—'}</td>
-                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">{d.trainerName ?? '—'}</td>
-                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-500 font-mono">{(d.assignmentIds ?? []).join(', ') || '—'}</td>
-                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-800 font-medium">
-                            {d.totalClaimedAmount != null ? formatINR(d.totalClaimedAmount) : '—'}
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{d.rmsTABillId ?? '—'}</td>
-                          <td className="px-4 py-2.5 whitespace-nowrap">
-                            {!d.rmsTABillId ? (
-                              <span className="text-gray-400">Never in RMS</span>
-                            ) : d.rmsVoidResult === 'voided' ? (
-                              <span className="px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-semibold">Voided in RMS</span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200 text-[10px] font-semibold" title={d.rmsVoidResult ?? ''}>Void failed</span>
-                            )}
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">
-                            {d.deletedByName ?? 'Unknown'}
-                            {d.deletedByRole ? <span className="text-gray-400"> ({d.deletedByRole})</span> : null}
-                          </td>
-                          <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{formatDate(d.deletedAt)}</td>
-                        </tr>
+                        <Fragment key={`${d.claimId ?? idx}-${d.deletedAt}`}>
+                          <tr className="hover:bg-red-50/30">
+                            <td className="px-4 py-2.5 whitespace-nowrap font-medium text-gray-700">
+                              {d.billNo ?? '—'}
+                              {d.reconstructed && (
+                                <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[9px] font-semibold align-middle">Reconstructed</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">{d.trainerName ?? '—'}</td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-gray-500 font-mono">{(d.assignmentIds ?? []).join(', ') || '—'}</td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-gray-800 font-medium">
+                              {d.totalClaimedAmount != null ? formatINR(d.totalClaimedAmount) : '—'}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{d.rmsTABillId ?? '—'}</td>
+                            <td className="px-4 py-2.5 whitespace-nowrap">
+                              {!d.rmsTABillId ? (
+                                <span className="text-gray-400">Never in RMS</span>
+                              ) : d.rmsVoidResult === 'voided' ? (
+                                <span className="px-2 py-0.5 rounded-full bg-green-50 text-green-700 border border-green-200 text-[10px] font-semibold">Voided in RMS</span>
+                              ) : d.reconstructed ? (
+                                <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-semibold">Orphaned (pre-fix)</span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200 text-[10px] font-semibold" title={d.rmsVoidResult ?? ''}>Void failed</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-gray-700">
+                              {d.deletedByName ?? 'Unknown'}
+                              {d.deletedByRole ? <span className="text-gray-400"> ({d.deletedByRole})</span> : null}
+                            </td>
+                            <td className="px-4 py-2.5 whitespace-nowrap text-gray-500">{formatDate(d.deletedAt)}</td>
+                          </tr>
+                          {d.reconstructed && d.reconstructionNote && (
+                            <tr className="bg-amber-50/30">
+                              <td colSpan={8} className="px-4 py-2 text-[11px] text-amber-800 italic">
+                                ⚠ Reconstructed entry — no system log existed for this deletion. {d.reconstructionNote}
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       ))}
                     </tbody>
                   </table>
