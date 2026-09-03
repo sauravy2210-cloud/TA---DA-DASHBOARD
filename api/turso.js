@@ -69,6 +69,51 @@ Return ONLY a valid JSON object — no markdown, no explanation:
 {"from": "", "to": "", "amount": "", "currency": "INR", "date": ""}
 If a field is not legible or absent, return empty string for it.`;
 
+// Shared helper: call Koenig RMS's Upsert TA Bill endpoint (api_id=354). Used both by the
+// create-tabill route (trainer submit) and by the claims DELETE handler below, which now voids
+// the RMS record instead of just refusing to delete locally.
+async function upsertRmsTABill({ TABillID, EmpID, From, To, Advance, TADAAmt, EmpRemark, IsSubmitted, scids }) {
+  const tokUser = process.env.KOENIG_TABILL_USER || 'TaDaPanel';
+  const tokPass = process.env.KOENIG_TABILL_PASS || 'TaDaPanel@123';
+  const tokRole = process.env.KOENIG_TABILL_ROLE || 'TaDaPanel';
+  const tokRes = await fetch('https://api.koenig-solutions.com/api/Kites/Operator/GetToken', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ userName: tokUser, userPassword: tokPass, userRole: tokRole }),
+  });
+  if (!tokRes.ok) throw new Error(`Token HTTP ${tokRes.status}`);
+  const tokData = await tokRes.json();
+  if (tokData.statuscode !== 200) throw new Error(tokData.message || 'Token failed');
+  const { accessToken, deviceToken } = tokData.content;
+
+  const body = {
+    EmpID: Number(EmpID),
+    From, To,
+    IsSubmitted: IsSubmitted ?? 1,
+    Source: 'From the NEW TA DA Dashboard',
+    Advance: Number(Advance) || 0,
+    TADAAmt: Number(TADAAmt) || 0,
+  };
+  if (TABillID != null) body.TABillID = Number(TABillID);
+  if (EmpRemark) body.EmpRemark = EmpRemark;
+  if (scids) body.scids = scids;
+
+  const url = `https://api.koenig-solutions.com/api/Kites/Operator/common` +
+    `?apikey=354&accessToken=${encodeURIComponent(accessToken)}&deviceToken=${encodeURIComponent(deviceToken)}`;
+  const billRes = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!billRes.ok) throw new Error(`Upsert TA Bill HTTP ${billRes.status}`);
+  const billData = await billRes.json();
+  if (billData.statuscode !== 200) throw new Error(billData.message || 'Upsert TA Bill failed');
+  let content = billData.content;
+  if (typeof content === 'string') { try { content = JSON.parse(content); } catch { content = []; } }
+  const row = Array.isArray(content) ? content[0] : content;
+  return { TABillID: row && row.TABillID != null ? row.TABillID : null, Message: row && row.Message != null ? row.Message : null };
+}
+
 export default async function handler(req, res) {
   const { type } = req.query;
 
@@ -335,28 +380,46 @@ export default async function handler(req, res) {
       const { id } = req.query;
       if (!id) return res.status(400).json({ error: 'Missing id' });
       // A claim that already has an RMS TABillID is the ONLY local record of that RMS linkage —
-      // hard-deleting it permanently orphans the RMS record: no future resubmission for the same
-      // assignment can ever find it again to reuse/consolidate into, because the reuse lookup in
-      // CreateTADABill.tsx only scans THIS table. That's exactly what happened to Neda Fatima
-      // Mohammed (EMP-3742, scid 395193) — her claim was deleted after being pushed to RMS as
-      // TABillID 83385, so her next submission for the same assignment had no way to find 83385
-      // and created a brand-new 83386 instead, leaving RMS with two live duplicate records for
-      // one journey. Bug fixed 2026-08-31 per explicit instruction: one assignment ID must always
-      // map to exactly one RMS TABillID, no matter how many times it's resubmitted or reopened.
+      // if we just delete it locally, no future resubmission for the same assignment can ever
+      // find it again to reuse/consolidate into (the reuse lookup in CreateTADABill.tsx only
+      // scans this table), leaving RMS with an orphaned live record. That's exactly what happened
+      // to Neda Fatima Mohammed (EMP-3742, scid 395193): her claim was deleted from her Trainer
+      // login panel after being pushed to RMS as TABillID 83385, and her next submission for the
+      // same journey had no way to find 83385, so it created a brand-new 83386 instead — RMS ended
+      // up with two live duplicate records for one journey. Bug fixed 2026-08-31 per explicit
+      // instruction: when a trainer (or HR) deletes a submitted claim that's already in RMS, VOID
+      // that RMS record first (zero its Advance/TADAAmt and mark IsSubmitted: 0) before removing
+      // it locally — so RMS reflects the deletion instead of silently keeping stale live data.
       const existing = await db.execute({ sql: 'SELECT data FROM claims WHERE id = ?', args: [id] });
       const row = existing.rows?.[0];
+      let rmsVoidResult = null;
       if (row) {
         try {
           const parsed = JSON.parse(row.data);
-          if (parsed.rmsTABillId) {
-            return res.status(409).json({
-              error: `This claim is already registered in RMS as TABillID ${parsed.rmsTABillId}. Deleting it would orphan that RMS record and cause a duplicate on the next resubmission. Reopen or reject the claim instead of deleting it.`,
-            });
+          if (parsed.rmsTABillId && parsed.trainerId) {
+            try {
+              await upsertRmsTABill({
+                TABillID: parsed.rmsTABillId,
+                EmpID: parsed.trainerId,
+                From: `${parsed.claimStartDate || parsed.claimEndDate} 00:00:00`,
+                To: `${parsed.claimEndDate || parsed.claimStartDate} 23:59:59`,
+                IsSubmitted: 0,
+                Advance: 0,
+                TADAAmt: 0,
+                EmpRemark: `DELETED - claim ${parsed.billNo || id} was deleted from the TA/DA Dashboard; this RMS record is void.`,
+              });
+              rmsVoidResult = 'voided';
+            } catch (rmsErr) {
+              // Never let an RMS failure block the trainer/HR's delete action — but surface it in
+              // the response so the caller (and this session's own logs) can see RMS wasn't
+              // successfully updated, rather than silently pretending it was.
+              rmsVoidResult = `rms_void_failed: ${rmsErr instanceof Error ? rmsErr.message : String(rmsErr)}`;
+            }
           }
         } catch { /* malformed JSON — fall through and allow delete */ }
       }
       await db.execute({ sql: 'DELETE FROM claims WHERE id = ?', args: [id] });
-      return res.status(200).json({ ok: true });
+      return res.status(200).json({ ok: true, rmsVoidResult });
     }
   }
 
