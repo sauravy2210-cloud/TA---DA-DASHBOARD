@@ -446,14 +446,32 @@ export default async function handler(req, res) {
   }
 
   // ── Deleted Claims (HR Admin "Deleted Bills" panel) ──────────────────────────
-  // Read-only snapshot log — every claim deletion (trainer or HR-initiated) is recorded here by
-  // the claims DELETE handler above, regardless of role, before the row is actually removed.
+  // Snapshot log — every claim deletion (trainer or HR-initiated) is recorded here by the claims
+  // DELETE handler above, regardless of role, before the row is actually removed. POST exists
+  // only to manually backfill a pre-logging historical deletion Claude reconstructed from
+  // investigation (e.g. Neda Fatima Mohammed / assignment 266517) — it is NOT used by the normal
+  // trainer/HR delete flow, which always goes through the automatic DELETE-time logging instead.
   if (type === 'deleted-claims') {
     if (req.method === 'GET') {
       const result = await db.execute('SELECT data, deleted_at FROM deleted_claims ORDER BY deleted_at DESC');
       return res.status(200).json({
         deletedClaims: result.rows.map(r => ({ ...JSON.parse(r.data), deletedAt: r.deleted_at })),
       });
+    }
+    if (req.method === 'POST') {
+      const record = req.body || {};
+      const deletedAt = record.deletedAt || new Date().toISOString();
+      await db.execute({
+        sql: 'INSERT INTO deleted_claims (id, trainer_id, bill_no, data, deleted_at) VALUES (?, ?, ?, ?, ?)',
+        args: [
+          `del_manual_${Date.now()}`,
+          record.trainerId ?? '',
+          record.billNo ?? null,
+          JSON.stringify(record),
+          deletedAt,
+        ],
+      });
+      return res.status(200).json({ ok: true });
     }
     return res.status(405).json({ error: 'Method not allowed' });
   }
