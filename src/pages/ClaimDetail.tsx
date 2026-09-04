@@ -1221,22 +1221,56 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       // labeled India instead of Portugal.
       if (asgn.city && inferCountryFromCity(asgn.city)) return asgn;
       if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India), never enrich
+      const isConfidentIntl = (a: typeof asgn) =>
+        (!!a.country && a.country !== 'India') ||
+        (!!a.city && !!inferCountryFromCity(a.city) && inferCountryFromCity(a.city) !== 'India');
+      const resolvedCountryOf = (a: typeof asgn) =>
+        (a.country && a.country !== 'India') ? a.country : inferCountryFromCity(a.city || '');
       const prevIntl = sorted.slice(0, idx)
         .filter(a => a.country && a.country !== 'India')
         .sort((a, b) => (b.endDate || '') > (a.endDate || '') ? 1 : -1)[0] ?? null;
-      if (!prevIntl?.endDate) return asgn;
-      const curStart = asgn.startDate || addD(prevIntl.endDate, 1);
-      const returnToIndia = activeFlights.find(f => {
+      if (prevIntl?.endDate) {
+        const curStart = asgn.startDate || addD(prevIntl.endDate, 1);
+        const returnToIndia = activeFlights.find(f => {
+          const fd = parseDTLocal(String(f.departure_date ?? ''));
+          if (!fd || fd < prevIntl.endDate! || fd > addD(curStart, 1)) return false;
+          const toC = inferCountryFromCity(String(f.to_city ?? '').trim());
+          return toC === 'India';
+        });
+        if (!returnToIndia) {
+          return {
+            ...asgn,
+            city: asgn.city || prevIntl.city || '',
+            country: prevIntl.country,
+            trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
+          };
+        }
+        return asgn;
+      }
+      // No usable PREVIOUS assignment — e.g. this is the very FIRST assignment chronologically.
+      // Look FORWARD: does the trainer continue directly into a LATER international assignment
+      // at the same destination, with no return-to-India flight in between? Covers a trainer
+      // based OUTSIDE India whose very first overseas leg has no PMS city/country and no outbound
+      // flight to infer from. Bug fixed 2026-09-03: Soumik Das Purkayastha EMP-3639 (based in
+      // Paris, France) — Asgn #254663 (20-24 Jul, London) had no city/country from PMS and no
+      // outbound flight on file, silently defaulting to India.
+      const nextIntl = sorted.slice(idx + 1)
+        .filter(isConfidentIntl)
+        .sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1)[0] ?? null;
+      if (!nextIntl?.startDate) return asgn;
+      const curEnd = asgn.endDate || asgn.startDate;
+      if (!curEnd) return asgn;
+      const returnToIndiaBefore = activeFlights.find(f => {
         const fd = parseDTLocal(String(f.departure_date ?? ''));
-        if (!fd || fd < prevIntl.endDate! || fd > addD(curStart, 1)) return false;
+        if (!fd || fd < curEnd || fd > nextIntl.startDate!) return false;
         const toC = inferCountryFromCity(String(f.to_city ?? '').trim());
         return toC === 'India';
       });
-      if (returnToIndia) return asgn;
+      if (returnToIndiaBefore) return asgn;
       return {
         ...asgn,
-        city: asgn.city || prevIntl.city || '',
-        country: prevIntl.country,
+        city: asgn.city || nextIntl.city || '',
+        country: resolvedCountryOf(nextIntl),
         trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
       };
     });
@@ -1275,22 +1309,51 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
       // borrowing a country from an unrelated previous assignment.
       if (asgn.city && inferCountryFromCity(asgn.city)) return asgn;
       if (asgn.deliveryMode === 'Online') return asgn; // ILO = trainer at home (India), never enrich
+      const isConfidentIntl2 = (a: typeof asgn) =>
+        (!!a.country && a.country !== 'India') ||
+        (!!a.city && !!inferCountryFromCity(a.city) && inferCountryFromCity(a.city) !== 'India');
+      const resolvedCountryOf2 = (a: typeof asgn) =>
+        (a.country && a.country !== 'India') ? a.country : inferCountryFromCity(a.city || '');
       const prevIntl = sorted.slice(0, idx)
         .filter(a => a.country && a.country !== 'India')
         .sort((a, b) => (b.endDate || '') > (a.endDate || '') ? 1 : -1)[0] ?? null;
-      if (!prevIntl?.endDate) return asgn;
-      const curStart = asgn.startDate || addD(prevIntl.endDate, 1);
-      const returnToIndia = activeFlights.find(f => {
+      if (prevIntl?.endDate) {
+        const curStart = asgn.startDate || addD(prevIntl.endDate, 1);
+        const returnToIndia = activeFlights.find(f => {
+          const fd = parseDTLocal(String(f.departure_date ?? ''));
+          if (!fd || fd < prevIntl.endDate! || fd > addD(curStart, 1)) return false;
+          const toC = inferCountryFromCity(String(f.to_city ?? '').trim());
+          return toC === 'India';
+        });
+        if (!returnToIndia) {
+          return {
+            ...asgn,
+            city: asgn.city || prevIntl.city || '',
+            country: prevIntl.country,
+            trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
+          };
+        }
+        return asgn;
+      }
+      // Same forward-look fallback as enrichedSummaryAssignments above (see that block's comment
+      // for the full Soumik Das Purkayastha EMP-3639 explanation).
+      const nextIntl2 = sorted.slice(idx + 1)
+        .filter(isConfidentIntl2)
+        .sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1)[0] ?? null;
+      if (!nextIntl2?.startDate) return asgn;
+      const curEnd2 = asgn.endDate || asgn.startDate;
+      if (!curEnd2) return asgn;
+      const returnToIndiaBefore2 = activeFlights.find(f => {
         const fd = parseDTLocal(String(f.departure_date ?? ''));
-        if (!fd || fd < prevIntl.endDate! || fd > addD(curStart, 1)) return false;
+        if (!fd || fd < curEnd2 || fd > nextIntl2.startDate!) return false;
         const toC = inferCountryFromCity(String(f.to_city ?? '').trim());
         return toC === 'India';
       });
-      if (returnToIndia) return asgn;
+      if (returnToIndiaBefore2) return asgn;
       return {
         ...asgn,
-        city: asgn.city || prevIntl.city || '',
-        country: prevIntl.country,
+        city: asgn.city || nextIntl2.city || '',
+        country: resolvedCountryOf2(nextIntl2),
         trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
       };
     });

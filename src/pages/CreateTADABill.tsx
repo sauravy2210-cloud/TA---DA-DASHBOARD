@@ -2709,30 +2709,74 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         // ILO (online) assignments — trainer is at home in India, never inherit international country
         if (asgn.deliveryMode === 'Online') return asgn;
 
+        // Is an assignment "confidently" international — either PMS gave a usable country, or
+        // its city maps to a real non-India country?
+        const isConfidentIntl = (a: typeof asgn) =>
+          (!!a.country && a.country !== 'India') ||
+          (!!a.city && !!inferCountryFromCity(a.city) && inferCountryFromCity(a.city) !== 'India');
+        const resolvedCountryOf = (a: typeof asgn) =>
+          (a.country && a.country !== 'India') ? a.country : inferCountryFromCity(a.city || '');
+
         // Find the closest previous assignment that IS international
         const prevIntl = sortedForEnrich
           .slice(0, idx)
           .filter(a => a.country && a.country !== 'India')
           .sort((a, b) => (b.endDate || '') > (a.endDate || '') ? 1 : -1)[0] ?? null;
-        if (!prevIntl?.endDate) return asgn;
+        if (prevIntl?.endDate) {
+          // Check: is there any active return-to-India flight between prevIntl.endDate and this assignment's start?
+          const curStart = asgn.startDate || addDays(prevIntl.endDate, 1);
+          const returnToIndia = allFlights.find(f => {
+            if (f.Is_cancelled === 'Yes' || f.Is_cancelled === '1' || String(f.Is_cancelled) === '1') return false;
+            const fd = parseDT(f.departure_date);
+            if (!fd) return false;
+            if (fd < prevIntl.endDate! || fd > addDays(curStart, 1)) return false;
+            const toC = inferCountryFromCity((f.to_city || '').trim());
+            return toC === 'India';
+          });
+          if (!returnToIndia) {
+            // No return flight between the two assignments — trainer stayed at same destination
+            return {
+              ...asgn,
+              city: asgn.city || prevIntl.city || '',
+              country: prevIntl.country,
+              trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
+            };
+          }
+          return asgn;
+        }
 
-        // Check: is there any active return-to-India flight between prevIntl.endDate and this assignment's start?
-        const curStart = asgn.startDate || addDays(prevIntl.endDate, 1);
-        const returnToIndia = allFlights.find(f => {
+        // No usable PREVIOUS assignment to inherit from — e.g. this is the very FIRST assignment
+        // chronologically, so there's nothing earlier to check. Look FORWARD instead: does the
+        // trainer continue directly into a LATER international assignment at the same
+        // destination, with no return-to-India flight in between? If so, inherit from there.
+        // Covers a trainer based OUTSIDE India whose very first overseas leg has no PMS city/
+        // country AND no outbound flight on file to infer from (nothing to infer from at all,
+        // since the "previous" direction has nothing to look at). Bug fixed 2026-09-03: Soumik
+        // Das Purkayastha EMP-3639 (based in Paris, France) — Asgn #254663 (20-24 Jul, London)
+        // had no city/country from PMS and no outbound flight on file, so it silently defaulted
+        // to India unless a LATER assignment happened to occupy array index 0 by coincidence
+        // (the primaryCountry fallback). Fetching just this one assignment — a perfectly normal
+        // thing for a trainer to do — always defaulted the whole batch to India DA.
+        const nextIntl = sortedForEnrich
+          .slice(idx + 1)
+          .filter(isConfidentIntl)
+          .sort((a, b) => (a.startDate || '') < (b.startDate || '') ? -1 : 1)[0] ?? null;
+        if (!nextIntl?.startDate) return asgn;
+        const curEnd = asgn.endDate || asgn.startDate;
+        if (!curEnd) return asgn;
+        const returnToIndiaBefore = allFlights.find(f => {
           if (f.Is_cancelled === 'Yes' || f.Is_cancelled === '1' || String(f.Is_cancelled) === '1') return false;
           const fd = parseDT(f.departure_date);
           if (!fd) return false;
-          if (fd < prevIntl.endDate! || fd > addDays(curStart, 1)) return false;
+          if (fd < curEnd || fd > nextIntl.startDate!) return false;
           const toC = inferCountryFromCity((f.to_city || '').trim());
           return toC === 'India';
         });
-        if (returnToIndia) return asgn; // trainer did return — don't inherit
-
-        // No return flight between the two assignments — trainer stayed at same destination
+        if (returnToIndiaBefore) return asgn;
         return {
           ...asgn,
-          city: asgn.city || prevIntl.city || '',
-          country: prevIntl.country,
+          city: asgn.city || nextIntl.city || '',
+          country: resolvedCountryOf(nextIntl),
           trainingDates: asgn.trainingDates || (asgn.startDate ? `${asgn.startDate} to ${asgn.endDate || asgn.startDate}` : null),
         };
       });
