@@ -3094,6 +3094,12 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
     // detected flight date. Without this, a real return flight found 3+ days out (outside the
     // narrow end..end+2 window) could never override the arbitrary end+1 guess.
     const flightRetDayIsDefault = new Set<string>();
+    // Same idea for the departure side: tracks which flightDepDay entries are an arbitrary
+    // "start-1" guess (no real flight found at all) rather than a genuinely detected flight date.
+    // Used below to let the same-country weekend/gap-fill logic win over a baseless guess when a
+    // trainer has no flight data at all between two of their own consecutive assignments (e.g.
+    // based outside India, so there's no domestic flight to observe either).
+    const flightDepDayIsDefault = new Set<string>();
 
     // Travel-day DA time-based eligibility (policy rules):
     //   Departure day gets DA only if departure is before 17:00
@@ -3241,6 +3247,7 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         // No flight data → standard: day before start; default eligible
         flightDepDay.set(start, addDays(start, -1));
         flightDepEligible.set(start, true);
+        flightDepDayIsDefault.add(start);
       }
 
       // Return: find active flight departing on or within 2 days after assignment end.
@@ -3562,26 +3569,40 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
           )
         : null;
 
-      // Check if this is a departure travel day (actual flight date before assignment start)
+      // Check if this is a departure travel day (actual flight date before assignment start).
+      // Skip a date that's ONLY a baseless "start-1" guess (no real flight at all) when the
+      // same-country weekend/gap-fill logic already has a confirmed answer for it — a guess must
+      // never outrank an actual same-country continuation. Bug fixed 2026-09-03: Soumik Das
+      // Purkayastha EMP-3639 (based in Paris, France, no flight data on file at all between his
+      // consecutive UK assignments) — 25-26 Jul and 8-9 Aug are the weekends BETWEEN back-to-back
+      // UK assignments, correctly identified by gapDateMap as same-country UK stay-put days, but
+      // the baseless default depDay/retDay guesses (start-1 / end+1) claimed those same dates
+      // first in the priority chain and mislabeled them India.
       const depAsgn = !overnightDepArrAsgn && !coreAsgn
         ? assignments.find(a => {
-            const depDay = flightDepDay.get(a.startDate || fromDate);
-            return depDay === iso;
+            const startKey = a.startDate || fromDate;
+            const depDay = flightDepDay.get(startKey);
+            if (depDay !== iso) return false;
+            if (flightDepDayIsDefault.has(startKey) && gapDateMap.has(iso)) return false;
+            return true;
           })
         : null;
 
       // Check if this is a return travel day (actual flight date after assignment end)
       const retAsgn = !overnightDepArrAsgn && !coreAsgn && !depAsgn
         ? assignments.find(a => {
-            const retDay = flightRetDay.get(a.endDate || toDate);
-            return retDay === iso;
+            const endKey = a.endDate || toDate;
+            const retDay = flightRetDay.get(endKey);
+            if (retDay !== iso) return false;
+            if (flightRetDayIsDefault.has(endKey) && gapDateMap.has(iso)) return false;
+            return true;
           })
         : null;
 
       // Policy: days between the departure flight and assignment start (pre-batch transit),
       // or between assignment end and return flight (post-batch holding), are eligible for DA
       // at the destination country rate — the trainer is abroad during these days.
-      const interimAsgn = !overnightDepArrAsgn && !coreAsgn && !depAsgn && !retAsgn
+      const interimAsgn = !overnightDepArrAsgn && !coreAsgn && !depAsgn && !retAsgn && !gapDateMap.has(iso)
         ? assignments.find(a => {
             const aStart  = a.startDate || fromDate;
             const aEnd    = a.endDate   || toDate;
