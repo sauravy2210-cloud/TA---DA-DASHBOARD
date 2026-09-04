@@ -61,6 +61,8 @@ export default async function handler(req, res) {
   }
 
   let flights = [];
+  const debug = req.query.debug === '1';
+  const errors = {};
 
   // 1. Try email-based API 108
   if (email) {
@@ -72,7 +74,7 @@ export default async function handler(req, res) {
         'Trainer Flight Details',
         { email_Address: email }
       );
-    } catch { flights = []; }
+    } catch (e) { flights = []; errors.api108 = e instanceof Error ? e.message : String(e); }
   }
 
   // 2. Fallback: emp-code-based API 256
@@ -86,8 +88,8 @@ export default async function handler(req, res) {
         'Get Trainer Flight Details',
         { koenig_trainer_emp_code: code }
       );
-    } catch { flights = []; }
+    } catch (e) { flights = []; errors.api256 = e instanceof Error ? e.message : String(e); }
   }
 
-  return res.status(200).json({ flights });
+  return res.status(200).json(debug ? { flights, errors } : { flights });
 }
