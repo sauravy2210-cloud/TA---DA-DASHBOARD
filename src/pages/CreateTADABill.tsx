@@ -3788,9 +3788,42 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
 
       // Layover rule overrides everything: 4+ hr non-India layover → that country's DA
       const layoverInfo = (isDeparture || isReturn) ? getLayoverCountry(iso) : null;
-      const country = layoverInfo
+      let country = layoverInfo
         ? layoverInfo.country
         : travelDayCountry;
+
+      // Narrow, ADDITIVE override — does not change which day is classified as departure/return/
+      // core/etc., only corrects the final country for one specific, tightly-scoped case: a date
+      // that (a) the same-country weekend/gap-fill logic (gapDateMap) already confirms is a
+      // stay-put day between two consecutive same-country assignments, (b) resolved to India only
+      // because the departure/return-day logic found NO real flight at all to check (a baseless
+      // start-1/end+1 guess), and (c) there genuinely is no flight for this trainer anywhere near
+      // that assignment boundary. Every other trainer's flight-backed classification is untouched.
+      // Bug fixed 2026-09-03: Soumik Das Purkayastha EMP-3639 (based in Paris, France, zero flight
+      // data on file between his consecutive UK assignments) — 25-26 Jul and 8-9 Aug, the weekends
+      // between his back-to-back UK batches, were wrongly defaulting to India.
+      let gapCountryOverrideNote: string | null = null;
+      if (!layoverInfo && country === 'India' && (isDeparture || isReturn) && asgn && gapDateMap.has(iso)) {
+        const gapAsgnForDay = gapDateMap.get(iso);
+        const gapCC = gapAsgnForDay?.city ? inferCountryFromCity(gapAsgnForDay.city) : '';
+        const gapDestC = (gapAsgnForDay?.country === 'India' && gapCC && gapCC !== 'India')
+          ? gapCC : (gapAsgnForDay?.country || gapCC || '');
+        if (gapDestC && gapDestC !== 'India') {
+          const boundaryDate = isDeparture ? (asgn.startDate || fromDate) : (asgn.endDate || toDate);
+          const hasRealFlightNearBoundary = activeFlights.some(f => {
+            const fd = parseDT(f.departure_date);
+            if (!fd) return false;
+            return isDeparture
+              ? (fd >= addDays(boundaryDate, -6) && fd < boundaryDate)
+              : (fd >= boundaryDate && fd <= addDays(boundaryDate, 2));
+          });
+          if (!hasRealFlightNearBoundary) {
+            country = gapDestC;
+            gapCountryOverrideNote = gapDestC;
+          }
+        }
+      }
+
       const asgnId     = asgn?.assignmentId || '';
       const asgnCourse = asgn?.courseName   || '';
       const daInfo     = getDaInfo(country, layoverInfo ? undefined : isInternationalTravelDay ? undefined : asgn?.city);
@@ -4003,6 +4036,10 @@ export default function CreateTADABill({ currentUser }: { currentUser?: User }) 
         statusClass = 'bg-green-100 text-green-700';
         amount      = rate;
         remarks     = asgnTag;
+      }
+
+      if (gapCountryOverrideNote) {
+        remarks = `${remarks} [Corrected: ${gapCountryOverrideNote} DA — same-country weekend/gap day between consecutive assignments, no flight data on file]`;
       }
 
       return { iso, day: dayName(iso), country, assignmentId: asgnId, courseName: asgnCourse, status, statusClass, rate, currency, amount, remarks };
