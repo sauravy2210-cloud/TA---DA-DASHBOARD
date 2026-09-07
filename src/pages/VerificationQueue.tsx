@@ -557,6 +557,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
         return true;
       })
       .map(c => ({
+        claimId: c.claimId,
         billNo: c.billNo,
         trainerName: c.trainerName,
         status: c.status,
@@ -584,10 +585,43 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
   const [oopRemark, setOopRemark] = useState('');
   const [oopSending, setOopSending] = useState(false);
   const [oopMsg, setOopMsg] = useState('');
+  // Nothing is pre-selected — HR Admin picks which out-of-policy bills go into the
+  // report. Reset on every open so a stale selection from a previous session never
+  // silently carries over.
+  const [selectedOopIds, setSelectedOopIds] = useState<Set<string>>(new Set());
+
+  const openOopModal = () => {
+    setSelectedOopIds(new Set());
+    setOopRemark('');
+    setOopMsg('');
+    setShowOopModal(true);
+  };
+
+  const toggleOopSelect = (claimId: string) => {
+    setSelectedOopIds(prev => {
+      const next = new Set(prev);
+      if (next.has(claimId)) next.delete(claimId); else next.add(claimId);
+      return next;
+    });
+  };
+
+  const selectAllOop = () => setSelectedOopIds(new Set(outOfPolicyBills.map(b => b.claimId)));
+  const clearOopSelection = () => setSelectedOopIds(new Set());
+  const selectOopWithRemarksOnly = () =>
+    setSelectedOopIds(new Set(outOfPolicyBills.filter(b => b.adminRemark.trim()).map(b => b.claimId)));
+
+  const selectedOopBills = useMemo(
+    () => outOfPolicyBills.filter(b => selectedOopIds.has(b.claimId)),
+    [outOfPolicyBills, selectedOopIds]
+  );
+  const selectedOopTotalExcess = useMemo(
+    () => selectedOopBills.reduce((sum, b) => sum + b.excessAmount, 0),
+    [selectedOopBills]
+  );
 
   const handleSendOutOfPolicyReport = async () => {
+    if (selectedOopBills.length === 0) { setOopMsg('❌ Select at least one bill to include in the report.'); return; }
     if (!oopRemark.trim()) { setOopMsg('❌ HR Admin remarks are required before sending this report.'); return; }
-    if (outOfPolicyBills.length === 0) { setOopMsg('No out-of-policy bills found for the selected criteria.'); return; }
     const activeRecipients = REPORT_RECIPIENTS.filter(e => !excludedRecipients.has(e));
     if (activeRecipients.length === 0) { setOopMsg('❌ All recipients excluded — select at least one.'); return; }
     setOopSending(true);
@@ -601,7 +635,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'out_of_policy_report',
-          bills: outOfPolicyBills,
+          bills: selectedOopBills,
           sentBy: 'HR Admin',
           hrRemark: oopRemark.trim(),
           toEmail: 'saurav.yadav@koenig-solutions.com',
@@ -610,7 +644,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
         }),
       });
       if (r.ok) {
-        setOopMsg(`✅ Report sent to ${activeRecipients.length} recipient${activeRecipients.length === 1 ? '' : 's'} (${outOfPolicyBills.length} bills)`);
+        setOopMsg(`✅ Report sent to ${activeRecipients.length} recipient${activeRecipients.length === 1 ? '' : 's'} (${selectedOopBills.length} bills)`);
         setOopRemark('');
         setTimeout(() => { setShowOopModal(false); setOopMsg(''); }, 1800);
       } else {
@@ -822,7 +856,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
 
             <button
               type="button"
-              onClick={() => { setShowOopModal(true); setOopMsg(''); }}
+              onClick={openOopModal}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400"
               title="Bills where HR approved more than the policy-eligible amount"
             >
@@ -1446,44 +1480,87 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl px-4 py-3 bg-red-50 border border-red-100">
                   <p className="text-xs font-medium text-red-600 opacity-80">Bills Out of Policy</p>
-                  <p className="text-2xl font-bold text-red-700 mt-0.5">{outOfPolicyBills.length}</p>
+                  <p className="text-2xl font-bold text-red-700 mt-0.5">
+                    {selectedOopBills.length} <span className="text-sm font-medium text-red-400">/ {outOfPolicyBills.length} selected</span>
+                  </p>
                   <p className="text-[10px] text-red-500 opacity-70 mt-0.5">
                     {reportDateFrom || reportDateTo ? `${reportDateFrom || '…'} to ${reportDateTo || '…'}` : 'All time'}
                   </p>
                 </div>
                 <div className="rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
-                  <p className="text-xs font-medium text-amber-600 opacity-80">Total Excess Approved</p>
-                  <p className="text-2xl font-bold text-amber-700 mt-0.5">₹{outOfPolicyTotalExcess.toLocaleString('en-IN')}</p>
-                  <p className="text-[10px] text-amber-500 opacity-70 mt-0.5">Above computed policy limit</p>
+                  <p className="text-xs font-medium text-amber-600 opacity-80">Excess Approved (selected)</p>
+                  <p className="text-2xl font-bold text-amber-700 mt-0.5">₹{selectedOopTotalExcess.toLocaleString('en-IN')}</p>
+                  <p className="text-[10px] text-amber-500 opacity-70 mt-0.5">of ₹{outOfPolicyTotalExcess.toLocaleString('en-IN')} total above policy limit</p>
                 </div>
               </div>
 
               {outOfPolicyBills.length > 0 && (
-                <div className="overflow-x-auto border border-gray-200 rounded-lg max-h-56">
-                  <table className="min-w-full text-xs">
-                    <thead className="bg-gray-100 border-b border-gray-200 sticky top-0">
-                      <tr>
-                        {['Bill No', 'Trainer', 'Eligible', 'Approved', 'Excess'].map(h => (
-                          <th key={h} className="px-3 py-2 text-left text-gray-500 font-semibold whitespace-nowrap text-[11px]">{h}</th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 bg-white">
-                      {outOfPolicyBills.slice(0, 25).map(b => (
-                        <tr key={b.billNo} className="hover:bg-red-50/30">
-                          <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">{b.billNo}</td>
-                          <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{b.trainerName}</td>
-                          <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">₹{b.eligibleAmount.toLocaleString('en-IN')}</td>
-                          <td className="px-3 py-1.5 text-green-700 font-semibold whitespace-nowrap">₹{b.approvedAmount.toLocaleString('en-IN')}</td>
-                          <td className="px-3 py-1.5 text-red-700 font-bold whitespace-nowrap">+₹{b.excessAmount.toLocaleString('en-IN')}</td>
+                <>
+                  <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                    <span className="font-semibold text-gray-500">Select bills to include:</span>
+                    <button type="button" onClick={selectAllOop} className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">
+                      Select All ({outOfPolicyBills.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={selectOopWithRemarksOnly}
+                      className="px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-medium"
+                      title="Check only bills that already have an HR remark recorded on the claim"
+                    >
+                      📝 Select bills with remarks already entered ({outOfPolicyBills.filter(b => b.adminRemark.trim()).length})
+                    </button>
+                    <button type="button" onClick={clearOopSelection} className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">
+                      Clear
+                    </button>
+                  </div>
+
+                  <div className="overflow-x-auto border border-gray-200 rounded-lg max-h-64">
+                    <table className="min-w-full text-xs">
+                      <thead className="bg-gray-100 border-b border-gray-200 sticky top-0">
+                        <tr>
+                          <th className="px-3 py-2 text-left w-8">
+                            <input
+                              type="checkbox"
+                              checked={selectedOopIds.size > 0 && selectedOopIds.size === outOfPolicyBills.length}
+                              onChange={e => (e.target.checked ? selectAllOop() : clearOopSelection())}
+                              className="rounded border-gray-300"
+                              aria-label="Select all"
+                            />
+                          </th>
+                          {['Bill No', 'Trainer', 'Eligible', 'Approved', 'Excess', 'Existing Remark'].map(h => (
+                            <th key={h} className="px-3 py-2 text-left text-gray-500 font-semibold whitespace-nowrap text-[11px]">{h}</th>
+                          ))}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {outOfPolicyBills.length > 25 && (
-                    <p className="text-[10px] text-gray-400 px-3 py-1.5 bg-gray-50">+{outOfPolicyBills.length - 25} more bill(s) will be included in the emailed report</p>
-                  )}
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 bg-white">
+                        {outOfPolicyBills.map(b => {
+                          const checked = selectedOopIds.has(b.claimId);
+                          return (
+                            <tr key={b.claimId} className={`hover:bg-red-50/30 ${checked ? 'bg-red-50/40' : ''}`}>
+                              <td className="px-3 py-1.5">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleOopSelect(b.claimId)}
+                                  className="rounded border-gray-300"
+                                  aria-label={`Select ${b.billNo}`}
+                                />
+                              </td>
+                              <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">{b.billNo}</td>
+                              <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{b.trainerName}</td>
+                              <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">₹{b.eligibleAmount.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-1.5 text-green-700 font-semibold whitespace-nowrap">₹{b.approvedAmount.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-1.5 text-red-700 font-bold whitespace-nowrap">+₹{b.excessAmount.toLocaleString('en-IN')}</td>
+                              <td className="px-3 py-1.5 text-gray-500 max-w-[220px] truncate" title={b.adminRemark || undefined}>
+                                {b.adminRemark ? b.adminRemark : <span className="text-gray-300">— none —</span>}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
               )}
 
               <div>
@@ -1522,11 +1599,11 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
               <button
                 type="button"
                 onClick={handleSendOutOfPolicyReport}
-                disabled={oopSending || !oopRemark.trim() || outOfPolicyBills.length === 0}
+                disabled={oopSending || !oopRemark.trim() || selectedOopBills.length === 0}
                 className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {oopSending && <span className="w-3.5 h-3.5 border-2 border-white/60 border-t-transparent rounded-full animate-spin inline-block" />}
-                {oopSending ? 'Sending…' : 'Send Report'}
+                {oopSending ? 'Sending…' : `Send Report${selectedOopBills.length > 0 ? ` (${selectedOopBills.length})` : ''}`}
               </button>
             </div>
           </div>
