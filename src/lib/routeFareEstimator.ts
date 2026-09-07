@@ -41,13 +41,28 @@ export interface RouteEstimate {
 const geocodeCache = new Map<string, GeoPoint | null>();
 const routeCache = new Map<string, { distanceKm: number; durationMin: number } | null>();
 
+// Real bill addresses carry several kinds of noise that trip up a literal-match geocoder:
+//  - an airline name auto-appended to an airport label, e.g. "Delhi Airport (Air India )"
+//  - a "House no./Flat no." style prefix, e.g. "House no.555, Sector 43 Gurugram ..."
+//  - a PIN/ZIP code glued mid-string with no separating comma, e.g. "Gurugram 122009 Near ..."
+// Strip all three before every geocoding attempt (Nominatim and Photon alike).
+function stripNoise(query: string): string {
+  return query
+    .replace(/\s*\([^)]*\)\s*/g, ' ')
+    .replace(/^\s*(house|h|flat|plot|shop|door|building|bldg)\.?\s*no\.?\s*[:-]?\s*[\w./-]*\s*,?\s*/i, '')
+    .replace(/\b\d{5,6}\b/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 // Long, verbose bill addresses (building + cluster + street + city + country) often fail to
 // match in one shot on Nominatim's parser. Fall back to progressively simplified variants —
 // landmark name + city/country, then just the trailing city/country segments — before giving up.
 function candidateQueries(query: string): string[] {
   const trimmed = query.trim();
-  const parts = trimmed.split(',').map(s => s.trim()).filter(Boolean);
-  const variants = new Set<string>([trimmed]);
+  const stripped = stripNoise(trimmed);
+  const parts = stripped.split(',').map(s => s.trim()).filter(Boolean);
+  const variants = new Set<string>([trimmed, stripped]);
   if (parts.length > 3) {
     variants.add([parts[0], ...parts.slice(-2)].join(', '));
     variants.add(parts.slice(-3).join(', '));
@@ -55,11 +70,25 @@ function candidateQueries(query: string): string[] {
   if (parts.length > 2) {
     variants.add(parts.slice(-2).join(', '));
   }
-  return Array.from(variants);
+  return Array.from(variants).filter(Boolean);
 }
 
-async function geocodeOnce(query: string): Promise<GeoPoint | null> {
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0&q=${encodeURIComponent(query)}`;
+// Nominatim's usage policy caps public-instance callers at ~1 request/second. A single
+// geocode() can itself issue several sequential candidate queries, and a route needs two
+// geocode() calls (origin + destination) — serialize every Nominatim call through one
+// module-level throttle so a busy reviewer clicking through several bills never bursts past
+// that limit and gets silently rate-limited (which looks identical to "address not found").
+let lastNominatimCall = 0;
+async function throttleNominatim(): Promise<void> {
+  const wait = Math.max(0, lastNominatimCall + 1100 - Date.now());
+  lastNominatimCall = Date.now() + wait;
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+}
+
+async function geocodeOnce(query: string, countryCode?: string): Promise<GeoPoint | null> {
+  await throttleNominatim();
+  const cc = countryCode ? `&countrycodes=${countryCode}` : '';
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&addressdetails=0${cc}&q=${encodeURIComponent(query)}`;
   const res = await fetch(url, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error('geocode request failed');
   const data = await res.json() as Array<{ lat: string; lon: string; display_name: string }>;
@@ -67,17 +96,50 @@ async function geocodeOnce(query: string): Promise<GeoPoint | null> {
   return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), label: data[0].display_name };
 }
 
-async function geocode(query: string): Promise<GeoPoint | null> {
+// Photon (komoot's OSM-based search) tolerates typos, colloquial names ("Delhi Airport" vs.
+// the official "Indira Gandhi International Airport") and noisy input far better than
+// Nominatim's literal matcher — used only as a fallback once every Nominatim candidate has
+// failed. `bias` (a country centroid, or the already-resolved other end of this same trip)
+// keeps ambiguous short names (e.g. "Liverpool") from resolving to the wrong continent.
+async function geocodePhoton(query: string, bias?: { lat: number; lon: number }): Promise<GeoPoint | null> {
+  try {
+    const biasParams = bias ? `&lat=${bias.lat}&lon=${bias.lon}&location_bias_scale=0.9` : '';
+    const url = `https://photon.komoot.io/api/?limit=1${biasParams}&q=${encodeURIComponent(query)}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    const feature = data?.features?.[0];
+    if (!feature) return null;
+    const [lon, lat] = feature.geometry.coordinates;
+    const p = feature.properties ?? {};
+    const label = [p.name, p.city, p.state, p.country].filter(Boolean).join(', ') || query;
+    return { lat, lon, label };
+  } catch {
+    return null;
+  }
+}
+
+async function geocode(
+  query: string,
+  hint?: { cc: string; lat: number; lon: number },
+  biasPoint?: GeoPoint
+): Promise<GeoPoint | null> {
   const key = query.trim().toLowerCase();
   if (!key) return null;
   if (geocodeCache.has(key)) return geocodeCache.get(key)!;
-  try {
-    for (const candidate of candidateQueries(query)) {
-      const point = await geocodeOnce(candidate);
+  // Each candidate is tried independently — one throwing (e.g. a transient Nominatim
+  // error) must not abort the remaining candidates or skip the Photon fallback below.
+  for (const candidate of candidateQueries(query)) {
+    try {
+      const point = await geocodeOnce(candidate, hint?.cc);
       if (point) { geocodeCache.set(key, point); return point; }
-    }
-    geocodeCache.set(key, null);
-    return null;
+    } catch { /* try the next candidate */ }
+  }
+  const bias = biasPoint ?? (hint ? { lat: hint.lat, lon: hint.lon } : undefined);
+  try {
+    const photonPoint = await geocodePhoton(stripNoise(query), bias);
+    geocodeCache.set(key, photonPoint);
+    return photonPoint;
   } catch {
     geocodeCache.set(key, null);
     return null;
@@ -162,6 +224,27 @@ function detectCountryContext(from: string, to: string, origin: GeoPoint | null,
     contextFromGeocodedLabel(origin?.label) ??
     contextFromKeywords(from, to)
   );
+}
+
+// A coarse up-front guess (country code + centroid) from the raw bill text, used only to bias
+// the geocoders toward the right part of the world — never as the final country shown to the
+// user (detectCountryContext, above, trusts the actual geocoded result for that).
+const COUNTRY_HINT_TABLE: Partial<Record<CountryContext, { cc: string; lat: number; lon: number }>> = {
+  India: { cc: 'in', lat: 22.0, lon: 79.0 },
+  UAE: { cc: 'ae', lat: 24.0, lon: 54.0 },
+  SaudiArabia: { cc: 'sa', lat: 24.0, lon: 45.0 },
+  Qatar: { cc: 'qa', lat: 25.3, lon: 51.2 },
+  USA: { cc: 'us', lat: 39.8, lon: -98.6 },
+  UK: { cc: 'gb', lat: 54.0, lon: -2.0 },
+  Singapore: { cc: 'sg', lat: 1.35, lon: 103.8 },
+  Malaysia: { cc: 'my', lat: 4.2, lon: 101.9 },
+  Australia: { cc: 'au', lat: -25.0, lon: 134.0 },
+  SouthAfrica: { cc: 'za', lat: -29.0, lon: 24.0 },
+};
+
+function guessCountryHint(from: string, to: string) {
+  const ctx = contextFromKeywords(from, to);
+  return ctx === 'Other' ? undefined : COUNTRY_HINT_TABLE[ctx];
 }
 
 // ─── Fare rate cards ────────────────────────────────────────────────────────
@@ -304,7 +387,11 @@ function buildFareOptions(distanceKm: number, durationMin: number, ctx: CountryC
 
 export async function estimateRoute(from: string, to: string): Promise<RouteEstimate | null> {
   if (!from?.trim() || !to?.trim()) return null;
-  const [origin, destination] = await Promise.all([geocode(from), geocode(to)]);
+  const hint = guessCountryHint(from, to);
+  // Sequential, not Promise.all: keeps Nominatim calls from bursting in parallel, and lets a
+  // successfully-resolved origin bias the (harder) destination geocode — or vice versa.
+  const origin = await geocode(from, hint);
+  const destination = await geocode(to, hint, origin ?? undefined);
   if (!origin || !destination) return null;
 
   const road = await getRoadRoute(origin, destination);
