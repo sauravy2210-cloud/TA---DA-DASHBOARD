@@ -670,10 +670,10 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
     () => oopCandidateBills.filter(b => selectedOopIds.has(b.claimId)),
     [oopCandidateBills, selectedOopIds]
   );
+  const OOP_REPORT_RECIPIENT = 'saurav.yadav@koenig-solutions.com';
+
   const handleSendOutOfPolicyReport = async () => {
     if (selectedOopBills.length === 0) { setOopMsg('❌ Select at least one bill to include in the report.'); return; }
-    const activeRecipients = REPORT_RECIPIENTS.filter(e => !excludedRecipients.has(e));
-    if (activeRecipients.length === 0) { setOopMsg('❌ All recipients excluded — select at least one.'); return; }
     setOopSending(true);
     setOopMsg('');
     const periodLabel = reportDateFrom || reportDateTo
@@ -687,13 +687,12 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
           type: 'out_of_policy_report',
           bills: selectedOopBills,
           sentBy: 'HR Admin',
-          toEmail: 'saurav.yadav@koenig-solutions.com',
+          toEmail: OOP_REPORT_RECIPIENT,
           periodLabel,
-          excludeEmails: Array.from(excludedRecipients),
         }),
       });
       if (r.ok) {
-        setOopMsg(`✅ Report sent to ${activeRecipients.length} recipient${activeRecipients.length === 1 ? '' : 's'} (${selectedOopBills.length} bills)`);
+        setOopMsg(`✅ Report sent to ${OOP_REPORT_RECIPIENT} (${selectedOopBills.length} bills)`);
         setTimeout(() => { setShowOopModal(false); setOopMsg(''); }, 1800);
       } else {
         const d = await r.json().catch(() => ({}));
@@ -1660,8 +1659,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
               )}
 
               <p className="text-[11px] text-gray-400">
-                Sent to {REPORT_RECIPIENTS.length - excludedRecipients.size} of {REPORT_RECIPIENTS.length} recipient(s) — use the
-                "Recipients" picker above to change who receives this report.
+                Sent to {OOP_REPORT_RECIPIENT}.
               </p>
 
               {oopMsg && (
