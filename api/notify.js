@@ -529,10 +529,11 @@ export default async function handler(req, res) {
             <p style="margin:2px 0 0;font-size:22px;font-weight:800;color:#92400e;">${fmt(totalExcess)}</p>
           </div>
         </div>
+        ${hrRemark && String(hrRemark).trim() ? `
         <div style="padding:8px 32px 20px;">
           <p style="margin:0 0 4px;font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;">HR Admin Remarks</p>
-          <p style="margin:0;font-size:14px;color:#374151;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;line-height:1.5;">${String(hrRemark || '').replace(/</g, '&lt;')}</p>
-        </div>
+          <p style="margin:0;font-size:14px;color:#374151;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;line-height:1.5;">${String(hrRemark).replace(/</g, '&lt;')}</p>
+        </div>` : ''}
         <div style="padding:0 32px 20px;overflow-x:auto;">
           <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;">
             <thead>
@@ -668,8 +669,6 @@ export default async function handler(req, res) {
     const { bills, sentBy, hrRemark, toEmail: oopReportTo, periodLabel: oopPeriodLabel, excludeEmails: oopExcludeEmails } = body;
     if (!Array.isArray(bills) || bills.length === 0)
       return res.status(400).json({ error: 'No out-of-policy bills provided' });
-    if (!hrRemark || !String(hrRemark).trim())
-      return res.status(400).json({ error: 'HR Admin remarks are required to send this report' });
     try {
       const result = await sendOutOfPolicyReportEmail({ bills, sentBy, hrRemark, reportTo: oopReportTo, periodLabel: oopPeriodLabel, excludeEmails: oopExcludeEmails });
       return res.status(200).json(result);

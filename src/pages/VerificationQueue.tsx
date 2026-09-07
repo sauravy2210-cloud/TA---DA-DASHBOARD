@@ -582,7 +582,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
   );
 
   const [showOopModal, setShowOopModal] = useState(false);
-  const [oopRemark, setOopRemark] = useState('');
   const [oopSending, setOopSending] = useState(false);
   const [oopMsg, setOopMsg] = useState('');
   // Nothing is pre-selected — HR Admin picks which out-of-policy bills go into the
@@ -655,7 +654,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
     setSelectedOopIds(new Set());
     setManualOopIds(new Set());
     setOopSearchTerm('');
-    setOopRemark('');
     setOopMsg('');
     setShowOopModal(true);
   };
@@ -684,7 +682,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
 
   const handleSendOutOfPolicyReport = async () => {
     if (selectedOopBills.length === 0) { setOopMsg('❌ Select at least one bill to include in the report.'); return; }
-    if (!oopRemark.trim()) { setOopMsg('❌ HR Admin remarks are required before sending this report.'); return; }
     const activeRecipients = REPORT_RECIPIENTS.filter(e => !excludedRecipients.has(e));
     if (activeRecipients.length === 0) { setOopMsg('❌ All recipients excluded — select at least one.'); return; }
     setOopSending(true);
@@ -700,7 +697,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
           type: 'out_of_policy_report',
           bills: selectedOopBills,
           sentBy: 'HR Admin',
-          hrRemark: oopRemark.trim(),
           toEmail: 'saurav.yadav@koenig-solutions.com',
           periodLabel,
           excludeEmails: Array.from(excludedRecipients),
@@ -708,7 +704,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
       });
       if (r.ok) {
         setOopMsg(`✅ Report sent to ${activeRecipients.length} recipient${activeRecipients.length === 1 ? '' : 's'} (${selectedOopBills.length} bills)`);
-        setOopRemark('');
         setTimeout(() => { setShowOopModal(false); setOopMsg(''); }, 1800);
       } else {
         const d = await r.json().catch(() => ({}));
@@ -1686,20 +1681,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                 </>
               )}
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  HR Admin Remarks <span className="text-red-500">*</span>
-                  <span className="font-normal text-gray-400 ml-1">— required, explains why these overrides are justified</span>
-                </label>
-                <textarea
-                  value={oopRemark}
-                  onChange={e => setOopRemark(e.target.value)}
-                  rows={3}
-                  placeholder="e.g. Approved above policy cap due to last-minute venue change — client-approved exception."
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
-                />
-              </div>
-
               <p className="text-[11px] text-gray-400">
                 Sent to {REPORT_RECIPIENTS.length - excludedRecipients.size} of {REPORT_RECIPIENTS.length} recipient(s) — use the
                 "Recipients" picker above to change who receives this report.
@@ -1722,7 +1703,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
               <button
                 type="button"
                 onClick={handleSendOutOfPolicyReport}
-                disabled={oopSending || !oopRemark.trim() || selectedOopBills.length === 0}
+                disabled={oopSending || selectedOopBills.length === 0}
                 className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {oopSending && <span className="w-3.5 h-3.5 border-2 border-white/60 border-t-transparent rounded-full animate-spin inline-block" />}
