@@ -16,6 +16,7 @@ import DADayBreakdown from '../components/DADayBreakdown';
 import { ResourceLeavePanel } from '../components/ResourceLeavePanel';
 import LodgingStaybackPanel from '../components/LodgingStaybackPanel';
 import CabConveyancePanel from '../components/CabConveyancePanel';
+import RouteFareModal from '../components/RouteFareModal';
 
 // ─── Props ─────────────────────────────────────────────────────────────────
 
@@ -574,6 +575,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [alreadyPaidDeductionSavedValue, setAlreadyPaidDeductionSavedValue] = useState<number | null>(null);
 
   const [receiptPreview, setReceiptPreview] = useState<{ url: string; name: string } | null>(null);
+  const [routeModal, setRouteModal] = useState<{ from: string; to: string } | null>(null);
 
   // Post-submission misc expense upload — exempted trainers (and HR Admin on their behalf)
   // can add NEW misc expense bills to an already-submitted claim, not just view/edit existing
@@ -4509,7 +4511,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                   <table className="min-w-full text-xs">
                                     <thead className="bg-gray-50 border-b border-gray-200">
                                       <tr>
-                                        {['Date','Journey Type','Type','From','To','Distance','Claimed','Eligible','Approved','Status','Receipt', ...(currentUser.role === 'HRAdmin' ? ['HR Override'] : [])].map(h => (
+                                        {['Date','Journey Type','Type','From','To', ...(currentUser.role !== 'Trainer' ? ['Map'] : []),'Distance','Claimed','Eligible','Approved','Status','Receipt', ...(currentUser.role === 'HRAdmin' ? ['HR Override'] : [])].map(h => (
                                           <th key={h} className="px-3 py-2.5 text-left text-gray-500 font-semibold whitespace-nowrap text-[11px]">{h}</th>
                                         ))}
                                       </tr>
@@ -4541,6 +4543,19 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                                 </td>
                                                 <td className="px-3 py-2 font-medium whitespace-nowrap text-gray-800">{li.fromLocation || '—'}</td>
                                                 <td className="px-3 py-2 font-medium whitespace-nowrap text-gray-800">{li.toLocation || '—'}</td>
+                                                {currentUser.role !== 'Trainer' && (
+                                                  <td className="px-3 py-2 whitespace-nowrap">
+                                                    {li.fromLocation && li.toLocation ? (
+                                                      <button
+                                                        onClick={() => setRouteModal({ from: li.fromLocation!, to: li.toLocation! })}
+                                                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-semibold hover:bg-indigo-100"
+                                                        title="View route & fare estimate"
+                                                      >
+                                                        🗺️ Route
+                                                      </button>
+                                                    ) : <span className="text-gray-300 text-[11px]">—</span>}
+                                                  </td>
+                                                )}
                                                 <td className="px-3 py-2 text-gray-500 whitespace-nowrap text-[11px]">{dist || '—'}</td>
                                                 {/* Editable currency + amount */}
                                                 <td className="px-3 py-2" colSpan={3}>
@@ -4608,6 +4623,19 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                                               </td>
                                               <td className="px-3 py-2.5 font-medium whitespace-nowrap text-gray-800">{li.fromLocation || '—'}</td>
                                               <td className="px-3 py-2.5 font-medium whitespace-nowrap text-gray-800">{li.toLocation || '—'}</td>
+                                              {currentUser.role !== 'Trainer' && (
+                                                <td className="px-3 py-2.5 whitespace-nowrap">
+                                                  {li.fromLocation && li.toLocation ? (
+                                                    <button
+                                                      onClick={() => setRouteModal({ from: li.fromLocation!, to: li.toLocation! })}
+                                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 text-[10px] font-semibold hover:bg-indigo-100"
+                                                      title="View route & fare estimate"
+                                                    >
+                                                      🗺️ Route
+                                                    </button>
+                                                  ) : <span className="text-gray-300 text-[11px]">—</span>}
+                                                </td>
+                                              )}
                                               <td className="px-3 py-2.5 text-gray-500 whitespace-nowrap text-[11px]">{dist || '—'}</td>
                                               <td className={`px-3 py-2.5 whitespace-nowrap font-semibold ${alreadyPaidBill ? 'text-gray-400 line-through' : 'text-gray-800'}`}>
                                                 {fmtAmt(li.claimedAmount, li.currency)}
@@ -5488,6 +5516,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ── Route & Fare Estimate Modal ── */}
+      {routeModal && (
+        <RouteFareModal
+          from={routeModal.from}
+          to={routeModal.to}
+          onClose={() => setRouteModal(null)}
+        />
       )}
     </div>
   );
