@@ -571,6 +571,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
         trainingLocation: c.trainingLocation ?? '',
         submittedAt: c.submittedAt ?? '',
         adminRemark: c.adminRemark ?? '',
+        autoDetected: true,
       }))
       .sort((a, b) => b.excessAmount - a.excessAmount);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -589,9 +590,68 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
   // report. Reset on every open so a stale selection from a previous session never
   // silently carries over.
   const [selectedOopIds, setSelectedOopIds] = useState<Set<string>>(new Set());
+  // HR Admin isn't limited to the system-flagged bills — any bill in the Verification
+  // Queue can be pulled into this report (e.g. a borderline case HR wants documented
+  // even though it didn't trip the approved > eligible threshold).
+  const [manualOopIds, setManualOopIds] = useState<Set<string>>(new Set());
+  const [oopSearchTerm, setOopSearchTerm] = useState('');
+
+  const manualOopBills = useMemo(() => {
+    return allClaims
+      .filter(c => manualOopIds.has(c.claimId))
+      .map(c => ({
+        claimId: c.claimId,
+        billNo: c.billNo,
+        trainerName: c.trainerName,
+        status: c.status,
+        claimedAmount: c.totalClaimedAmount ?? 0,
+        eligibleAmount: c.eligibleAmount ?? 0,
+        approvedAmount: c.approvedAmount ?? 0,
+        excessAmount: (c.approvedAmount ?? 0) - (c.eligibleAmount ?? 0),
+        currency: c.currency || 'INR',
+        claimStartDate: c.claimStartDate ?? '',
+        claimEndDate: c.claimEndDate ?? '',
+        trainingLocation: c.trainingLocation ?? '',
+        submittedAt: c.submittedAt ?? '',
+        adminRemark: c.adminRemark ?? '',
+        autoDetected: false,
+      }));
+  }, [allClaims, manualOopIds]);
+
+  // Full candidate list shown in the modal: system-flagged bills plus anything HR
+  // manually added, de-duplicated (a manually-added bill that also happens to be
+  // flagged stays counted once, as auto-detected).
+  const oopCandidateBills = useMemo(() => {
+    const autoIds = new Set(outOfPolicyBills.map(b => b.claimId));
+    const extras = manualOopBills.filter(b => !autoIds.has(b.claimId));
+    return [...outOfPolicyBills, ...extras].sort((a, b) => b.excessAmount - a.excessAmount);
+  }, [outOfPolicyBills, manualOopBills]);
+
+  const oopSearchResults = useMemo(() => {
+    const term = oopSearchTerm.trim().toLowerCase();
+    if (!term) return [];
+    const alreadyIn = new Set(oopCandidateBills.map(b => b.claimId));
+    return allClaims
+      .filter(c => !alreadyIn.has(c.claimId))
+      .filter(c => c.billNo.toLowerCase().includes(term) || c.trainerName.toLowerCase().includes(term))
+      .slice(0, 8);
+  }, [oopSearchTerm, allClaims, oopCandidateBills]);
+
+  const addManualOopBill = (claimId: string) => {
+    setManualOopIds(prev => new Set(prev).add(claimId));
+    setSelectedOopIds(prev => new Set(prev).add(claimId));
+    setOopSearchTerm('');
+  };
+
+  const removeManualOopBill = (claimId: string) => {
+    setManualOopIds(prev => { const next = new Set(prev); next.delete(claimId); return next; });
+    setSelectedOopIds(prev => { const next = new Set(prev); next.delete(claimId); return next; });
+  };
 
   const openOopModal = () => {
     setSelectedOopIds(new Set());
+    setManualOopIds(new Set());
+    setOopSearchTerm('');
     setOopRemark('');
     setOopMsg('');
     setShowOopModal(true);
@@ -605,14 +665,14 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
     });
   };
 
-  const selectAllOop = () => setSelectedOopIds(new Set(outOfPolicyBills.map(b => b.claimId)));
+  const selectAllOop = () => setSelectedOopIds(new Set(oopCandidateBills.map(b => b.claimId)));
   const clearOopSelection = () => setSelectedOopIds(new Set());
   const selectOopWithRemarksOnly = () =>
-    setSelectedOopIds(new Set(outOfPolicyBills.filter(b => b.adminRemark.trim()).map(b => b.claimId)));
+    setSelectedOopIds(new Set(oopCandidateBills.filter(b => b.adminRemark.trim()).map(b => b.claimId)));
 
   const selectedOopBills = useMemo(
-    () => outOfPolicyBills.filter(b => selectedOopIds.has(b.claimId)),
-    [outOfPolicyBills, selectedOopIds]
+    () => oopCandidateBills.filter(b => selectedOopIds.has(b.claimId)),
+    [oopCandidateBills, selectedOopIds]
   );
   const selectedOopTotalExcess = useMemo(
     () => selectedOopBills.reduce((sum, b) => sum + b.excessAmount, 0),
@@ -1479,27 +1539,62 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl px-4 py-3 bg-red-50 border border-red-100">
-                  <p className="text-xs font-medium text-red-600 opacity-80">Bills Out of Policy</p>
+                  <p className="text-xs font-medium text-red-600 opacity-80">Bills in Report</p>
                   <p className="text-2xl font-bold text-red-700 mt-0.5">
-                    {selectedOopBills.length} <span className="text-sm font-medium text-red-400">/ {outOfPolicyBills.length} selected</span>
+                    {selectedOopBills.length} <span className="text-sm font-medium text-red-400">/ {oopCandidateBills.length} selected</span>
                   </p>
                   <p className="text-[10px] text-red-500 opacity-70 mt-0.5">
-                    {reportDateFrom || reportDateTo ? `${reportDateFrom || '…'} to ${reportDateTo || '…'}` : 'All time'}
+                    {outOfPolicyBills.length} flagged out of policy{manualOopBills.length > 0 ? ` · ${manualOopBills.length} added manually` : ''}
                   </p>
                 </div>
                 <div className="rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
                   <p className="text-xs font-medium text-amber-600 opacity-80">Excess Approved (selected)</p>
                   <p className="text-2xl font-bold text-amber-700 mt-0.5">₹{selectedOopTotalExcess.toLocaleString('en-IN')}</p>
-                  <p className="text-[10px] text-amber-500 opacity-70 mt-0.5">of ₹{outOfPolicyTotalExcess.toLocaleString('en-IN')} total above policy limit</p>
+                  <p className="text-[10px] text-amber-500 opacity-70 mt-0.5">of ₹{outOfPolicyTotalExcess.toLocaleString('en-IN')} flagged total</p>
                 </div>
               </div>
 
-              {outOfPolicyBills.length > 0 && (
+              <div className="relative">
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  Add any other bill from the Verification Queue
+                </label>
+                <input
+                  type="text"
+                  value={oopSearchTerm}
+                  onChange={e => setOopSearchTerm(e.target.value)}
+                  placeholder="Search by bill no or trainer name…"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                />
+                {oopSearchTerm.trim() && (
+                  <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {oopSearchResults.length === 0 ? (
+                      <p className="px-3 py-2 text-xs text-gray-400">No matching bills found.</p>
+                    ) : (
+                      oopSearchResults.map(c => (
+                        <button
+                          key={c.claimId}
+                          type="button"
+                          onClick={() => addManualOopBill(c.claimId)}
+                          className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 border-b border-gray-100 last:border-0 flex items-center justify-between gap-2"
+                        >
+                          <span>
+                            <span className="font-semibold text-gray-800">{c.billNo}</span>
+                            <span className="text-gray-500"> — {c.trainerName}</span>
+                          </span>
+                          <span className="text-gray-400 whitespace-nowrap">+ Add</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {oopCandidateBills.length > 0 && (
                 <>
                   <div className="flex items-center gap-2 flex-wrap text-[11px]">
                     <span className="font-semibold text-gray-500">Select bills to include:</span>
                     <button type="button" onClick={selectAllOop} className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">
-                      Select All ({outOfPolicyBills.length})
+                      Select All ({oopCandidateBills.length})
                     </button>
                     <button
                       type="button"
@@ -1507,7 +1602,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                       className="px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-medium"
                       title="Check only bills that already have an HR remark recorded on the claim"
                     >
-                      📝 Select bills with remarks already entered ({outOfPolicyBills.filter(b => b.adminRemark.trim()).length})
+                      📝 Select bills with remarks already entered ({oopCandidateBills.filter(b => b.adminRemark.trim()).length})
                     </button>
                     <button type="button" onClick={clearOopSelection} className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">
                       Clear
@@ -1521,20 +1616,21 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                           <th className="px-3 py-2 text-left w-8">
                             <input
                               type="checkbox"
-                              checked={selectedOopIds.size > 0 && selectedOopIds.size === outOfPolicyBills.length}
+                              checked={selectedOopIds.size > 0 && selectedOopIds.size === oopCandidateBills.length}
                               onChange={e => (e.target.checked ? selectAllOop() : clearOopSelection())}
                               className="rounded border-gray-300"
                               aria-label="Select all"
                             />
                           </th>
-                          {['Bill No', 'Trainer', 'Eligible', 'Approved', 'Excess', 'Existing Remark'].map(h => (
+                          {['Bill No', 'Trainer', 'Eligible', 'Approved', 'Excess', 'Existing Remark', ''].map(h => (
                             <th key={h} className="px-3 py-2 text-left text-gray-500 font-semibold whitespace-nowrap text-[11px]">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100 bg-white">
-                        {outOfPolicyBills.map(b => {
+                        {oopCandidateBills.map(b => {
                           const checked = selectedOopIds.has(b.claimId);
+                          const withinPolicy = b.excessAmount <= 0;
                           return (
                             <tr key={b.claimId} className={`hover:bg-red-50/30 ${checked ? 'bg-red-50/40' : ''}`}>
                               <td className="px-3 py-1.5">
@@ -1546,13 +1642,32 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                                   aria-label={`Select ${b.billNo}`}
                                 />
                               </td>
-                              <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">{b.billNo}</td>
+                              <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">
+                                {b.billNo}
+                                {!b.autoDetected && (
+                                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-600 text-[9px] font-semibold align-middle">Added</span>
+                                )}
+                              </td>
                               <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{b.trainerName}</td>
                               <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">₹{b.eligibleAmount.toLocaleString('en-IN')}</td>
                               <td className="px-3 py-1.5 text-green-700 font-semibold whitespace-nowrap">₹{b.approvedAmount.toLocaleString('en-IN')}</td>
-                              <td className="px-3 py-1.5 text-red-700 font-bold whitespace-nowrap">+₹{b.excessAmount.toLocaleString('en-IN')}</td>
+                              <td className={`px-3 py-1.5 font-bold whitespace-nowrap ${withinPolicy ? 'text-gray-400 font-normal' : 'text-red-700'}`}>
+                                {withinPolicy ? 'Within policy' : `+₹${b.excessAmount.toLocaleString('en-IN')}`}
+                              </td>
                               <td className="px-3 py-1.5 text-gray-500 max-w-[220px] truncate" title={b.adminRemark || undefined}>
                                 {b.adminRemark ? b.adminRemark : <span className="text-gray-300">— none —</span>}
+                              </td>
+                              <td className="px-3 py-1.5">
+                                {!b.autoDetected && (
+                                  <button
+                                    type="button"
+                                    onClick={() => removeManualOopBill(b.claimId)}
+                                    className="text-gray-400 hover:text-red-600 text-[11px] font-semibold"
+                                    title="Remove from this report"
+                                  >
+                                    ✕
+                                  </button>
+                                )}
                               </td>
                             </tr>
                           );
