@@ -576,11 +576,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allClaims, reportDateFrom, reportDateTo]);
 
-  const outOfPolicyTotalExcess = useMemo(
-    () => outOfPolicyBills.reduce((sum, b) => sum + b.excessAmount, 0),
-    [outOfPolicyBills]
-  );
-
   const [showOopModal, setShowOopModal] = useState(false);
   const [oopSending, setOopSending] = useState(false);
   const [oopMsg, setOopMsg] = useState('');
@@ -675,11 +670,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
     () => oopCandidateBills.filter(b => selectedOopIds.has(b.claimId)),
     [oopCandidateBills, selectedOopIds]
   );
-  const selectedOopTotalExcess = useMemo(
-    () => selectedOopBills.reduce((sum, b) => sum + b.excessAmount, 0),
-    [selectedOopBills]
-  );
-
   const handleSendOutOfPolicyReport = async () => {
     if (selectedOopBills.length === 0) { setOopMsg('❌ Select at least one bill to include in the report.'); return; }
     const activeRecipients = REPORT_RECIPIENTS.filter(e => !excludedRecipients.has(e));
@@ -1535,21 +1525,14 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
             </div>
 
             <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-xl px-4 py-3 bg-red-50 border border-red-100">
-                  <p className="text-xs font-medium text-red-600 opacity-80">Bills in Report</p>
-                  <p className="text-2xl font-bold text-red-700 mt-0.5">
-                    {selectedOopBills.length} <span className="text-sm font-medium text-red-400">/ {oopCandidateBills.length} added</span>
-                  </p>
-                  <p className="text-[10px] text-red-500 opacity-70 mt-0.5">
-                    Search below, or add all {outOfPolicyBills.length} system-flagged bills at once
-                  </p>
-                </div>
-                <div className="rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
-                  <p className="text-xs font-medium text-amber-600 opacity-80">Excess Approved (selected)</p>
-                  <p className="text-2xl font-bold text-amber-700 mt-0.5">₹{selectedOopTotalExcess.toLocaleString('en-IN')}</p>
-                  <p className="text-[10px] text-amber-500 opacity-70 mt-0.5">of ₹{outOfPolicyTotalExcess.toLocaleString('en-IN')} flagged total</p>
-                </div>
+              <div className="rounded-xl px-4 py-3 bg-red-50 border border-red-100">
+                <p className="text-xs font-medium text-red-600 opacity-80">Bills in Report</p>
+                <p className="text-2xl font-bold text-red-700 mt-0.5">
+                  {selectedOopBills.length} <span className="text-sm font-medium text-red-400">/ {oopCandidateBills.length} added</span>
+                </p>
+                <p className="text-[10px] text-red-500 opacity-70 mt-0.5">
+                  Search below, or add all {outOfPolicyBills.length} system-flagged bills at once
+                </p>
               </div>
 
               <div className="relative">
@@ -1632,7 +1615,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                               aria-label="Select all"
                             />
                           </th>
-                          {['Trainer', 'Bill No', 'Eligible', 'Approved', 'Excess', 'Existing Remark', ''].map(h => (
+                          {['Trainer', 'Bill No', 'Approved', 'Existing Remark', ''].map(h => (
                             <th key={h} className="px-3 py-2 text-left text-gray-500 font-semibold whitespace-nowrap text-[11px]">{h}</th>
                           ))}
                         </tr>
@@ -1640,7 +1623,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                       <tbody className="divide-y divide-gray-100 bg-white">
                         {oopCandidateBills.map(b => {
                           const checked = selectedOopIds.has(b.claimId);
-                          const withinPolicy = b.excessAmount <= 0;
                           return (
                             <tr key={b.claimId} className={`hover:bg-red-50/30 ${checked ? 'bg-red-50/40' : ''}`}>
                               <td className="px-3 py-1.5">
@@ -1654,11 +1636,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                               </td>
                               <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">{b.trainerName}</td>
                               <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{b.billNo}</td>
-                              <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">₹{b.eligibleAmount.toLocaleString('en-IN')}</td>
                               <td className="px-3 py-1.5 text-green-700 font-semibold whitespace-nowrap">₹{b.approvedAmount.toLocaleString('en-IN')}</td>
-                              <td className={`px-3 py-1.5 font-bold whitespace-nowrap ${withinPolicy ? 'text-gray-400 font-normal' : 'text-red-700'}`}>
-                                {withinPolicy ? 'Within policy' : `+₹${b.excessAmount.toLocaleString('en-IN')}`}
-                              </td>
                               <td className="px-3 py-1.5 text-gray-500 max-w-[220px] truncate" title={b.adminRemark || undefined}>
                                 {b.adminRemark ? b.adminRemark : <span className="text-gray-300">— none —</span>}
                               </td>

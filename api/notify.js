@@ -500,16 +500,13 @@ export default async function handler(req, res) {
 
     const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
     const fmt = (n) => `₹${Number(n ?? 0).toLocaleString('en-IN')}`;
-    const totalExcess = bills.reduce((sum, b) => sum + (Number(b.excessAmount) || 0), 0);
 
     const rowsHtml = bills.map((b, i) => `
       <tr style="background:${i % 2 === 0 ? '#ffffff' : '#fef2f2'};">
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${b.billNo ?? '—'}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${b.trainerName ?? '—'}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${b.status ?? '—'}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;text-align:right;">${fmt(b.eligibleAmount)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#059669;text-align:right;font-weight:600;">${fmt(b.approvedAmount)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#dc2626;text-align:right;font-weight:700;">+${fmt(b.excessAmount)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280;max-width:220px;">${b.adminRemark ? String(b.adminRemark).replace(/</g, '&lt;') : '—'}</td>
       </tr>`).join('');
 
@@ -521,12 +518,8 @@ export default async function handler(req, res) {
         </div>
         <div style="padding:20px 32px 4px;display:flex;gap:16px;flex-wrap:wrap;">
           <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 18px;">
-            <p style="margin:0;font-size:11px;color:#b91c1c;font-weight:600;text-transform:uppercase;">Bills Out of Policy</p>
+            <p style="margin:0;font-size:11px;color:#b91c1c;font-weight:600;text-transform:uppercase;">Bills in Report</p>
             <p style="margin:2px 0 0;font-size:22px;font-weight:800;color:#991b1b;">${bills.length}</p>
-          </div>
-          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 18px;">
-            <p style="margin:0;font-size:11px;color:#b45309;font-weight:600;text-transform:uppercase;">Total Excess Approved</p>
-            <p style="margin:2px 0 0;font-size:22px;font-weight:800;color:#92400e;">${fmt(totalExcess)}</p>
           </div>
         </div>
         ${hrRemark && String(hrRemark).trim() ? `
@@ -541,9 +534,7 @@ export default async function handler(req, res) {
                 <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;white-space:nowrap;">Bill No</th>
                 <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Trainer</th>
                 <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Status</th>
-                <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Eligible (Policy)</th>
                 <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Approved</th>
-                <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Excess</th>
                 <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Bill's HR Remark</th>
               </tr>
             </thead>
@@ -551,7 +542,7 @@ export default async function handler(req, res) {
           </table>
         </div>
         <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#9ca3af;">
-          Koenig TA/DA Portal · This is an automated report · "Excess" = Approved amount above the policy-computed eligible amount
+          Koenig TA/DA Portal · This is an automated report
         </div>
       </div>
     </body></html>`;
