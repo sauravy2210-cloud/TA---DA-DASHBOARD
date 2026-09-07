@@ -479,6 +479,85 @@ export default async function handler(req, res) {
     return sendHrEmail({ to: recipient, subject: `TA/DA Bills Report — ${claims.length} bills (${today})`, html: reportHtml });
   }
 
+  // Shared builder + sender for the Out of Policy Report — bills where HR approved
+  // more than the policy engine's computed eligible amount. Requires an HR Admin
+  // remark explaining the override(s), which is shown prominently at the top of
+  // the email alongside each bill's own historical admin remark.
+  async function sendOutOfPolicyReportEmail({ bills, sentBy, hrRemark, reportTo, periodLabel, excludeEmails }) {
+    const defaultRecipients = [
+      reportTo || 'saurav.yadav@koenig-solutions.com',
+      'Sakshi.Pandey@koenig-solutions.com',
+      'Rashi.Oberoi@koenig-solutions.com',
+      'sakshi.dhawan@koenig-solutions.com',
+    ];
+    const excludeSet = new Set((Array.isArray(excludeEmails) ? excludeEmails : []).map(e => String(e).toLowerCase()));
+    const recipient = defaultRecipients.filter(e => !excludeSet.has(e.toLowerCase()));
+    if (recipient.length === 0) {
+      const err = new Error('All recipients excluded — nobody to send to');
+      err.statusCode = 400;
+      throw err;
+    }
+
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+    const fmt = (n) => `₹${Number(n ?? 0).toLocaleString('en-IN')}`;
+    const totalExcess = bills.reduce((sum, b) => sum + (Number(b.excessAmount) || 0), 0);
+
+    const rowsHtml = bills.map((b, i) => `
+      <tr style="background:${i % 2 === 0 ? '#ffffff' : '#fef2f2'};">
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${b.billNo ?? '—'}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${b.trainerName ?? '—'}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;">${b.status ?? '—'}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#374151;text-align:right;">${fmt(b.eligibleAmount)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#059669;text-align:right;font-weight:600;">${fmt(b.approvedAmount)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;color:#dc2626;text-align:right;font-weight:700;">+${fmt(b.excessAmount)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;font-size:12px;color:#6b7280;max-width:220px;">${b.adminRemark ? String(b.adminRemark).replace(/</g, '&lt;') : '—'}</td>
+      </tr>`).join('');
+
+    const reportHtml = `<!DOCTYPE html><html><body style="font-family:Arial,sans-serif;color:#111827;margin:0;padding:0;">
+      <div style="max-width:960px;margin:24px auto;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+        <div style="background:linear-gradient(135deg,#991b1b,#dc2626);padding:24px 32px;">
+          <h1 style="margin:0;color:#fff;font-size:22px;">⚠️ Out of Policy Report</h1>
+          <p style="margin:6px 0 0;color:#fecaca;font-size:13px;">Generated ${today} · Sent by ${sentBy || 'HR Admin'}${periodLabel ? ' · Period: ' + periodLabel : ''}</p>
+        </div>
+        <div style="padding:20px 32px 4px;display:flex;gap:16px;flex-wrap:wrap;">
+          <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:12px 18px;">
+            <p style="margin:0;font-size:11px;color:#b91c1c;font-weight:600;text-transform:uppercase;">Bills Out of Policy</p>
+            <p style="margin:2px 0 0;font-size:22px;font-weight:800;color:#991b1b;">${bills.length}</p>
+          </div>
+          <div style="background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:12px 18px;">
+            <p style="margin:0;font-size:11px;color:#b45309;font-weight:600;text-transform:uppercase;">Total Excess Approved</p>
+            <p style="margin:2px 0 0;font-size:22px;font-weight:800;color:#92400e;">${fmt(totalExcess)}</p>
+          </div>
+        </div>
+        <div style="padding:8px 32px 20px;">
+          <p style="margin:0 0 4px;font-size:11px;color:#6b7280;font-weight:700;text-transform:uppercase;">HR Admin Remarks</p>
+          <p style="margin:0;font-size:14px;color:#374151;background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;line-height:1.5;">${String(hrRemark || '').replace(/</g, '&lt;')}</p>
+        </div>
+        <div style="padding:0 32px 20px;overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-family:Arial,sans-serif;">
+            <thead>
+              <tr style="background:#991b1b;">
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;white-space:nowrap;">Bill No</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Trainer</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Status</th>
+                <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Eligible (Policy)</th>
+                <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Approved</th>
+                <th style="padding:10px 12px;text-align:right;color:#fff;font-size:12px;font-weight:600;">Excess</th>
+                <th style="padding:10px 12px;text-align:left;color:#fff;font-size:12px;font-weight:600;">Bill's HR Remark</th>
+              </tr>
+            </thead>
+            <tbody>${rowsHtml}</tbody>
+          </table>
+        </div>
+        <div style="padding:16px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;text-align:center;font-size:12px;color:#9ca3af;">
+          Koenig TA/DA Portal · This is an automated report · "Excess" = Approved amount above the policy-computed eligible amount
+        </div>
+      </div>
+    </body></html>`;
+
+    return sendHrEmail({ to: recipient, subject: `⚠️ Out of Policy Report — ${bills.length} bills (${today})`, html: reportHtml });
+  }
+
   // ── Automated weekly report (Vercel Cron, GET request) ──────────────────────
   // Triggers every Monday at 08:00 IST (02:30 UTC) via vercel.json cron config.
   // Sends the previous calendar week's Monday–Friday Submitted/Approved/Paid bills
@@ -578,6 +657,21 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'No claims data provided' });
     try {
       const result = await sendBillsReportEmail({ claims, sentBy, reportTo, periodLabel, excludeEmails });
+      return res.status(200).json(result);
+    } catch (err) {
+      return res.status(err && err.statusCode === 400 ? 400 : 502).json({ error: (err && err.message) || 'Failed to send report email' });
+    }
+  }
+
+  // ── Out of Policy Report email ────────────────────────────────────────────
+  if (type === 'out_of_policy_report') {
+    const { bills, sentBy, hrRemark, toEmail: oopReportTo, periodLabel: oopPeriodLabel, excludeEmails: oopExcludeEmails } = body;
+    if (!Array.isArray(bills) || bills.length === 0)
+      return res.status(400).json({ error: 'No out-of-policy bills provided' });
+    if (!hrRemark || !String(hrRemark).trim())
+      return res.status(400).json({ error: 'HR Admin remarks are required to send this report' });
+    try {
+      const result = await sendOutOfPolicyReportEmail({ bills, sentBy, hrRemark, reportTo: oopReportTo, periodLabel: oopPeriodLabel, excludeEmails: oopExcludeEmails });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(err && err.statusCode === 400 ? 400 : 502).json({ error: (err && err.message) || 'Failed to send report email' });

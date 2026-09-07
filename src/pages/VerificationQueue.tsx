@@ -539,6 +539,91 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
     }
   };
 
+  // ── Out of Policy Report ─────────────────────────────────────────────────
+  // A bill is "out of policy" when HR approved more than the policy engine's
+  // computed eligible amount (an HR override that exceeded the cap). This is
+  // the same date range + recipient list as the Bills Summary report above.
+  const OOP_STATUSES = new Set(['Approved', 'Partially Approved', 'Paid', 'Payment Pending']);
+  const outOfPolicyBills = useMemo(() => {
+    return allClaims
+      .filter(c => OOP_STATUSES.has(c.status))
+      .filter(c => (c.eligibleAmount ?? 0) > 0 && (c.approvedAmount ?? 0) > (c.eligibleAmount ?? 0))
+      .filter(c => {
+        if (!reportDateFrom && !reportDateTo) return true;
+        const submittedDate = (c.submittedAt ?? '').slice(0, 10);
+        if (!submittedDate) return false;
+        if (reportDateFrom && submittedDate < reportDateFrom) return false;
+        if (reportDateTo && submittedDate > reportDateTo) return false;
+        return true;
+      })
+      .map(c => ({
+        billNo: c.billNo,
+        trainerName: c.trainerName,
+        status: c.status,
+        claimedAmount: c.totalClaimedAmount ?? 0,
+        eligibleAmount: c.eligibleAmount ?? 0,
+        approvedAmount: c.approvedAmount ?? 0,
+        excessAmount: (c.approvedAmount ?? 0) - (c.eligibleAmount ?? 0),
+        currency: c.currency || 'INR',
+        claimStartDate: c.claimStartDate ?? '',
+        claimEndDate: c.claimEndDate ?? '',
+        trainingLocation: c.trainingLocation ?? '',
+        submittedAt: c.submittedAt ?? '',
+        adminRemark: c.adminRemark ?? '',
+      }))
+      .sort((a, b) => b.excessAmount - a.excessAmount);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allClaims, reportDateFrom, reportDateTo]);
+
+  const outOfPolicyTotalExcess = useMemo(
+    () => outOfPolicyBills.reduce((sum, b) => sum + b.excessAmount, 0),
+    [outOfPolicyBills]
+  );
+
+  const [showOopModal, setShowOopModal] = useState(false);
+  const [oopRemark, setOopRemark] = useState('');
+  const [oopSending, setOopSending] = useState(false);
+  const [oopMsg, setOopMsg] = useState('');
+
+  const handleSendOutOfPolicyReport = async () => {
+    if (!oopRemark.trim()) { setOopMsg('❌ HR Admin remarks are required before sending this report.'); return; }
+    if (outOfPolicyBills.length === 0) { setOopMsg('No out-of-policy bills found for the selected criteria.'); return; }
+    const activeRecipients = REPORT_RECIPIENTS.filter(e => !excludedRecipients.has(e));
+    if (activeRecipients.length === 0) { setOopMsg('❌ All recipients excluded — select at least one.'); return; }
+    setOopSending(true);
+    setOopMsg('');
+    const periodLabel = reportDateFrom || reportDateTo
+      ? `${reportDateFrom || '…'} to ${reportDateTo || '…'}`
+      : '';
+    try {
+      const r = await fetch('/api/notify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'out_of_policy_report',
+          bills: outOfPolicyBills,
+          sentBy: 'HR Admin',
+          hrRemark: oopRemark.trim(),
+          toEmail: 'saurav.yadav@koenig-solutions.com',
+          periodLabel,
+          excludeEmails: Array.from(excludedRecipients),
+        }),
+      });
+      if (r.ok) {
+        setOopMsg(`✅ Report sent to ${activeRecipients.length} recipient${activeRecipients.length === 1 ? '' : 's'} (${outOfPolicyBills.length} bills)`);
+        setOopRemark('');
+        setTimeout(() => { setShowOopModal(false); setOopMsg(''); }, 1800);
+      } else {
+        const d = await r.json().catch(() => ({}));
+        setOopMsg(`❌ Failed: ${d.error ?? 'Unknown error'}`);
+      }
+    } catch {
+      setOopMsg('❌ Network error — please try again.');
+    } finally {
+      setOopSending(false);
+    }
+  };
+
   const handleSendReminder = () => {
     const trainers = [
       ...new Set(
@@ -734,6 +819,20 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                 </span>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => { setShowOopModal(true); setOopMsg(''); }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md border border-red-300 bg-red-50 text-red-700 hover:bg-red-100 transition-colors focus:outline-none focus:ring-2 focus:ring-red-400"
+              title="Bills where HR approved more than the policy-eligible amount"
+            >
+              ⚠️ Out of Policy Report
+              {outOfPolicyBills.length > 0 && (
+                <span className="inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 rounded-full bg-red-600 text-white text-[10px] font-bold">
+                  {outOfPolicyBills.length}
+                </span>
+              )}
+            </button>
 
             <button
               type="button"
@@ -1313,6 +1412,123 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
             >
               Next
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Out of Policy Report modal ── */}
+      {showOopModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4"
+          onClick={() => !oopSending && setShowOopModal(false)}
+        >
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[88vh] flex flex-col overflow-hidden"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 bg-red-50 rounded-t-2xl">
+              <div>
+                <span className="text-sm font-semibold text-red-800">⚠️ Out of Policy Report</span>
+                <p className="text-[11px] text-red-600/80">Bills where the approved amount exceeded the policy-eligible amount</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowOopModal(false)}
+                className="text-gray-400 hover:text-gray-700 transition-colors p-1"
+              >
+                <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl px-4 py-3 bg-red-50 border border-red-100">
+                  <p className="text-xs font-medium text-red-600 opacity-80">Bills Out of Policy</p>
+                  <p className="text-2xl font-bold text-red-700 mt-0.5">{outOfPolicyBills.length}</p>
+                  <p className="text-[10px] text-red-500 opacity-70 mt-0.5">
+                    {reportDateFrom || reportDateTo ? `${reportDateFrom || '…'} to ${reportDateTo || '…'}` : 'All time'}
+                  </p>
+                </div>
+                <div className="rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
+                  <p className="text-xs font-medium text-amber-600 opacity-80">Total Excess Approved</p>
+                  <p className="text-2xl font-bold text-amber-700 mt-0.5">₹{outOfPolicyTotalExcess.toLocaleString('en-IN')}</p>
+                  <p className="text-[10px] text-amber-500 opacity-70 mt-0.5">Above computed policy limit</p>
+                </div>
+              </div>
+
+              {outOfPolicyBills.length > 0 && (
+                <div className="overflow-x-auto border border-gray-200 rounded-lg max-h-56">
+                  <table className="min-w-full text-xs">
+                    <thead className="bg-gray-100 border-b border-gray-200 sticky top-0">
+                      <tr>
+                        {['Bill No', 'Trainer', 'Eligible', 'Approved', 'Excess'].map(h => (
+                          <th key={h} className="px-3 py-2 text-left text-gray-500 font-semibold whitespace-nowrap text-[11px]">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {outOfPolicyBills.slice(0, 25).map(b => (
+                        <tr key={b.billNo} className="hover:bg-red-50/30">
+                          <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">{b.billNo}</td>
+                          <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{b.trainerName}</td>
+                          <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">₹{b.eligibleAmount.toLocaleString('en-IN')}</td>
+                          <td className="px-3 py-1.5 text-green-700 font-semibold whitespace-nowrap">₹{b.approvedAmount.toLocaleString('en-IN')}</td>
+                          <td className="px-3 py-1.5 text-red-700 font-bold whitespace-nowrap">+₹{b.excessAmount.toLocaleString('en-IN')}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {outOfPolicyBills.length > 25 && (
+                    <p className="text-[10px] text-gray-400 px-3 py-1.5 bg-gray-50">+{outOfPolicyBills.length - 25} more bill(s) will be included in the emailed report</p>
+                  )}
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1">
+                  HR Admin Remarks <span className="text-red-500">*</span>
+                  <span className="font-normal text-gray-400 ml-1">— required, explains why these overrides are justified</span>
+                </label>
+                <textarea
+                  value={oopRemark}
+                  onChange={e => setOopRemark(e.target.value)}
+                  rows={3}
+                  placeholder="e.g. Approved above policy cap due to last-minute venue change — client-approved exception."
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                />
+              </div>
+
+              <p className="text-[11px] text-gray-400">
+                Sent to {REPORT_RECIPIENTS.length - excludedRecipients.size} of {REPORT_RECIPIENTS.length} recipient(s) — use the
+                "Recipients" picker above to change who receives this report.
+              </p>
+
+              {oopMsg && (
+                <p className={`text-xs font-medium ${oopMsg.startsWith('✅') ? 'text-green-600' : 'text-red-600'}`}>{oopMsg}</p>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
+              <button
+                type="button"
+                onClick={() => setShowOopModal(false)}
+                disabled={oopSending}
+                className="px-3 py-1.5 rounded-md border border-gray-300 text-gray-700 text-xs font-medium hover:bg-gray-100 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSendOutOfPolicyReport}
+                disabled={oopSending || !oopRemark.trim() || outOfPolicyBills.length === 0}
+                className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-md bg-red-600 text-white text-xs font-semibold hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {oopSending && <span className="w-3.5 h-3.5 border-2 border-white/60 border-t-transparent rounded-full animate-spin inline-block" />}
+                {oopSending ? 'Sending…' : 'Send Report'}
+              </button>
+            </div>
           </div>
         </div>
       )}
