@@ -2175,18 +2175,34 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                     if (bridgeOk) {
                       processedGaps.add(key);
                       const { rate, currency } = getHrDaInfo(destA);
-                      if (rate > 0) {
+                      // Trainer is physically at `sa`'s (the earlier assignment's) location for
+                      // this whole gap — same Delhi-NCR-without-apartment rule applies here as to
+                      // in-assignment days, or a weekend gap between two Gurgaon/Delhi assignments
+                      // silently re-grants DA the main per-day loop would have denied.
+                      const gapCityNorm = (sa.city || '').toLowerCase().trim();
+                      const gapIsNcr = DELHI_NCR_CITIES.has(gapCityNorm);
+                      if (rate > 0 || gapIsNcr) {
                         let gc = new Date(gapStart); const gf = new Date(fillEnd);
                         while (gc <= gf) {
                           const iso = gc.toISOString().slice(0, 10);
                           if (!autoRaw.some(li => li.date === iso) && !approvedLeaveDates.has(iso)) {
-                            autoRaw.push({
-                              lineItemId: `AUTO-DA-GAP-${claimId}-${iso}`,
-                              claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destA, date: iso,
-                              description: `Daily Allowance — ${destA} (between consecutive assignments)`,
-                              claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
-                              currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
-                            });
+                            if (gapIsNcr && !apartmentDates.has(iso)) {
+                              autoRaw.push({
+                                lineItemId: `AUTO-DA-NCR-${claimId}-${iso}`,
+                                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: 'N/A', date: iso,
+                                description: 'Daily Allowance — Not Applicable (Delhi-NCR, no apartment stay)',
+                                claimedAmount: 0, policyLimit: 0, eligibleAmount: 0, approvedAmount: 0, deductionAmount: 0,
+                                currency: 'INR', receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+                              });
+                            } else if (rate > 0) {
+                              autoRaw.push({
+                                lineItemId: `AUTO-DA-GAP-${claimId}-${iso}`,
+                                claimId: claimId ?? '', expenseType: 'DA', expenseSubType: destA, date: iso,
+                                description: `Daily Allowance — ${destA} (between consecutive assignments)`,
+                                claimedAmount: rate, policyLimit: rate, eligibleAmount: rate, approvedAmount: 0, deductionAmount: 0,
+                                currency, receiptRequired: false, receiptUploaded: false, exceptionRequired: false,
+                              });
+                            }
                           }
                           gc.setDate(gc.getDate() + 1);
                         }
@@ -2256,6 +2272,21 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
 
       // Approved-leave items are already correct — skip correction map entirely
       if (li.expenseSubType === 'Leave' || li.lineItemId?.startsWith('AUTO-DA-LV-')) return li;
+
+      // Deliberately-zeroed "Not Applicable" categories (Delhi-NCR without an apartment stay,
+      // ILO/Online batch, long-term stay ≥30 days, OB/Bench) are also already correct. The
+      // flight-based re-correction below only knows how to derive a *country* from the
+      // assignment/flights — it has no concept of "not applicable" — so letting these items
+      // fall through silently revived a full India DA on every Delhi-NCR/ILO/long-term/OB day.
+      // Bug fixed 2026-09-07: TADA-2026-00164 (Nikhil Pal, Gurgaon assignment, commuting from
+      // home — no apartment stay) — the Delhi-NCR zero-out from the loop above was overwritten
+      // right back to ₹950 India DA labeled "auto-corrected from PMS data" by this exact map.
+      if (
+        li.lineItemId?.startsWith('AUTO-DA-NCR-') ||
+        li.lineItemId?.startsWith('AUTO-DA-ILO-') ||
+        li.lineItemId?.startsWith('AUTO-DA-LT-') ||
+        li.lineItemId?.startsWith('AUTO-DA-OB-')
+      ) return li;
 
       // Find the assignment this DA day belongs to — check three cases:
       // 1. Date is within assignment range (regular on-site day)
