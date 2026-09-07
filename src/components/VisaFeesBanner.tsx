@@ -100,6 +100,28 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(defaultOpen);
 
+  // ── Filters (mirrors Payment Processing's filter bar) ───────────────────────────────────
+  // Visa Fees entries carry no client/batch/assignment link (they're standalone per-trainer
+  // expense entries, not tied to a specific claim/assignment), so only the filters that map
+  // to real fields on this record are offered here.
+  const [statusFilter, setStatusFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [trainerFilter, setTrainerFilter] = useState('');
+
+  const filteredEntries = entries.filter(e => {
+    if (statusFilter) {
+      const paid = e.paymentStatus === 'Paid';
+      if (statusFilter === 'Paid' && !paid) return false;
+      if (statusFilter === 'Not Paid' && paid) return false;
+    }
+    const entryDate = (e.data.date || '').slice(0, 10);
+    if (dateFrom && (!entryDate || entryDate < dateFrom)) return false;
+    if (dateTo && (!entryDate || entryDate > dateTo)) return false;
+    if (trainerFilter && !e.trainerName?.toLowerCase().includes(trainerFilter.trim().toLowerCase())) return false;
+    return true;
+  });
+
   // React to the parent explicitly requesting the banner be expanded (e.g. the
   // "Approved Visa Fees" option in Payment Processing's status filter dropdown).
   useEffect(() => { if (defaultOpen) setOpen(true); }, [defaultOpen]);
@@ -179,7 +201,7 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
   // InvoiceId | beneficiaryname | accountno | ifsc | amount | remark | payby), populated with
   // Approved Visa Fees data instead of claim data — so HR Admin can use it the same way.
   function handleExportExcel() {
-    const rows = entries
+    const rows = filteredEntries
       .filter(e => e.data.amount > 0)
       .sort((a, b) => (b.reviewedAt || '').localeCompare(a.reviewedAt || ''))
       .map(e => {
@@ -221,11 +243,12 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
 
   if (!loading && entries.length === 0) return null;
 
-  const totalInr = entries.filter(e => (e.data.currency || 'INR') === 'INR').reduce((s, e) => s + e.data.amount, 0);
+  const totalInr = filteredEntries.filter(e => (e.data.currency || 'INR') === 'INR').reduce((s, e) => s + e.data.amount, 0);
   const foreignMap: Record<string, number> = {};
-  entries.filter(e => e.data.currency && e.data.currency !== 'INR').forEach(e => {
+  filteredEntries.filter(e => e.data.currency && e.data.currency !== 'INR').forEach(e => {
     foreignMap[e.data.currency] = (foreignMap[e.data.currency] ?? 0) + e.data.amount;
   });
+  const filtersActive = !!(statusFilter || dateFrom || dateTo || trainerFilter);
 
   return (
     <div className="rounded-xl border border-green-200 bg-green-50 shadow-sm overflow-hidden mb-4">
@@ -236,7 +259,7 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
         >
           <span className="text-sm font-semibold text-green-800">🛂 Approved Visa Fees</span>
           <span className="px-2 py-0.5 rounded-full bg-green-600 text-white text-xs font-bold">
-            {loading ? '…' : entries.length}
+            {loading ? '…' : filteredEntries.length}
           </span>
         </button>
         <div className="flex items-center gap-3">
@@ -244,7 +267,7 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
           {Object.entries(foreignMap).map(([cur, amt]) => (
             <span key={cur} className="text-sm font-bold text-green-700">{cur} {amt.toLocaleString('en-IN')}</span>
           ))}
-          {entries.length > 0 && (
+          {filteredEntries.length > 0 && (
             <button
               onClick={handleExportExcel}
               title="Download Excel for making payment"
@@ -257,7 +280,60 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
         </div>
       </div>
       {open && (
-        <div className="overflow-x-auto border-t border-green-200">
+        <div className="border-t border-green-200">
+          <div className="px-5 py-3 bg-white/50 border-b border-green-100">
+            <div className="flex flex-wrap items-end gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Payment Status</label>
+                <select
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                  className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">All Statuses</option>
+                  <option value="Paid">Paid</option>
+                  <option value="Not Paid">Not Paid</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">From Date</label>
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={e => setDateFrom(e.target.value)}
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">To Date</label>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={e => setDateTo(e.target.value)}
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Trainer</label>
+                <input
+                  type="text"
+                  placeholder="Search trainer..."
+                  value={trainerFilter}
+                  onChange={e => setTrainerFilter(e.target.value)}
+                  className="rounded-md border border-gray-300 px-3 py-1.5 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+                />
+              </div>
+              {filtersActive && (
+                <button
+                  onClick={() => { setStatusFilter(''); setDateFrom(''); setDateTo(''); setTrainerFilter(''); }}
+                  className="text-xs text-green-700 hover:text-green-900 font-medium mt-4"
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
           <table className="min-w-full text-xs">
             <thead className="bg-white/60">
               <tr>
@@ -267,7 +343,10 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
               </tr>
             </thead>
             <tbody className="divide-y divide-green-100 bg-white/40">
-              {entries
+              {filteredEntries.length === 0 && (
+                <tr><td colSpan={13} className="px-4 py-8 text-center text-gray-400">No visa fee entries match these filters.</td></tr>
+              )}
+              {filteredEntries
                 .sort((a, b) => (b.reviewedAt || '').localeCompare(a.reviewedAt || ''))
                 .map(e => {
                   const bank = bankInfoMap[e.trainerId] ?? { bankName: '', accountNumber: '', ifsc: '', loading: false };
@@ -380,6 +459,7 @@ export default function VisaFeesBanner({ defaultOpen = false }: { defaultOpen?: 
                 })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>
