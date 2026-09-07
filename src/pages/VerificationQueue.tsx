@@ -571,7 +571,6 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
         trainingLocation: c.trainingLocation ?? '',
         submittedAt: c.submittedAt ?? '',
         adminRemark: c.adminRemark ?? '',
-        autoDetected: true,
       }))
       .sort((a, b) => b.excessAmount - a.excessAmount);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -614,18 +613,14 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
         trainingLocation: c.trainingLocation ?? '',
         submittedAt: c.submittedAt ?? '',
         adminRemark: c.adminRemark ?? '',
-        autoDetected: false,
-      }));
+      }))
+      .sort((a, b) => b.excessAmount - a.excessAmount);
   }, [allClaims, manualOopIds]);
 
-  // Full candidate list shown in the modal: system-flagged bills plus anything HR
-  // manually added, de-duplicated (a manually-added bill that also happens to be
-  // flagged stays counted once, as auto-detected).
-  const oopCandidateBills = useMemo(() => {
-    const autoIds = new Set(outOfPolicyBills.map(b => b.claimId));
-    const extras = manualOopBills.filter(b => !autoIds.has(b.claimId));
-    return [...outOfPolicyBills, ...extras].sort((a, b) => b.excessAmount - a.excessAmount);
-  }, [outOfPolicyBills, manualOopBills]);
+  // The modal starts empty — HR builds the report by searching and adding bills
+  // (by bill no or trainer name) one at a time, or via "Add all flagged" below for
+  // the system-detected list. Nothing appears in the table until HR adds it.
+  const oopCandidateBills = manualOopBills;
 
   const oopSearchResults = useMemo(() => {
     const term = oopSearchTerm.trim().toLowerCase();
@@ -646,6 +641,14 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
   const removeManualOopBill = (claimId: string) => {
     setManualOopIds(prev => { const next = new Set(prev); next.delete(claimId); return next; });
     setSelectedOopIds(prev => { const next = new Set(prev); next.delete(claimId); return next; });
+  };
+
+  // Opt-in bulk add for the system-flagged list — HR chooses to pull all of them in,
+  // rather than the table being pre-populated with every flagged bill on open.
+  const addAllFlaggedOop = () => {
+    const ids = outOfPolicyBills.map(b => b.claimId);
+    setManualOopIds(prev => new Set([...prev, ...ids]));
+    setSelectedOopIds(prev => new Set([...prev, ...ids]));
   };
 
   const openOopModal = () => {
@@ -1541,10 +1544,10 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                 <div className="rounded-xl px-4 py-3 bg-red-50 border border-red-100">
                   <p className="text-xs font-medium text-red-600 opacity-80">Bills in Report</p>
                   <p className="text-2xl font-bold text-red-700 mt-0.5">
-                    {selectedOopBills.length} <span className="text-sm font-medium text-red-400">/ {oopCandidateBills.length} selected</span>
+                    {selectedOopBills.length} <span className="text-sm font-medium text-red-400">/ {oopCandidateBills.length} added</span>
                   </p>
                   <p className="text-[10px] text-red-500 opacity-70 mt-0.5">
-                    {outOfPolicyBills.length} flagged out of policy{manualOopBills.length > 0 ? ` · ${manualOopBills.length} added manually` : ''}
+                    Search below, or add all {outOfPolicyBills.length} system-flagged bills at once
                   </p>
                 </div>
                 <div className="rounded-xl px-4 py-3 bg-amber-50 border border-amber-100">
@@ -1556,15 +1559,27 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
 
               <div className="relative">
                 <label className="block text-xs font-semibold text-gray-700 mb-1">
-                  Add any other bill from the Verification Queue
+                  Add a bill to this report — by Trainer Name or Bill No
                 </label>
-                <input
-                  type="text"
-                  value={oopSearchTerm}
-                  onChange={e => setOopSearchTerm(e.target.value)}
-                  placeholder="Search by bill no or trainer name…"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
-                />
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={oopSearchTerm}
+                    onChange={e => setOopSearchTerm(e.target.value)}
+                    placeholder="Type a trainer's name or a bill no…"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+                  />
+                  {outOfPolicyBills.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={addAllFlaggedOop}
+                      className="shrink-0 px-3 py-2 rounded-lg border border-red-300 bg-red-50 text-red-700 text-xs font-semibold hover:bg-red-100 whitespace-nowrap"
+                      title="Add every bill the system flagged as out of policy"
+                    >
+                      + Add all {outOfPolicyBills.length} flagged
+                    </button>
+                  )}
+                </div>
                 {oopSearchTerm.trim() && (
                   <div className="absolute z-10 mt-1 w-full bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                     {oopSearchResults.length === 0 ? (
@@ -1578,8 +1593,8 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                           className="w-full text-left px-3 py-2 text-xs hover:bg-red-50 border-b border-gray-100 last:border-0 flex items-center justify-between gap-2"
                         >
                           <span>
-                            <span className="font-semibold text-gray-800">{c.billNo}</span>
-                            <span className="text-gray-500"> — {c.trainerName}</span>
+                            <span className="font-semibold text-gray-800">{c.trainerName}</span>
+                            <span className="text-gray-500"> — {c.billNo}</span>
                           </span>
                           <span className="text-gray-400 whitespace-nowrap">+ Add</span>
                         </button>
@@ -1592,9 +1607,9 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
               {oopCandidateBills.length > 0 && (
                 <>
                   <div className="flex items-center gap-2 flex-wrap text-[11px]">
-                    <span className="font-semibold text-gray-500">Select bills to include:</span>
+                    <span className="font-semibold text-gray-500">{oopCandidateBills.length} bill(s) added:</span>
                     <button type="button" onClick={selectAllOop} className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">
-                      Select All ({oopCandidateBills.length})
+                      Select All
                     </button>
                     <button
                       type="button"
@@ -1602,10 +1617,10 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                       className="px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 font-medium"
                       title="Check only bills that already have an HR remark recorded on the claim"
                     >
-                      📝 Select bills with remarks already entered ({oopCandidateBills.filter(b => b.adminRemark.trim()).length})
+                      📝 Select ones with remarks already entered ({oopCandidateBills.filter(b => b.adminRemark.trim()).length})
                     </button>
                     <button type="button" onClick={clearOopSelection} className="px-2 py-1 rounded border border-gray-300 text-gray-700 hover:bg-gray-100 font-medium">
-                      Clear
+                      Clear selection
                     </button>
                   </div>
 
@@ -1622,7 +1637,7 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                               aria-label="Select all"
                             />
                           </th>
-                          {['Bill No', 'Trainer', 'Eligible', 'Approved', 'Excess', 'Existing Remark', ''].map(h => (
+                          {['Trainer', 'Bill No', 'Eligible', 'Approved', 'Excess', 'Existing Remark', ''].map(h => (
                             <th key={h} className="px-3 py-2 text-left text-gray-500 font-semibold whitespace-nowrap text-[11px]">{h}</th>
                           ))}
                         </tr>
@@ -1642,13 +1657,8 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                                   aria-label={`Select ${b.billNo}`}
                                 />
                               </td>
-                              <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">
-                                {b.billNo}
-                                {!b.autoDetected && (
-                                  <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-blue-50 border border-blue-200 text-blue-600 text-[9px] font-semibold align-middle">Added</span>
-                                )}
-                              </td>
-                              <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{b.trainerName}</td>
+                              <td className="px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">{b.trainerName}</td>
+                              <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">{b.billNo}</td>
                               <td className="px-3 py-1.5 text-gray-600 whitespace-nowrap">₹{b.eligibleAmount.toLocaleString('en-IN')}</td>
                               <td className="px-3 py-1.5 text-green-700 font-semibold whitespace-nowrap">₹{b.approvedAmount.toLocaleString('en-IN')}</td>
                               <td className={`px-3 py-1.5 font-bold whitespace-nowrap ${withinPolicy ? 'text-gray-400 font-normal' : 'text-red-700'}`}>
@@ -1658,16 +1668,14 @@ const VerificationQueue: React.FC<VerificationQueueProps> = ({ currentUser }) =>
                                 {b.adminRemark ? b.adminRemark : <span className="text-gray-300">— none —</span>}
                               </td>
                               <td className="px-3 py-1.5">
-                                {!b.autoDetected && (
-                                  <button
-                                    type="button"
-                                    onClick={() => removeManualOopBill(b.claimId)}
-                                    className="text-gray-400 hover:text-red-600 text-[11px] font-semibold"
-                                    title="Remove from this report"
-                                  >
-                                    ✕
-                                  </button>
-                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => removeManualOopBill(b.claimId)}
+                                  className="text-gray-400 hover:text-red-600 text-[11px] font-semibold"
+                                  title="Remove from this report"
+                                >
+                                  ✕
+                                </button>
                               </td>
                             </tr>
                           );
