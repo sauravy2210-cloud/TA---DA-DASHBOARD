@@ -483,10 +483,20 @@ export default async function handler(req, res) {
   // more than the policy engine's computed eligible amount. Requires an HR Admin
   // remark explaining the override(s), which is shown prominently at the top of
   // the email alongside each bill's own historical admin remark.
-  async function sendOutOfPolicyReportEmail({ bills, sentBy, hrRemark, reportTo, periodLabel }) {
-    // This report goes only to the requesting HR Admin — unlike the Bills Summary report,
-    // it is not broadcast to the shared REPORT_RECIPIENTS list.
-    const recipient = [reportTo || 'saurav.yadav@koenig-solutions.com'];
+  async function sendOutOfPolicyReportEmail({ bills, sentBy, hrRemark, reportTo, periodLabel, excludeEmails }) {
+    const defaultRecipients = [
+      reportTo || 'saurav.yadav@koenig-solutions.com',
+      'Sakshi.Pandey@koenig-solutions.com',
+      'Rashi.Oberoi@koenig-solutions.com',
+      'sakshi.dhawan@koenig-solutions.com',
+    ];
+    const excludeSet = new Set((Array.isArray(excludeEmails) ? excludeEmails : []).map(e => String(e).toLowerCase()));
+    const recipient = defaultRecipients.filter(e => !excludeSet.has(e.toLowerCase()));
+    if (recipient.length === 0) {
+      const err = new Error('All recipients excluded — nobody to send to');
+      err.statusCode = 400;
+      throw err;
+    }
 
     const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
     const fmt = (n) => `₹${Number(n ?? 0).toLocaleString('en-IN')}`;
@@ -647,11 +657,11 @@ export default async function handler(req, res) {
 
   // ── Out of Policy Report email ────────────────────────────────────────────
   if (type === 'out_of_policy_report') {
-    const { bills, sentBy, hrRemark, toEmail: oopReportTo, periodLabel: oopPeriodLabel } = body;
+    const { bills, sentBy, hrRemark, toEmail: oopReportTo, periodLabel: oopPeriodLabel, excludeEmails: oopExcludeEmails } = body;
     if (!Array.isArray(bills) || bills.length === 0)
       return res.status(400).json({ error: 'No out-of-policy bills provided' });
     try {
-      const result = await sendOutOfPolicyReportEmail({ bills, sentBy, hrRemark, reportTo: oopReportTo, periodLabel: oopPeriodLabel });
+      const result = await sendOutOfPolicyReportEmail({ bills, sentBy, hrRemark, reportTo: oopReportTo, periodLabel: oopPeriodLabel, excludeEmails: oopExcludeEmails });
       return res.status(200).json(result);
     } catch (err) {
       return res.status(err && err.statusCode === 400 ? 400 : 502).json({ error: (err && err.message) || 'Failed to send report email' });
