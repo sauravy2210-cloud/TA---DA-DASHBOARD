@@ -657,6 +657,19 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     if (savedMisc) setMiscHrOverrides(savedMisc);
     const savedAlreadyPaid = (claim as unknown as { alreadyPaidDeduction?: number })?.alreadyPaidDeduction;
     if (savedAlreadyPaid != null) { setAlreadyPaidDeduction(savedAlreadyPaid); setAlreadyPaidDeductionSavedValue(savedAlreadyPaid); }
+    // A claim can already carry HR overrides from a PAST session (e.g. corrected after it was
+    // Paid, without a follow-up Approve to reconcile the stored approvedAmount/netPayable) —
+    // paidClaimEditedThisSession is otherwise session-scoped and would stay false on a fresh
+    // page load, hiding an already-saved correction behind the frozen historical total. If any
+    // override was actually restored just above, treat this claim as "touched" from the start.
+    // Bug fixed 2026-09-08: TADA-2026-00054 — HR had zeroed/reduced two Cab bills (taHrOverrides
+    // persisted), but Amount Summary kept showing the original pre-correction ₹44,926 on every
+    // subsequent reopen because nothing in THIS session had "just" made the edit.
+    if ((savedDa && Object.keys(savedDa).length > 0) ||
+        (savedTa && Object.keys(savedTa).length > 0) ||
+        (savedMisc && Object.keys(savedMisc).length > 0)) {
+      setPaidClaimEditedThisSession(true);
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [claimId]);
 
