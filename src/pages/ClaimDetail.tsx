@@ -698,6 +698,8 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     }
     setAlreadyPaidDeduction(value);
     setAlreadyPaidDeductionSaving(true);
+    // HR is actively adjusting this claim — see paidClaimEditedThisSession above.
+    setPaidClaimEditedThisSession(true);
     try {
       // Awaited (unlike the fire-and-forget saveClaim used for cosmetic overrides elsewhere) —
       // this deduction directly affects what gets paid, so HR needs a real confirmation the
@@ -3431,10 +3433,10 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   <div className="flex items-center gap-2">
                     {liveAdvances.length > 0 && (
                       <>
-                        <button type="button" onClick={() => setCheckedAdvances(new Set(liveAdvances.map(i => i.key)))}
+                        <button type="button" onClick={() => { setCheckedAdvances(new Set(liveAdvances.map(i => i.key))); setPaidClaimEditedThisSession(true); }}
                           className="text-[11px] text-violet-600 hover:underline font-medium">Select All</button>
                         <span className="text-gray-300 text-xs">|</span>
-                        <button type="button" onClick={() => setCheckedAdvances(new Set())}
+                        <button type="button" onClick={() => { setCheckedAdvances(new Set()); setPaidClaimEditedThisSession(true); }}
                           className="text-[11px] text-gray-400 hover:underline font-medium">Clear All</button>
                       </>
                     )}
@@ -3485,11 +3487,14 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                           <input
                             type="checkbox"
                             checked={checkedAdvances.has(item.key)}
-                            onChange={e => setCheckedAdvances(prev => {
-                              const next = new Set(prev);
-                              e.target.checked ? next.add(item.key) : next.delete(item.key);
-                              return next;
-                            })}
+                            onChange={e => {
+                              setCheckedAdvances(prev => {
+                                const next = new Set(prev);
+                                e.target.checked ? next.add(item.key) : next.delete(item.key);
+                                return next;
+                              });
+                              setPaidClaimEditedThisSession(true);
+                            }}
                             className="mt-0.5 w-4 h-4 accent-violet-600 flex-shrink-0"
                           />
                           <div className="flex-1 min-w-0">
