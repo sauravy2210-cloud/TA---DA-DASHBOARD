@@ -2717,6 +2717,20 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // Summary correctly showed Rs.0, but Amount Summary/header still showed the stale Rs.12,372.
   const liveDataReady = effectiveDaItemsFinal.length > 0 || effectiveTravelItemsFinal.length > 0 || effectiveMiscItemsFinal.length > 0;
 
+  // A claim sitting at status 'Paid' (undisturbed — HR hasn't clicked Reopen, which moves status
+  // to 'Reopened' before any editing is possible) must show the exact historical figures it was
+  // actually disbursed at on every read-only display, never a fresh live recompute. toINR's
+  // Paid+fxRatesSnapshot guard freezes the FX conversion, but liveGrandTotalINR also re-derives
+  // DA/travel/misc from today's PMS/flight data — if any of THAT drifted (or the claim predates
+  // fxRatesSnapshot being captured at all), the live figure can differ from what was paid even
+  // though nothing about the claim itself changed. Used only for DISPLAY (Amount Summary, the
+  // header banners) — deliberately NOT substituted for the plain `liveDataReady` above wherever
+  // it feeds a value HR is about to re-save (e.g. applyAlreadyPaidDeduction), since those need the
+  // live recompute to self-heal a stale stored figure regardless of the claim's current status.
+  // Bug fixed 2026-09-08: TADA-2026-00054 — actually paid ₹44,926, later showed ₹44,313 on a
+  // plain reopen (no edits made) purely because today's live rates differ from the day it was paid.
+  const showLiveAmounts = liveDataReady && claim?.status !== 'Paid';
+
   // Same frozen-rate logic as toINR above, exposed here (now that `claim` exists) for the two
   // spots that display the RATE NUMBER itself (e.g. "1 USD = ₹96"), not just a converted amount —
   // those must stay consistent with the frozen conversions once a claim is Paid too.
@@ -3160,7 +3174,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
               <div className="text-center">
                 <div className="text-xs text-gray-400 uppercase tracking-wide">Approved</div>
                 <div className="font-semibold text-green-700">
-                  ₹{Math.round(liveDataReady ? liveGrandTotalINR - alreadyPaidDeduction : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
+                  ₹{Math.round(showLiveAmounts ? liveGrandTotalINR - alreadyPaidDeduction : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0))).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -3184,7 +3198,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                       the stored claim.netPayable fallback is already net-of-deduction once a
                       claim has actually been Approved (persistAction's computedNet already
                       subtracts it), so applying it again there would double-count. */}
-                  ₹{Math.round(liveDataReady ? liveNetPayableINR - alreadyPaidDeduction : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
+                  ₹{Math.round(showLiveAmounts ? liveNetPayableINR - alreadyPaidDeduction : (claim.netPayable ?? claim.totalClaimedAmount ?? 0)).toLocaleString('en-IN')}
                 </div>
               </div>
             )}
@@ -3360,19 +3374,21 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                   live 650, but this card still showed the stored 3,659 as if nothing changed. */}
               <AmountSummary
                 claimedAmount={Math.round(claim.totalClaimedAmount ?? 0)}
-                eligibleAmount={Math.round(liveDataReady ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
+                eligibleAmount={Math.round(showLiveAmounts ? liveGrandTotalINR : (claim.approvedAmount && claim.approvedAmount > 0 ? claim.approvedAmount : (claim.totalClaimedAmount ?? 0)))}
                 approvedAmount={Math.round(claim.approvedAmount ?? 0)}
                 deductionAmount={Math.round((claim.deductionAmount ?? 0) + alreadyPaidDeduction)}
                 advanceAdjusted={advanceAdjusted}
                 miscAdjustments={0}
-                recoverableAmount={Math.round(liveDataReady ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
-                netPayable={Math.round((liveDataReady ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement)) - alreadyPaidDeduction)}
+                recoverableAmount={Math.round(showLiveAmounts ? liveRecoverableINR : (claim.recoverableAmount ?? 0))}
+                netPayable={Math.round((showLiveAmounts ? liveNetPayableINR : (claim.netPayable ?? computedFinalSettlement)) - alreadyPaidDeduction)}
                 currency="INR"
               />
               {/* Net payable banner — same live-first logic as above. Shown whenever live data
                   is available at all, even if the true amount is 0 (e.g. fully deduped against
-                  another claim), so that correct 0 is visible rather than hidden. */}
-              {liveDataReady && (
+                  another claim), so that correct 0 is visible rather than hidden. Suppressed once
+                  the claim is Paid (see showLiveAmounts) — this banner is explicitly the "(Final)"
+                  live figure, which has no place on an already-settled claim's read-only view. */}
+              {showLiveAmounts && (
                 <div className={`mt-4 flex items-center justify-between px-5 py-3.5 rounded-xl shadow-sm bg-gradient-to-r ${liveRecoverableINR > 0 ? 'from-red-600 to-rose-600' : 'from-emerald-700 to-teal-700'}`}>
                   <div>
                     <p className="text-xs font-semibold text-white uppercase tracking-wide">
@@ -3496,7 +3512,12 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
             </div>
 
             {/* ── Final Payment Breakdown in INR ─────────────────────────────────── */}
-            {(claim.totalClaimedAmount ?? 0) > 0 && (
+            {/* This box is a live, in-progress breakdown for HR to check before Approve/
+                Partial-Approve — it has no frozen/historical form of its own (paid claims don't
+                store a per-category breakdown, only the final aggregate amounts), so it is hidden
+                entirely once the claim is Paid rather than risk showing a live-recomputed total
+                that no longer matches what was actually disbursed. Same fix as showLiveAmounts. */}
+            {(claim.totalClaimedAmount ?? 0) > 0 && showLiveAmounts && (
               <div className="bg-white rounded-xl border-2 border-emerald-200 p-5">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="text-sm font-semibold text-emerald-800 uppercase tracking-wide flex items-center gap-2">
@@ -5068,7 +5089,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
                 })()}
 
                 {/* ── Live Final Summary strip — visible to HR without scrolling up ── */}
-                {currentUser.role === 'HRAdmin' && liveDataReady && (
+                {currentUser.role === 'HRAdmin' && showLiveAmounts && (
                   <div className="mt-4 rounded-xl border-2 border-emerald-300 bg-gradient-to-r from-emerald-50 to-teal-50 px-5 py-4">
                     <p className="text-[10px] font-semibold text-emerald-700 uppercase tracking-widest mb-3">📊 Live Final Summary (reflects your edits above)</p>
                     <div className="flex flex-wrap gap-3">
