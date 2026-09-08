@@ -543,6 +543,18 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     return convertToINR(amount, currency, effectiveRates);
   };
 
+  // A Paid claim that predates fxRatesSnapshot being captured at Approve time has no frozen
+  // rate to fall back to — toINR falls through to live rates for it, so every HR correction
+  // made on it (DA/TA/Misc edit, Already Paid deduction) keeps recomputing the FX portion at
+  // TODAY's rate instead of the rate in effect when the bill was actually approved. The true
+  // approval-time rate is unrecoverable for these legacy claims, but we can stop the ongoing
+  // drift going forward: the moment HR touches such a claim, capture the current rate as its
+  // permanent snapshot right alongside the edit, so every later view/edit of THIS claim reuses
+  // that same frozen rate instead of re-reading live rates again. A claim that already has a
+  // snapshot (the normal case since fxRatesSnapshot shipped) is left untouched here.
+  const ensureFxSnapshot = (base: import('../types').ClaimHeader) =>
+    (base.status === 'Paid' && !base.fxRatesSnapshot) ? { fxRatesSnapshot: liveRates } : {};
+
   // HR Admin DA override state — keyed by DATE (not row index, which shifts across reloads
   // as PMS data changes) and persisted to the claim record so an edit survives navigation/
   // reload and shows identically in Payment Processing, Verification Queue, or any other
@@ -737,6 +749,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
         alreadyPaidDeduction: value,
         approvedAmount: correctedTotal,
         netPayable: correctedNet,
+        ...ensureFxSnapshot(base),
       } as import('../types').ClaimHeader);
       setAlreadyPaidDeductionSavedValue(value);
     } catch {
@@ -756,7 +769,7 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     if (!claimId) return;
     const base = getClaims().find((c) => c.claimId === claimId);
     if (!base) return;
-    saveClaim({ ...base, [field]: value } as import('../types').ClaimHeader);
+    saveClaim({ ...base, [field]: value, ...ensureFxSnapshot(base) } as import('../types').ClaimHeader);
     // HR just adjusted a row on this claim — see paidClaimEditedThisSession above.
     setPaidClaimEditedThisSession(true);
   };
