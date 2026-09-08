@@ -561,6 +561,15 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   const [miscEditIdx, setMiscEditIdx] = useState<number | null>(null);
   const [miscEditValues, setMiscEditValues] = useState<{ currency: string; amount: number }>({ currency: 'INR', amount: 0 });
 
+  // Set the moment HR saves ANY DA/TA/Misc row edit on THIS page view (see
+  // persistHrOverrideField below) — lets showLiveAmounts re-enable the live recompute display
+  // for a claim HR is actively correcting even while its status is still 'Paid' (editing a row
+  // doesn't require clicking Reopen first, and doesn't change `status` either), instead of
+  // hiding the very correction HR just made. Deliberately session-scoped, not derived from
+  // "daHrOverrides/etc. is non-empty" — a Paid claim commonly already has overrides baked into
+  // its approval history, which must stay frozen until HR touches something THIS visit.
+  const [paidClaimEditedThisSession, setPaidClaimEditedThisSession] = useState(false);
+
   // Already-Paid-for-this-assignment adjustment — HR reopening an already-Paid bill (e.g. to
   // correct a mistake) needs to see, and deduct, whatever was already disbursed against the
   // SAME assignment ID under other claims, so re-approving doesn't pay the trainer twice for
@@ -733,6 +742,8 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
     const base = getClaims().find((c) => c.claimId === claimId);
     if (!base) return;
     saveClaim({ ...base, [field]: value } as import('../types').ClaimHeader);
+    // HR just adjusted a row on this claim — see paidClaimEditedThisSession above.
+    setPaidClaimEditedThisSession(true);
   };
 
   // Whether the current user can add a NEW misc expense to this already-submitted claim.
@@ -2717,19 +2728,27 @@ const ClaimDetail: React.FC<ClaimDetailProps> = ({ currentUser }) => {
   // Summary correctly showed Rs.0, but Amount Summary/header still showed the stale Rs.12,372.
   const liveDataReady = effectiveDaItemsFinal.length > 0 || effectiveTravelItemsFinal.length > 0 || effectiveMiscItemsFinal.length > 0;
 
-  // A claim sitting at status 'Paid' (undisturbed — HR hasn't clicked Reopen, which moves status
-  // to 'Reopened' before any editing is possible) must show the exact historical figures it was
-  // actually disbursed at on every read-only display, never a fresh live recompute. toINR's
-  // Paid+fxRatesSnapshot guard freezes the FX conversion, but liveGrandTotalINR also re-derives
-  // DA/travel/misc from today's PMS/flight data — if any of THAT drifted (or the claim predates
-  // fxRatesSnapshot being captured at all), the live figure can differ from what was paid even
-  // though nothing about the claim itself changed. Used only for DISPLAY (Amount Summary, the
-  // header banners) — deliberately NOT substituted for the plain `liveDataReady` above wherever
-  // it feeds a value HR is about to re-save (e.g. applyAlreadyPaidDeduction), since those need the
-  // live recompute to self-heal a stale stored figure regardless of the claim's current status.
-  // Bug fixed 2026-09-08: TADA-2026-00054 — actually paid ₹44,926, later showed ₹44,313 on a
-  // plain reopen (no edits made) purely because today's live rates differ from the day it was paid.
-  const showLiveAmounts = liveDataReady && claim?.status !== 'Paid';
+  // A claim sitting at status 'Paid' and UNTOUCHED this visit must show the exact historical
+  // figures it was actually disbursed at on every read-only display, never a fresh live
+  // recompute. toINR's Paid+fxRatesSnapshot guard freezes the FX conversion, but
+  // liveGrandTotalINR also re-derives DA/travel/misc from today's PMS/flight data — if any of
+  // THAT drifted (or the claim predates fxRatesSnapshot being captured at all), the live figure
+  // can differ from what was paid even though nothing about the claim itself changed. Used only
+  // for DISPLAY (Amount Summary, the header banners) — deliberately NOT substituted for the
+  // plain `liveDataReady` above wherever it feeds a value HR is about to re-save (e.g.
+  // applyAlreadyPaidDeduction), since those need the live recompute to self-heal a stale stored
+  // figure regardless of the claim's current status. Bug fixed 2026-09-08: TADA-2026-00054 —
+  // actually paid ₹44,926, later showed ₹44,313 on a plain reopen (no edits made) purely
+  // because today's live rates differ from the day it was paid.
+  //
+  // BUT: the DA/TA/Misc row Edit buttons are not gated by claim status — HR can correct a row on
+  // a claim that is still literally 'Paid' without clicking Reopen first, and that edit persists
+  // immediately (persistHrOverrideField), not just on a later Approve click. Freezing the display
+  // unconditionally on status would then hide the very correction HR just made. Re-enable the
+  // live recompute the moment HR touches anything this visit (paidClaimEditedThisSession), so an
+  // in-progress adjustment to an already-paid bill is reflected, and only fall back to frozen
+  // historical figures for a claim nobody has touched.
+  const showLiveAmounts = liveDataReady && (claim?.status !== 'Paid' || paidClaimEditedThisSession);
 
   // Same frozen-rate logic as toINR above, exposed here (now that `claim` exists) for the two
   // spots that display the RATE NUMBER itself (e.g. "1 USD = ₹96"), not just a converted amount —
