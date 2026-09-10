@@ -889,6 +889,7 @@ export default function AdminDashboard({ currentUser }: AdminDashboardProps) {
         <div className="relative flex flex-col gap-6 md:flex-row md:items-center md:justify-between">
           {/* Left: text + actions */}
           <div className="flex-1">
+            <p className="mb-1 text-sm font-semibold text-white">Hi, Welcome!</p>
             <div className="mb-1 flex items-center gap-2">
               <span className="rounded-full bg-white/20 px-3 py-0.5 text-xs font-semibold text-white/90 uppercase tracking-wider">
                 {currentUser.role}
