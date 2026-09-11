@@ -57,7 +57,7 @@ export default defineConfig(({ mode }) => {
                 const tok = await koenigToken(
                   env.KOENIG_EMP_USER || 'Saurav_GetEmployeeDeta',
                   env.KOENIG_EMP_PASS || '',
-                  'Get Employee Details (PMS)'
+                  'GetIncidentData'
                 )
                 const codeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
                 const list = await koenigCommon(236, tok, { emp_code: codeValue })
