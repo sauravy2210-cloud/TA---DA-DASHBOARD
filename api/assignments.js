@@ -72,7 +72,7 @@ export default async function handler(req, res) {
 
   // Try API 258 first (emp-code based — returns all assignments for this trainer)
   try {
-    const tok = await getToken(asgnUser, asgn258Pass, 'Get Trainer Assignment Details');
+    const tok = await getToken(asgnUser, asgn258Pass, 'GetIncidentData');
     const data = await callCommon(258, tok, { koenig_trainer_emp_code: empCodeValue });
     return res.status(200).json({ assignments: data, source: '258' });
   } catch (e) {
@@ -90,7 +90,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const tok = await getToken(asgnUser, asgn208Pass, 'Get Trainer Assignment');
+    const tok = await getToken(asgnUser, asgn208Pass, 'GetIncidentData');
     const data = await callCommon(208, tok, { Startdate: fromDate, Enddate: toDate });
     // API 208 is date-range based and returns EVERY trainer's assignments in that window (seen:
     // 380+ trainers, ~700KB for a single trainer's request) — the docstring always said "caller

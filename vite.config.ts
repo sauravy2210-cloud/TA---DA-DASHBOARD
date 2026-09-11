@@ -198,7 +198,7 @@ export default defineConfig(({ mode }) => {
               const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
               let err258 = ''
               try {
-                const tok = await koenigToken(asgnUser, asgn258Pass, 'Get Trainer Assignment Details')
+                const tok = await koenigToken(asgnUser, asgn258Pass, 'GetIncidentData')
                 const data = await koenigCommon(258, tok, { koenig_trainer_emp_code: empCodeValue })
                 res.writeHead(200, { 'Content-Type': 'application/json' })
                 res.end(JSON.stringify({ assignments: data, source: '258' }))
@@ -212,7 +212,7 @@ export default defineConfig(({ mode }) => {
                 return
               }
               try {
-                const tok = await koenigToken(asgnUser, asgn208Pass, 'Get Trainer Assignment')
+                const tok = await koenigToken(asgnUser, asgn208Pass, 'GetIncidentData')
                 const data = await koenigCommon(208, tok, { Startdate: fromDate, Enddate: toDate })
                 res.writeHead(200, { 'Content-Type': 'application/json' })
                 res.end(JSON.stringify({ assignments: data, source: '208' }))
