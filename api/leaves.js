@@ -78,7 +78,10 @@ export default async function handler(req, res) {
     const data = await dataRes.json();
 
     if (data.statuscode !== 200) {
-      return res.status(200).json({ leaves: [] }); // no leaves — not an error
+      // A genuinely empty leave record set still comes back as statuscode 200 with
+      // content "[]" — a non-200 here is always a real failure (bad token, permission
+      // denied, etc.), never "no leaves", so surface it instead of hiding it as empty.
+      return res.status(502).json({ error: data.message || 'Leave API failed' });
     }
 
     let content = data.content;
