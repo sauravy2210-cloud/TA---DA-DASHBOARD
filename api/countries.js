@@ -2,20 +2,14 @@
  * Server-side country list fetch.
  * GET /api/countries
  */
+import { getKoenigToken } from '../lib/koenigAuth.js';
+
 export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 
 async function getToken(userName, userPassword, userRole) {
-  const res = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userName, userPassword, userRole }),
-  });
-  if (!res.ok) throw new Error(`Token HTTP ${res.status}`);
-  const d = await res.json();
-  if (d.statuscode !== 200) throw new Error(d.message || 'Token failed');
-  return d.content;
+  return getKoenigToken(userName, userPassword, userRole);
 }
 
 export default async function handler(req, res) {

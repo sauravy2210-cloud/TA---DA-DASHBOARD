@@ -3,30 +3,14 @@
  * GET /api/accommodation?empCode=2225        → API 257 (empCode-based, CreateTADABill)
  * GET /api/accommodation?email=x@koenig.com  → API 120 (email-based, CreateClaim)
  */
+import { getKoenigToken } from '../lib/koenigAuth.js';
+
 export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 
-// Cache Koenig access tokens per (userName, role) for the lifetime of this warm serverless
-// instance — avoids a redundant GetToken round-trip on every request.
-const TOKEN_TTL_MS = 10 * 60 * 1000;
-const tokenCache = new Map();
-
 async function getToken(userName, userPassword, userRole) {
-  const cacheKey = `${userName}::${userRole}`;
-  const cached = tokenCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.token;
-
-  const res = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userName, userPassword, userRole }),
-  });
-  if (!res.ok) throw new Error(`Token HTTP ${res.status}`);
-  const d = await res.json();
-  if (d.statuscode !== 200) throw new Error(d.message || 'Token failed');
-  tokenCache.set(cacheKey, { token: d.content, expiresAt: Date.now() + TOKEN_TTL_MS });
-  return d.content;
+  return getKoenigToken(userName, userPassword, userRole);
 }
 
 async function callCommon(apikey, tok, body) {

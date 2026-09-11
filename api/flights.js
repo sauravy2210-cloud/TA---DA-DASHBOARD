@@ -3,30 +3,14 @@
  * GET /api/flights?email=...&empCode=...
  * Tries API 108 (email-based) first, falls back to API 256 (empCode-based).
  */
+import { getKoenigToken } from '../lib/koenigAuth.js';
+
 export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 
-// Cache Koenig access tokens per (userName, role) for the lifetime of this warm serverless
-// instance — avoids a redundant GetToken round-trip on every request.
-const TOKEN_TTL_MS = 10 * 60 * 1000;
-const tokenCache = new Map();
-
 async function getTokens(userName, userPassword, userRole) {
-  const cacheKey = `${userName}::${userRole}`;
-  const cached = tokenCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.token;
-
-  const r = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userName, userPassword, userRole }),
-  });
-  if (!r.ok) throw new Error(`Token endpoint HTTP ${r.status}`);
-  const d = await r.json();
-  if (d.statuscode !== 200) throw new Error(d.message || 'Token failed');
-  tokenCache.set(cacheKey, { token: d.content, expiresAt: Date.now() + TOKEN_TTL_MS });
-  return d.content;
+  return getKoenigToken(userName, userPassword, userRole);
 }
 
 async function apiCall(apikey, userName, userPassword, userRole, body) {

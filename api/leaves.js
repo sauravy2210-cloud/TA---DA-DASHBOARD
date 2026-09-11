@@ -4,30 +4,19 @@
  * Returns all leave records for the given employee code.
  * Date-range filtering is handled client-side.
  */
+import { getKoenigToken } from '../lib/koenigAuth.js';
+
 export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 
-// Cache Koenig access tokens per (userName, role) for the lifetime of this warm serverless
-// instance — avoids a redundant GetToken round-trip on every request.
-const TOKEN_TTL_MS = 10 * 60 * 1000;
-const tokenCache = new Map();
-
 async function getToken(userName, userPassword, userRole) {
-  const cacheKey = `${userName}::${userRole}`;
-  const cached = tokenCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return { ok: true, content: cached.token };
-
-  const tokenRes = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ userName, userPassword, userRole }),
-  });
-  if (!tokenRes.ok) return { ok: false, error: `Token endpoint HTTP ${tokenRes.status}` };
-  const tokenData = await tokenRes.json();
-  if (tokenData.statuscode !== 200) return { ok: false, error: tokenData.message || 'Token failed' };
-  tokenCache.set(cacheKey, { token: tokenData.content, expiresAt: Date.now() + TOKEN_TTL_MS });
-  return { ok: true, content: tokenData.content };
+  try {
+    const content = await getKoenigToken(userName, userPassword, userRole);
+    return { ok: true, content };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export default async function handler(req, res) {

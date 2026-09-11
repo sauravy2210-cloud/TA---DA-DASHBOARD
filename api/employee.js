@@ -7,24 +7,18 @@
  * so the profile gets the richest possible data regardless of which variant
  * the PMS happens to respond to.
  */
+import { getKoenigToken } from '../lib/koenigAuth.js';
+
 export const config = { maxDuration: 10 }; // Vercel Hobby plan hard cap
 
 const BASE = 'https://api.koenig-solutions.com';
 
 async function getToken() {
-  const res = await fetch(`${BASE}/api/Kites/Operator/GetToken`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      userName:     process.env.KOENIG_EMP_USER || 'Saurav_GetEmployeeDeta',
-      userPassword: process.env.KOENIG_EMP_PASS || '',
-      userRole:     'GetIncidentData',
-    }),
-  });
-  if (!res.ok) throw new Error(`Token HTTP ${res.status}`);
-  const d = await res.json();
-  if (d.statuscode !== 200) throw new Error(d.message || 'Token failed');
-  return d.content; // { accessToken, deviceToken }
+  return getKoenigToken(
+    process.env.KOENIG_EMP_USER || 'Saurav_GetEmployeeDeta',
+    process.env.KOENIG_EMP_PASS || '',
+    'GetIncidentData'
+  );
 }
 
 async function callApi(apikey, accessToken, deviceToken, body) {
