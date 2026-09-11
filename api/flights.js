@@ -71,7 +71,7 @@ export default async function handler(req, res) {
         108,
         process.env.KOENIG_U1 || 'Saurav_TrainerFlightDe',
         process.env.KOENIG_P1 || '',
-        'Trainer Flight Details',
+        'GetIncidentData',
         { email_Address: email }
       );
     } catch (e) { flights = []; errors.api108 = e instanceof Error ? e.message : String(e); }
@@ -85,7 +85,7 @@ export default async function handler(req, res) {
         256,
         process.env.KOENIG_U2 || 'Saurav_GetTrainerFligh',
         process.env.KOENIG_P2 || '',
-        'Get Trainer Flight Details',
+        'GetIncidentData',
         { koenig_trainer_emp_code: code }
       );
     } catch (e) { flights = []; errors.api256 = e instanceof Error ? e.message : String(e); }

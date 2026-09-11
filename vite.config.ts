@@ -88,7 +88,7 @@ export default defineConfig(({ mode }) => {
                   const tok = await koenigToken(
                     env.KOENIG_U1 || 'Saurav_TrainerFlightDe',
                     env.KOENIG_P1 || '',
-                    'Trainer Flight Details'
+                    'GetIncidentData'
                   )
                   flights = await koenigCommon(108, tok, { email_Address: email })
                 } catch { flights = [] }
@@ -100,7 +100,7 @@ export default defineConfig(({ mode }) => {
                   const tok = await koenigToken(
                     env.KOENIG_U2 || 'Saurav_GetTrainerFligh',
                     env.KOENIG_P2 || '',
-                    'Get Trainer Flight Details'
+                    'GetIncidentData'
                   )
                   flights = await koenigCommon(256, tok, { koenig_trainer_emp_code: code })
                 } catch { flights = [] }
@@ -123,11 +123,11 @@ export default defineConfig(({ mode }) => {
               try {
                 let data: unknown[]
                 if (email) {
-                  const tok = await koenigToken(env.KOENIG_ACCOM120_USER || '', env.KOENIG_ACCOM120_PASS || '', 'Trainer Accomodation Details')
+                  const tok = await koenigToken(env.KOENIG_ACCOM120_USER || '', env.KOENIG_ACCOM120_PASS || '', 'GetIncidentData')
                   data = await koenigCommon(120, tok, { Email: email })
                 } else {
                   const empCodeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
-                  const tok = await koenigToken(env.KOENIG_ACCOM_USER || '', env.KOENIG_ACCOM_PASS || '', 'Get Trainer Accommodation Details')
+                  const tok = await koenigToken(env.KOENIG_ACCOM_USER || '', env.KOENIG_ACCOM_PASS || '', 'GetIncidentData')
                   data = await koenigCommon(257, tok, { koenig_trainer_emp_code: empCodeValue })
                 }
                 res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -145,7 +145,7 @@ export default defineConfig(({ mode }) => {
                 const tok = await koenigToken(
                   env.KOENIG_CTRY_USER || '',
                   env.KOENIG_CTRY_PASS || '',
-                  'Get Country List'
+                  'GetIncidentData'
                 )
                 const data = await koenigCommon(223, tok, { CountryName: '' })
                 res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -170,7 +170,7 @@ export default defineConfig(({ mode }) => {
                 const tok = await koenigToken(
                   env.KOENIG_ADV_USER || '',
                   env.KOENIG_ADV_PASS || '',
-                  'Get Employee Advance List'
+                  'GetIncidentData'
                 )
                 const data = await koenigCommon(259, tok, { EmpID: empIdValue })
                 res.writeHead(200, { 'Content-Type': 'application/json' })
@@ -236,7 +236,7 @@ export default defineConfig(({ mode }) => {
                 const tok = await koenigToken(
                   env.KOENIG_LEAVE_USER || '',
                   env.KOENIG_LEAVE_PASS || '',
-                  'Get Employee Leave Details'
+                  'GetIncidentData'
                 )
                 const codeValue = /^\d+$/.test(empCode) ? parseInt(empCode, 10) : empCode
                 let leaves: unknown[] = []

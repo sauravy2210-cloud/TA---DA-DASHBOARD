@@ -28,7 +28,7 @@ export default async function handler(req, res) {
     const tok = await getToken(
       process.env.KOENIG_CTRY_USER || '',
       process.env.KOENIG_CTRY_PASS || '',
-      'Get Country List'
+      'GetIncidentData'
     );
     const url =
       `${BASE}/api/Kites/Operator/common` +

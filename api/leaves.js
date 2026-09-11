@@ -48,7 +48,7 @@ export default async function handler(req, res) {
     const tokenResult = await getToken(
       process.env.KOENIG_LEAVE_USER || '',
       process.env.KOENIG_LEAVE_PASS || '',
-      'Get Employee Leave Details'
+      'GetIncidentData'
     );
     if (!tokenResult.ok) {
       return res.status(502).json({ error: tokenResult.error });

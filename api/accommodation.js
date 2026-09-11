@@ -65,7 +65,7 @@ export default async function handler(req, res) {
       const tok = await getToken(
         process.env.KOENIG_ACCOM120_USER || '',
         process.env.KOENIG_ACCOM120_PASS || '',
-        'Trainer Accomodation Details'
+        'GetIncidentData'
       );
       const data = await callCommon(120, tok, { Email: email });
       return res.status(200).json({ accommodation: data });
@@ -75,7 +75,7 @@ export default async function handler(req, res) {
       const tok = await getToken(
         process.env.KOENIG_ACCOM_USER || '',
         process.env.KOENIG_ACCOM_PASS || '',
-        'Get Trainer Accommodation Details'
+        'GetIncidentData'
       );
       const data = await callCommon(257, tok, { koenig_trainer_emp_code: empCodeValue });
       return res.status(200).json({ accommodation: data });
